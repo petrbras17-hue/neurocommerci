@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 
 from config import settings
+from utils.helpers import utcnow
 from utils.logger import log
 
 
@@ -17,9 +18,25 @@ class RateLimiter:
         # phone -> {comments_today, last_comment_time, cooldown_until, day_start}
         self._state: dict[str, dict] = {}
 
+    async def load_from_db(self):
+        """Загрузить счётчики comments_today из БД при старте (восстановление после рестарта)."""
+        from storage.sqlite_db import async_session
+        from storage.models import Account
+        from sqlalchemy import select
+
+        try:
+            async with async_session() as session:
+                result = await session.execute(select(Account.phone, Account.comments_today))
+                for phone, comments_today in result.all():
+                    state = self._get_state(phone)
+                    state["comments_today"] = comments_today or 0
+            log.info(f"RateLimiter: загружены счётчики для {len(self._state)} аккаунтов из БД")
+        except Exception as exc:
+            log.warning(f"RateLimiter: не удалось загрузить счётчики из БД: {exc}")
+
     def _get_state(self, phone: str) -> dict:
         """Получить или создать состояние для аккаунта."""
-        today = datetime.utcnow().date()
+        today = utcnow().date()
         if phone not in self._state:
             self._state[phone] = {
                 "comments_today": 0,
@@ -79,7 +96,7 @@ class RateLimiter:
         mean = (settings.MIN_DELAY_BETWEEN_COMMENTS_SEC + settings.MAX_DELAY_BETWEEN_COMMENTS_SEC) / 2
         std = (settings.MAX_DELAY_BETWEEN_COMMENTS_SEC - settings.MIN_DELAY_BETWEEN_COMMENTS_SEC) / 4
         delay = random.gauss(mean, std)
-        return max(settings.MIN_DELAY_BETWEEN_COMMENTS_SEC, min(delay, settings.MAX_DELAY_BETWEEN_COMMENTS_SEC * 1.5))
+        return max(settings.MIN_DELAY_BETWEEN_COMMENTS_SEC, min(delay, settings.MAX_DELAY_BETWEEN_COMMENTS_SEC))
 
     def record_comment(self, phone: str):
         """Зафиксировать отправку комментария."""

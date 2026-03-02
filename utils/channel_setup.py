@@ -39,12 +39,13 @@ from utils.logger import log
 # ────────────────────────────────────────────────────────────
 # Ссылка DartVPN (единая для всех постов и комментариев)
 # ────────────────────────────────────────────────────────────
-DARTVPN_LINK = "https://t.me/DartVPNBot?start=fly"
+def _get_dartvpn_link() -> str:
+    return settings.DARTVPN_BOT_LINK
 
 
 def _link(text: str) -> str:
     """Обернуть текст в скрытую HTML-ссылку на DartVPN."""
-    return f'<a href="{DARTVPN_LINK}">{text}</a>'
+    return f'<a href="{_get_dartvpn_link()}">{text}</a>'
 
 
 # ────────────────────────────────────────────────────────────
@@ -292,7 +293,7 @@ FALLBACK_CHANNELS = [
 ]
 
 STYLES_FOR_CHANNELS = ["expert", "casual", "business", "student", "tech",
-                       "lifestyle", "casual", "expert", "tech", "business"]
+                       "lifestyle", "blogger", "minimalist", "geek", "friendly"]
 
 
 class ChannelSetup:
@@ -496,7 +497,8 @@ class ChannelSetup:
             await self._update_bio_with_channel(client, phone, channel_link)
 
             if channel_link:
-                settings.DARTVPN_CHANNEL_LINK = channel_link
+                # Сохранить ссылку в БД (per-account, а не global)
+                await self._save_channel_link(phone, channel_link)
 
             return {
                 "phone": phone,
@@ -540,6 +542,21 @@ class ChannelSetup:
         except Exception as exc:
             log.debug(f"Не удалось создать invite-link: {exc}")
             return ""
+
+    async def _save_channel_link(self, phone: str, channel_link: str):
+        """Сохранить ссылку на канал-переходник в БД (per-account)."""
+        try:
+            from sqlalchemy import update
+            from storage.sqlite_db import async_session
+            from storage.models import Account
+            async with async_session() as session:
+                await session.execute(
+                    update(Account).where(Account.phone == phone).values(channel_link=channel_link)
+                )
+                await session.commit()
+            log.info(f"{phone}: channel_link сохранён в БД: {channel_link}")
+        except Exception as exc:
+            log.warning(f"{phone}: не удалось сохранить channel_link: {exc}")
 
     async def _update_bio_with_channel(
         self,

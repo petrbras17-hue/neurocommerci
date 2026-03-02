@@ -54,9 +54,14 @@ def restore_sessions(sessions_dir: Path) -> int:
                     log.warning(f"Пропускаю подозрительный путь: {member.name}")
                     continue
 
-                member.name = name  # Плоская распаковка в sessions_dir
-                tar.extract(member, path=str(sessions_dir))
-                count += 1
+                # Безопасная распаковка: читаем содержимое и пишем вручную
+                # (tar.extract может создать symlink/hardlink)
+                if member.isfile():
+                    f = tar.extractfile(member)
+                    if f:
+                        (sessions_dir / name).write_bytes(f.read())
+                        f.close()
+                        count += 1
 
             log.info(f"Распаковано {count} файлов сессий из SESSIONS_DATA")
             return count

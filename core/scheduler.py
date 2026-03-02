@@ -77,7 +77,7 @@ class TaskScheduler:
         """Добавить задачу сброса дневных счётчиков (в полночь)."""
         self._scheduler.add_job(
             func,
-            trigger=CronTrigger(hour=0, minute=0),
+            trigger=CronTrigger(hour=0, minute=0, timezone="UTC"),
             id="daily_reset",
             name="Сброс дневных счётчиков",
             replace_existing=True,

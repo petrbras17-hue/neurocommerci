@@ -20,44 +20,51 @@ from core.account_manager import AccountManager
 from core.proxy_manager import ProxyManager
 from storage.models import Channel, Post
 from storage.sqlite_db import async_session
+from utils.helpers import utcnow
 from utils.logger import log
 
 
 class PostQueue:
-    """Очередь постов для комментирования с приоритетом (новые выше)."""
+    """Очередь постов для комментирования с приоритетом (новые выше).
+
+    Все операции защищены asyncio.Lock для безопасного доступа
+    из нескольких корутин (мониторинг add + постер pop).
+    """
 
     MAX_SEEN = 10_000  # Лимит для предотвращения утечки памяти
 
     def __init__(self):
         self._queue: list[dict] = []
-        self._seen: set[str] = set()  # "channel_id:post_id" для дедупликации
+        self._seen: dict[str, bool] = {}  # OrderedDict-like LRU через dict (Python 3.7+)
+        self._lock = asyncio.Lock()
 
-    def add(self, post_data: dict) -> bool:
+    async def add(self, post_data: dict) -> bool:
         """Добавить пост в очередь. Возвращает True если добавлен (не дубль)."""
-        key = f"{post_data['channel_id']}:{post_data['telegram_post_id']}"
-        if key in self._seen:
-            return False
-        # Сбросить _seen если превышен лимит (сохраняем ID постов из текущей очереди)
-        if len(self._seen) >= self.MAX_SEEN:
-            active_keys = {
-                f"{p['channel_id']}:{p['telegram_post_id']}" for p in self._queue
-            }
-            self._seen = active_keys
-        self._seen.add(key)
-        self._queue.append(post_data)
-        # Сортировка: новые посты первыми
-        self._queue.sort(key=lambda p: p.get("posted_at", datetime.min), reverse=True)
-        return True
+        async with self._lock:
+            key = f"{post_data['channel_id']}:{post_data['telegram_post_id']}"
+            if key in self._seen:
+                return False
+            # LRU eviction: удаляем самые старые записи, сохраняя текущую очередь
+            if len(self._seen) >= self.MAX_SEEN:
+                active_keys = {
+                    f"{p['channel_id']}:{p['telegram_post_id']}" for p in self._queue
+                }
+                # Сохраняем только ключи из активной очереди
+                self._seen = {k: True for k in active_keys}
+            self._seen[key] = True
+            self._queue.append(post_data)
+            self._queue.sort(key=lambda p: p.get("posted_at", datetime.min), reverse=True)
+            return True
 
-    def pop(self) -> Optional[dict]:
+    async def pop(self) -> Optional[dict]:
         """Забрать следующий пост из очереди (удаляет из _seen для возможного re-add)."""
-        if self._queue:
-            item = self._queue.pop(0)
-            # Убрать из _seen чтобы пост можно было вернуть в очередь
-            key = f"{item['channel_id']}:{item['telegram_post_id']}"
-            self._seen.discard(key)
-            return item
-        return None
+        async with self._lock:
+            if self._queue:
+                item = self._queue.pop(0)
+                key = f"{item['channel_id']}:{item['telegram_post_id']}"
+                self._seen.pop(key, None)
+                return item
+            return None
 
     def peek(self) -> Optional[dict]:
         """Посмотреть следующий пост без удаления."""
@@ -170,7 +177,7 @@ class ChannelMonitor:
 
     async def _check_channel(self, client: TelegramClient, channel: Channel) -> int:
         """Проверить канал на новые посты. Возвращает кол-во новых."""
-        max_age = datetime.utcnow() - timedelta(hours=settings.POST_MAX_AGE_HOURS)
+        max_age = utcnow() - timedelta(hours=settings.POST_MAX_AGE_HOURS)
         new_count = 0
 
         try:
@@ -202,7 +209,7 @@ class ChannelMonitor:
             # Сохраняем пост в БД
             post_data = await self._save_post(channel, message)
             if post_data:
-                added = self.queue.add(post_data)
+                added = await self.queue.add(post_data)
                 if added:
                     new_count += 1
 
@@ -226,7 +233,7 @@ class ChannelMonitor:
     async def _save_post(self, channel: Channel, message: Message) -> Optional[dict]:
         """Сохранить пост в БД и вернуть данные для очереди."""
         text = message.text or ""
-        posted_at = message.date.replace(tzinfo=None) if message.date else datetime.utcnow()
+        posted_at = message.date.replace(tzinfo=None) if message.date else utcnow()
 
         try:
             async with async_session() as session:
@@ -235,7 +242,7 @@ class ChannelMonitor:
                     telegram_post_id=message.id,
                     text=text[:4000],  # Ограничиваем длину
                     posted_at=posted_at,
-                    discovered_at=datetime.utcnow(),
+                    discovered_at=utcnow(),
                 )
                 session.add(post)
                 await session.commit()
@@ -275,7 +282,7 @@ class ChannelMonitor:
                     .where(Channel.id == channel.id)
                     .values(
                         last_post_checked=latest_post_id,
-                        last_checked_at=datetime.utcnow(),
+                        last_checked_at=utcnow(),
                     )
                 )
                 await session.commit()
@@ -354,14 +361,14 @@ class ChannelMonitor:
                                 "discussion_group_id": channel.discussion_group_id,
                                 "telegram_post_id": message.id,
                                 "text": message.text[:4000],
-                                "posted_at": message.date.replace(tzinfo=None) if message.date else datetime.utcnow(),
+                                "posted_at": message.date.replace(tzinfo=None) if message.date else utcnow(),
                             }
                     else:
                         post_data = await self._save_post(channel, message)
                         if not post_data:
                             continue
 
-                    if self.queue.add(post_data):
+                    if await self.queue.add(post_data):
                         added += 1
 
             except Exception as exc:

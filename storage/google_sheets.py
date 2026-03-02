@@ -13,6 +13,8 @@ import gspread
 from google.oauth2 import service_account
 from gspread.exceptions import WorksheetNotFound
 
+from utils.helpers import utcnow
+
 from config import BASE_DIR
 from utils.logger import log
 
@@ -148,14 +150,24 @@ class GoogleSheetsStorage:
 
     @staticmethod
     def _replace_worksheet_data(worksheet: gspread.Worksheet, headers: list[str], rows: list[list[Any]]):
+        """Атомарная замена данных: сначала пишем, потом чистим остатки."""
         data = [headers] + rows
-        worksheet.clear()
-        worksheet.update(range_name="A1", values=data, value_input_option="RAW")
+        # Записать данные поверх существующих (без clear — не теряем данные при ошибке)
+        if data:
+            worksheet.update(range_name="A1", values=data, value_input_option="RAW")
+        # Удалить лишние строки ниже (если старых данных было больше)
+        total_rows = worksheet.row_count
+        data_end = len(data) + 1
+        if total_rows > data_end:
+            try:
+                worksheet.batch_clear([f"A{data_end}:Z{total_rows}"])
+            except Exception:
+                pass
 
     @staticmethod
     def _channel_row(channel: Any) -> list[Any]:
         status = "blacklisted" if bool(_read(channel, "is_blacklisted", False)) else "active"
-        created_at = _read(channel, "created_at", datetime.utcnow())
+        created_at = _read(channel, "created_at", utcnow())
         return [
             _read(channel, "telegram_id", _read(channel, "id", "")),
             _read(channel, "username", "") or "",
@@ -168,7 +180,7 @@ class GoogleSheetsStorage:
 
     @staticmethod
     def _comment_row(comment: Any) -> list[Any]:
-        created_at = _read(comment, "created_at", datetime.utcnow())
+        created_at = _read(comment, "created_at", utcnow())
         text = (_read(comment, "text", "") or "").replace("\n", " ").strip()
         preview = text if len(text) <= 120 else f"{text[:117]}..."
         return [

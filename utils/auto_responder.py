@@ -37,6 +37,7 @@ class AutoResponder:
         self._running = False
         self._handlers: dict[str, callable] = {}
         self._responded_users: OrderedDict[str, bool] = OrderedDict()  # phone:user_id → LRU
+        self._responded_lock = asyncio.Lock()
         self._max_responded_users = 50_000
         self._stats = {"replies_sent": 0, "messages_received": 0}
 
@@ -81,9 +82,14 @@ class AutoResponder:
 
             # Проверка: уже отвечали этому пользователю? (LRU OrderedDict)
             key = f"{phone}:{sender.id}"
-            if key in self._responded_users:
-                self._responded_users.move_to_end(key)  # Обновить позицию
-                return
+            async with self._responded_lock:
+                if key in self._responded_users:
+                    self._responded_users.move_to_end(key)  # Обновить позицию
+                    return
+                # Резервируем ключ сразу, чтобы параллельные хэндлеры не дублировали
+                while len(self._responded_users) >= self._max_responded_users:
+                    self._responded_users.popitem(last=False)
+                self._responded_users[key] = True
 
             # Задержка (имитация чтения и набора)
             delay = random.uniform(5.0, 20.0)
@@ -95,10 +101,6 @@ class AutoResponder:
 
             try:
                 await event.respond(reply_text)
-                # LRU eviction: удаляем самые старые записи
-                while len(self._responded_users) >= self._max_responded_users:
-                    self._responded_users.popitem(last=False)  # Удалить oldest
-                self._responded_users[key] = True
                 self._stats["replies_sent"] += 1
                 log.info(f"{phone}: автоответ для user_id={sender.id}")
             except Exception as exc:

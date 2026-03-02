@@ -100,6 +100,12 @@ class SessionManager:
             client = self._clients[phone]
             if client.is_connected():
                 return client
+            # Старый клиент отключён — освободить ресурсы перед созданием нового
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            del self._clients[phone]
 
         # Имя сессии = номер телефона (без +)
         session_name = phone.lstrip("+").replace(" ", "")

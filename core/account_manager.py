@@ -15,6 +15,7 @@ from core.session_manager import SessionManager
 from core.rate_limiter import RateLimiter
 from storage.models import Account
 from storage.sqlite_db import async_session
+from utils.helpers import utcnow
 from utils.logger import log
 
 
@@ -33,12 +34,13 @@ class AccountManager:
         self._rotation_index = 0
         self._lock = asyncio.Lock()  # Защита от race condition при выборе аккаунта
 
-    async def load_accounts(self) -> list[Account]:
-        """Загрузить все аккаунты из БД."""
+    async def load_accounts(self, include_banned: bool = False) -> list[Account]:
+        """Загрузить аккаунты из БД. include_banned=True для сводки."""
         async with async_session() as session:
-            result = await session.execute(
-                select(Account).where(Account.status != "banned")
-            )
+            query = select(Account)
+            if not include_banned:
+                query = query.where(Account.status != "banned")
+            result = await session.execute(query)
             accounts = result.scalars().all()
             log.info(f"Загружено аккаунтов из БД: {len(accounts)}")
             return list(accounts)
@@ -50,7 +52,7 @@ class AccountManager:
                 phone=phone,
                 session_file=session_file,
                 status="active",
-                created_at=datetime.utcnow(),
+                created_at=utcnow(),
             )
             session.add(account)
             await session.commit()
@@ -108,7 +110,7 @@ class AccountManager:
                 self._rotation_index += 1
                 account = active[idx]
 
-                if self.rate_limiter.can_comment(account.phone, account.days_active):
+                if self.rate_limiter.can_comment(account.phone, account.days_active or 0):
                     # Проверить что клиент подключён
                     client = self.session_mgr.get_client(account.phone)
                     if client and client.is_connected():
@@ -129,7 +131,7 @@ class AccountManager:
                 .values(
                     comments_today=Account.comments_today + 1,
                     total_comments=Account.total_comments + 1,
-                    last_active_at=datetime.utcnow(),
+                    last_active_at=utcnow(),
                 )
             )
             await session.commit()
@@ -167,24 +169,27 @@ class AccountManager:
     async def reset_daily_counters(self):
         """Сбросить дневные счётчики (вызывается в полночь)."""
         async with async_session() as session:
+            # Сбросить comments_today для всех, но days_active только для НЕ banned
             await session.execute(
-                update(Account).values(
-                    comments_today=0,
-                    days_active=Account.days_active + 1,
-                )
+                update(Account).values(comments_today=0)
             )
-            # Восстановить cooldown аккаунты
             await session.execute(
                 update(Account)
-                .where(Account.status == "cooldown")
+                .where(Account.status != "banned")
+                .values(days_active=Account.days_active + 1)
+            )
+            # Восстановить cooldown и flood_wait аккаунты
+            await session.execute(
+                update(Account)
+                .where(Account.status.in_(["cooldown", "flood_wait"]))
                 .values(status="active")
             )
             await session.commit()
         log.info("Дневные счётчики сброшены, days_active увеличен")
 
     async def get_status_summary(self) -> dict:
-        """Сводка по всем аккаунтам."""
-        accounts = await self.load_accounts()
+        """Сводка по всем аккаунтам (включая banned)."""
+        accounts = await self.load_accounts(include_banned=True)
         summary = {
             "total": len(accounts),
             "active": 0,
@@ -227,7 +232,7 @@ class AccountManager:
             phone = account.phone
 
             # Проверить через rate_limiter не истёк ли cooldown
-            if self.rate_limiter.can_comment(phone, account.days_active):
+            if self.rate_limiter.can_comment(phone, account.days_active or 0):
                 client = self.session_mgr.get_client(phone)
 
                 if client and client.is_connected():
@@ -236,7 +241,12 @@ class AccountManager:
                     log.info(f"{phone}: авто-восстановлен из {account.status}")
                 else:
                     proxy = self.proxy_mgr.get_for_account(phone)
-                    client = await self.session_mgr.connect_client(phone, proxy)
+                    try:
+                        client = await self.session_mgr.connect_client(phone, proxy)
+                    except Exception as exc:
+                        log.warning(f"{phone}: ошибка реконнекта в auto_recover: {exc}")
+                        still_blocked += 1
+                        continue
                     if client:
                         await self._update_status(phone, "active")
                         recovered += 1

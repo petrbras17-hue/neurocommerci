@@ -40,6 +40,7 @@ from core.rate_limiter import RateLimiter
 from storage.models import Comment, Post, Channel
 from storage.sqlite_db import async_session
 from utils.anti_ban import AntibanManager
+from utils.helpers import utcnow
 from utils.passive_actions import PassiveActionsManager
 from utils.notifier import notifier
 from utils.logger import log
@@ -111,7 +112,7 @@ class CommentPoster:
         Обработать один пост из очереди.
         Возвращает: 1 = отправлен, 0 = очередь пуста или пропущен, -1 = ошибка.
         """
-        post_data = self.monitor.queue.pop()
+        post_data = await self.monitor.queue.pop()
         if not post_data:
             return 0
 
@@ -128,8 +129,14 @@ class CommentPoster:
         # Получить аккаунт
         account = await self.account_mgr.get_next_available()
         if not account:
-            self.monitor.queue.add(post_data)
+            await self.monitor.queue.add(post_data)
             log.warning("Нет доступных аккаунтов, пост возвращён в очередь")
+            return 0
+
+        # Проверка rate limiter: можно ли отправлять комментарий
+        if not self.rate_limiter.can_comment(account.phone, account.days_active or 0):
+            await self.monitor.queue.add(post_data)
+            log.debug(f"{account.phone}: rate limiter запретил комментарий, пост возвращён")
             return 0
 
         # Нужен ли отдых?
@@ -138,7 +145,7 @@ class CommentPoster:
             log.info(f"{account.phone}: отдых {rest_time}с после серии комментариев")
             self.rate_limiter.set_cooldown(account.phone, rest_time)
             self.rate_limiter.reset_session(account.phone)
-            self.monitor.queue.add(post_data)
+            await self.monitor.queue.add(post_data)
             return 0
 
         # Пассивное действие перед комментарием (25% шанс)
@@ -270,7 +277,7 @@ class CommentPoster:
             log.warning(f"{account_phone}: FloodWait {e.seconds}с")
             await self.account_mgr.handle_error(account_phone, "flood_wait", str(e.seconds))
             await notifier.error_occurred(account_phone, "FloodWait", f"{e.seconds}с")
-            self.monitor.queue.add(post_data)
+            await self.monitor.queue.add(post_data)
             return False
 
         except UserBannedInChannelError:
@@ -357,13 +364,13 @@ class CommentPoster:
             self._pending_swaps = [t for t in self._pending_swaps if not t.done()]
             self._pending_swaps.append(swap_task)
 
-            # Предварительно сохраняем как "pending"
+            # Предварительно сохраняем как pending_swap (обновится на sent в _do_swap)
             await self._save_comment(
                 account_phone=account_phone,
                 post_db_id=post_data.get("post_db_id"),
                 text=comment_text,
                 scenario=scenario,
-                status="sent",
+                status="pending_swap",
             )
 
             self._stats["swapped"] += 1
@@ -372,7 +379,7 @@ class CommentPoster:
         except FloodWaitError as e:
             log.warning(f"{account_phone}: FloodWait {e.seconds}с (swap)")
             await self.account_mgr.handle_error(account_phone, "flood_wait", str(e.seconds))
-            self.monitor.queue.add(post_data)
+            await self.monitor.queue.add(post_data)
             return False
 
         except Exception as exc:
@@ -394,8 +401,15 @@ class CommentPoster:
         try:
             await asyncio.sleep(EMOJI_SWAP_DELAY_SEC)
 
-            if not client.is_connected():
+            # Получить свежий client (за 60с мог переподключиться)
+            fresh_client = self.session_mgr.get_client(account_phone)
+            if fresh_client and fresh_client.is_connected():
+                client = fresh_client
+            elif client.is_connected():
+                pass  # Исходный client всё ещё подключён
+            else:
                 log.warning(f"{account_phone}: клиент отключился, swap отменён")
+                await self._update_comment_status(post_db_id, "swap_failed")
                 return
 
             # Сценарий B: скрытая ссылка (синий текст в Telegram)
@@ -413,12 +427,16 @@ class CommentPoster:
                 parse_mode=parse_mode,
             )
             log.info(f"{account_phone}: emoji→text swap выполнен (msg_id={message_id})")
+            # Обновить статус на "sent" после успешного свопа
+            await self._update_comment_status(post_db_id, "sent")
 
         except MessageNotModifiedError:
             log.debug(f"{account_phone}: сообщение уже изменено")
+            await self._update_comment_status(post_db_id, "sent")
 
         except Exception as exc:
             log.warning(f"{account_phone}: ошибка swap: {exc}")
+            await self._update_comment_status(post_db_id, "swap_failed")
 
     async def _save_comment(
         self,
@@ -451,7 +469,7 @@ class CommentPoster:
                     scenario=scenario,
                     status=status,
                     error_message=error or None,
-                    created_at=datetime.utcnow(),
+                    created_at=utcnow(),
                 )
                 session.add(comment)
 
@@ -465,6 +483,21 @@ class CommentPoster:
                 await session.commit()
         except Exception as exc:
             log.warning(f"Ошибка сохранения комментария в БД: {exc}")
+
+    async def _update_comment_status(self, post_db_id: Optional[int], status: str):
+        """Обновить статус комментария (для swap: pending_swap → sent/swap_failed)."""
+        if not post_db_id:
+            return
+        try:
+            async with async_session() as session:
+                await session.execute(
+                    update(Comment)
+                    .where(Comment.post_id == post_db_id, Comment.status == "pending_swap")
+                    .values(status=status)
+                )
+                await session.commit()
+        except Exception as exc:
+            log.warning(f"Ошибка обновления статуса комментария: {exc}")
 
     async def _disable_channel_comments(self, channel_id: Optional[int]):
         """Пометить канал как без комментариев."""

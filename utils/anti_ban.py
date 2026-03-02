@@ -45,13 +45,14 @@ class AntibanManager:
     def get_warmup_schedule() -> dict[int, int]:
         """
         Расписание прогрева новых аккаунтов.
-        День -> максимум комментариев.
+        День -> максимум комментариев (из config).
         """
+        from config import settings
         return {
-            1: 5,
-            2: 10,
-            3: 20,
-            4: 35,  # Полная нагрузка
+            1: settings.WARMUP_DAY_1_LIMIT,
+            2: settings.WARMUP_DAY_2_LIMIT,
+            3: settings.WARMUP_DAY_3_LIMIT,
+            4: settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY,
         }
 
     def jitter(self, base_seconds: float, spread: float = 0.3) -> float:

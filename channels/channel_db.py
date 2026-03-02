@@ -9,6 +9,8 @@ from typing import Any
 
 from sqlalchemy import func, select, update
 
+from utils.helpers import utcnow
+
 from storage.models import Channel
 from storage.sqlite_db import async_session
 
@@ -34,7 +36,7 @@ class ChannelDB:
                 existing.comments_enabled = payload["comments_enabled"]
                 existing.discussion_group_id = payload["discussion_group_id"]
                 existing.is_active = True
-                existing.last_checked_at = datetime.utcnow()
+                existing.last_checked_at = utcnow()
                 channel = existing
             else:
                 channel = Channel(
@@ -47,7 +49,7 @@ class ChannelDB:
                     discussion_group_id=payload["discussion_group_id"],
                     is_active=True,
                     is_blacklisted=False,
-                    last_checked_at=datetime.utcnow(),
+                    last_checked_at=utcnow(),
                 )
                 session.add(channel)
 
@@ -86,22 +88,32 @@ class ChannelDB:
             return list(result.scalars().all())
 
     async def blacklist_channel(self, channel_id: int):
-        """Добавить канал в чёрный список (по локальному id или telegram_id)."""
+        """Добавить канал в чёрный список по telegram_id."""
         async with async_session() as session:
             await session.execute(
                 update(Channel)
-                .where((Channel.id == channel_id) | (Channel.telegram_id == channel_id))
-                .values(is_blacklisted=True, is_active=False, last_checked_at=datetime.utcnow())
+                .where(Channel.telegram_id == channel_id)
+                .values(is_blacklisted=True, is_active=False, last_checked_at=utcnow())
+            )
+            await session.commit()
+
+    async def blacklist_by_db_id(self, db_id: int):
+        """Добавить канал в чёрный список по локальному DB id."""
+        async with async_session() as session:
+            await session.execute(
+                update(Channel)
+                .where(Channel.id == db_id)
+                .values(is_blacklisted=True, is_active=False, last_checked_at=utcnow())
             )
             await session.commit()
 
     async def update_last_checked(self, channel_id: int):
-        """Обновить время последней проверки канала."""
+        """Обновить время последней проверки канала по telegram_id."""
         async with async_session() as session:
             await session.execute(
                 update(Channel)
-                .where((Channel.id == channel_id) | (Channel.telegram_id == channel_id))
-                .values(last_checked_at=datetime.utcnow())
+                .where(Channel.telegram_id == channel_id)
+                .values(last_checked_at=utcnow())
             )
             await session.commit()
 

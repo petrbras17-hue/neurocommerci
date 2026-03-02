@@ -70,6 +70,8 @@ class ChannelDiscovery:
             return []
 
         client = await self._get_working_client()
+        if not client:
+            return []
         discovered: dict[int, ChannelInfo] = {}
 
         for i, keyword in enumerate(cleaned_keywords):
@@ -92,6 +94,8 @@ class ChannelDiscovery:
     async def get_channel_info(self, username_or_id: Any) -> ChannelInfo:
         """Получить детальную информацию по одному каналу."""
         client = await self._get_working_client()
+        if not client:
+            raise RuntimeError("Нет подключённого аккаунта для парсинга")
         entity = await client.get_entity(username_or_id)
 
         if not isinstance(entity, TLChannel) or not getattr(entity, "broadcast", False):
@@ -222,6 +226,8 @@ class ChannelDiscovery:
         Для каждого исходного канала берём слова из названия и ищем.
         """
         client = await self._get_working_client()
+        if not client:
+            return []
         discovered: dict[int, ChannelInfo] = {}
         source_ids: set[int] = set()
 
@@ -249,7 +255,7 @@ class ChannelDiscovery:
         log.info(f"Похожие каналы: найдено {len(channels)} новых")
         return channels
 
-    async def _get_working_client(self) -> Any:
+    async def _get_working_client(self) -> Optional[Any]:
         connected = self.session_mgr.get_connected_phones()
         for phone in connected:
             client = self.session_mgr.get_client(phone)
@@ -273,6 +279,5 @@ class ChannelDiscovery:
                 if client:
                     return client
 
-        raise RuntimeError(
-            "Нет подключённого аккаунта для парсинга. Добавьте .session файл и убедитесь, что API ID/HASH настроены."
-        )
+        log.error("Нет подключённого аккаунта для парсинга. Добавьте .session файл и убедитесь, что API ID/HASH настроены.")
+        return None

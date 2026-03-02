@@ -9,6 +9,8 @@ from datetime import datetime
 from html import escape
 from typing import Optional
 
+from utils.helpers import utcnow
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot, Dispatcher, Router, F, BaseMiddleware
 from aiogram.fsm.context import FSMContext
@@ -301,8 +303,8 @@ async def sync_to_sheets_snapshot():
                 await session.execute(
                     select(Comment, Account.phone, DbChannel.title)
                     .join(Account, Account.id == Comment.account_id)
-                    .join(Post, Post.id == Comment.post_id)
-                    .join(DbChannel, DbChannel.id == Post.channel_id)
+                    .outerjoin(Post, Post.id == Comment.post_id)
+                    .outerjoin(DbChannel, DbChannel.id == Post.channel_id)
                     .order_by(Comment.created_at.desc())
                     .limit(200)
                 )
@@ -315,8 +317,8 @@ async def sync_to_sheets_snapshot():
             "text": comment.text,
             "scenario": comment.scenario,
             "status": comment.status,
-            "account_phone": phone,
-            "channel_name": channel_title,
+            "account_phone": phone or "—",
+            "channel_name": channel_title or "—",
         }
         for comment, phone, channel_title in comment_rows
     ]
@@ -381,7 +383,7 @@ async def menu_dashboard(message: Message):
         comments_total = await session.scalar(select(func.count(Comment.id)))
         comments_today = await session.scalar(
             select(func.count(Comment.id)).where(
-                func.date(Comment.created_at) == datetime.utcnow().date().isoformat()
+                func.date(Comment.created_at) == utcnow().date()
             )
         )
 
@@ -1949,8 +1951,8 @@ async def cb_parse_similar_run(callback: CallbackQuery):
             try:
                 await channel_db.add_channel(ch)
                 saved += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning(f"Ошибка сохранения канала {getattr(ch, 'title', '?')}: {exc}")
 
         lines = [
             f"🔗 <b>Найдено {len(found)} похожих каналов</b>",
@@ -2155,6 +2157,7 @@ def _update_env(key: str, value: str):
 
     env_path = Path(settings.model_config["env_file"])
     if not env_path.exists():
+        log.warning(f".env не найден: {env_path}, настройка {key} не сохранена на диск")
         return
 
     lines = env_path.read_text(encoding="utf-8").splitlines()
@@ -2576,6 +2579,9 @@ async def start_bot():
 
     if settings.proxy_list_path.exists():
         proxy_mgr.load_from_file()
+
+    # Восстановить счётчики rate limiter из БД (защита от рестарта)
+    await rate_limiter.load_from_db()
 
     # Удалить вебхук если был
     await bot.delete_webhook(drop_pending_updates=True)

@@ -9,6 +9,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+from utils.helpers import utcnow
+
 
 class Base(DeclarativeBase):
     pass
@@ -28,7 +30,8 @@ class Account(Base):
     total_comments = Column(Integer, default=0)
     days_active = Column(Integer, default=0)  # для прогрева
     persona_style = Column(String(50), default="casual")  # casual, formal, slang, tech
-    created_at = Column(DateTime, default=datetime.utcnow)
+    channel_link = Column(String(500), nullable=True)  # Ссылка на канал-переходник аккаунта
+    created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
 
     proxy = relationship("Proxy", back_populates="accounts")
@@ -47,7 +50,7 @@ class Proxy(Base):
     password = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     last_checked = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     accounts = relationship("Account", back_populates="proxy")
 
@@ -73,7 +76,7 @@ class Channel(Base):
     is_blacklisted = Column(Boolean, default=False)
     last_post_checked = Column(Integer, default=0)  # ID последнего проверенного поста
     last_checked_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     posts = relationship("Post", back_populates="channel")
 
@@ -89,7 +92,7 @@ class Post(Base):
     relevance_score = Column(Float, default=0.0)
     is_commented = Column(Boolean, default=False)
     posted_at = Column(DateTime, nullable=True)
-    discovered_at = Column(DateTime, default=datetime.utcnow)
+    discovered_at = Column(DateTime, default=utcnow)
 
     channel = relationship("Channel", back_populates="posts")
     comments = relationship("Comment", back_populates="post")
@@ -106,7 +109,7 @@ class Comment(Base):
     scenario = Column(String(1), nullable=False)  # A или B
     status = Column(String(20), default="sent")  # sent, failed, deleted
     error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     account = relationship("Account", back_populates="comments")
     post = relationship("Post", back_populates="comments")

@@ -140,6 +140,7 @@ class ProxyManager:
             return 0
 
         self.proxies.clear()
+        self._assignments.clear()  # Старые assignments невалидны после reload
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 proxy = parse_proxy_line(line, settings.PROXY_TYPE)
@@ -222,11 +223,13 @@ class ProxyManager:
         return False
 
     async def validate_all(self) -> dict[str, bool]:
-        """Проверить все прокси. Возвращает {url: is_valid}."""
+        """Проверить все прокси параллельно. Возвращает {url: is_valid}."""
+        import asyncio
+        tasks = [self.validate_proxy(proxy) for proxy in self.proxies]
+        outcomes = await asyncio.gather(*tasks, return_exceptions=True)
         results = {}
-        for proxy in self.proxies:
-            is_valid = await self.validate_proxy(proxy)
-            results[proxy.url] = is_valid
+        for proxy, outcome in zip(self.proxies, outcomes):
+            results[proxy.url] = outcome is True
         return results
 
     def assign_to_account(self, phone: str) -> Optional[ProxyConfig]:
@@ -256,10 +259,10 @@ class ProxyManager:
             )
             return proxy
 
-        # Статический: round-robin
-        used_proxies = set(id(p) for p in self._assignments.values())
+        # Статический: round-robin (сравниваем по host:port:user вместо id())
+        used_keys = {(p.host, p.port, p.username) for p in self._assignments.values()}
         for proxy in self.proxies:
-            if id(proxy) not in used_proxies:
+            if (proxy.host, proxy.port, proxy.username) not in used_keys:
                 self._assignments[phone] = proxy
                 log.info(f"Прокси {proxy.host}:{proxy.port} назначен аккаунту {phone}")
                 return proxy

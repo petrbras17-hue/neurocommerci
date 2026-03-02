@@ -85,7 +85,7 @@ class ChannelSubscriber:
 
             except FloodWaitError as e:
                 log.warning(f"{phone}: FloodWait {e.seconds}с при подписке")
-                await asyncio.sleep(min(e.seconds, 60))
+                await asyncio.sleep(e.seconds)
                 result["failed"] += 1
                 self._stats["failed"] += 1
                 break  # Прекращаем подписку для этого аккаунта
