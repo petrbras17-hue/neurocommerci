@@ -431,6 +431,19 @@ class CommentPoster:
         except Exception as exc:
             log.warning(f"Ошибка обновления канала: {exc}")
 
+    async def shutdown(self):
+        """Graceful shutdown: дождаться завершения всех pending swap задач."""
+        self._running = False
+        pending = [t for t in self._pending_swaps if not t.done()]
+        if pending:
+            log.info(f"Ожидание завершения {len(pending)} swap задач...")
+            results = await asyncio.gather(*pending, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    log.warning(f"Swap задача {i} завершилась с ошибкой: {result}")
+            log.info("Все swap задачи завершены")
+        self._pending_swaps.clear()
+
     def get_stats(self) -> dict:
         return {
             **self._stats,

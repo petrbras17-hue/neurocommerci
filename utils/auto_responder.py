@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections import OrderedDict
 from datetime import datetime
 from typing import Optional
 
@@ -38,8 +39,8 @@ class AutoResponder:
         self.antiban = AntibanManager()
         self._running = False
         self._handlers: dict[str, callable] = {}
-        self._responded_users: set[str] = set()  # phone:user_id — не отвечать дважды
-        self._max_responded_users = 50_000  # Лимит для предотвращения утечки памяти
+        self._responded_users: OrderedDict[str, bool] = OrderedDict()  # phone:user_id → LRU
+        self._max_responded_users = 50_000
         self._stats = {"replies_sent": 0, "messages_received": 0}
 
     async def start(self):
@@ -81,9 +82,10 @@ class AutoResponder:
             if not sender or sender.bot:
                 return  # Не отвечать ботам
 
-            # Проверка: уже отвечали этому пользователю?
+            # Проверка: уже отвечали этому пользователю? (LRU OrderedDict)
             key = f"{phone}:{sender.id}"
             if key in self._responded_users:
+                self._responded_users.move_to_end(key)  # Обновить позицию
                 return
 
             # Задержка (имитация чтения и набора)
@@ -96,12 +98,10 @@ class AutoResponder:
 
             try:
                 await event.respond(reply_text)
-                # Ограничить рост множества
-                if len(self._responded_users) >= self._max_responded_users:
-                    # Сбросить половину (старые записи теряются, но это лучше утечки памяти)
-                    to_keep = list(self._responded_users)[self._max_responded_users // 2:]
-                    self._responded_users = set(to_keep)
-                self._responded_users.add(key)
+                # LRU eviction: удаляем самые старые записи
+                while len(self._responded_users) >= self._max_responded_users:
+                    self._responded_users.popitem(last=False)  # Удалить oldest
+                self._responded_users[key] = True
                 self._stats["replies_sent"] += 1
                 log.info(f"{phone}: автоответ для user_id={sender.id}")
             except Exception as exc:

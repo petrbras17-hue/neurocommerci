@@ -64,6 +64,17 @@ PROXY_COLON_PATTERN = re.compile(
 )
 
 
+def _validate_port(port_str: str) -> Optional[int]:
+    """Валидация порта: 1-65535."""
+    try:
+        port = int(port_str)
+        if 1 <= port <= 65535:
+            return port
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
 def parse_proxy_line(line: str, default_type: str = "socks5") -> Optional[ProxyConfig]:
     """Разобрать строку прокси в разных форматах."""
     line = line.strip()
@@ -73,10 +84,14 @@ def parse_proxy_line(line: str, default_type: str = "socks5") -> Optional[ProxyC
     # Формат: host:port:user:pass
     m = PROXY_COLON_PATTERN.match(line)
     if m:
+        port = _validate_port(m.group("port"))
+        if port is None:
+            log.warning(f"Невалидный порт в прокси: {line}")
+            return None
         return ProxyConfig(
             proxy_type=default_type,
             host=m.group("host"),
-            port=int(m.group("port")),
+            port=port,
             username=m.group("user"),
             password=m.group("pass"),
         )
@@ -84,10 +99,14 @@ def parse_proxy_line(line: str, default_type: str = "socks5") -> Optional[ProxyC
     # Формат: type://user:pass@host:port или host:port
     m = PROXY_URL_PATTERN.match(line)
     if m:
+        port = _validate_port(m.group("port"))
+        if port is None:
+            log.warning(f"Невалидный порт в прокси: {line}")
+            return None
         return ProxyConfig(
             proxy_type=m.group("type") or default_type,
             host=m.group("host"),
-            port=int(m.group("port")),
+            port=port,
             username=m.group("user"),
             password=m.group("pass"),
         )
@@ -121,7 +140,7 @@ class ProxyManager:
             return 0
 
         self.proxies.clear()
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             for line in f:
                 proxy = parse_proxy_line(line, settings.PROXY_TYPE)
                 if proxy:
@@ -141,23 +160,56 @@ class ProxyManager:
         return digest
 
     async def validate_proxy(self, proxy: ProxyConfig, timeout: int = 10) -> bool:
-        """Проверить доступность прокси."""
-        try:
-            connector = aiohttp.TCPConnector()
-            proxy_url = proxy.url if proxy.proxy_type == "http" else None
+        """Проверить доступность прокси (HTTP и SOCKS5)."""
+        if proxy.proxy_type.lower() in ("socks5", "socks4"):
+            return await self._validate_socks(proxy, timeout)
+        return await self._validate_http(proxy, timeout)
 
-            async with aiohttp.ClientSession(connector=connector) as session:
+    async def _validate_http(self, proxy: ProxyConfig, timeout: int = 10) -> bool:
+        """Проверить HTTP прокси через aiohttp."""
+        try:
+            async with aiohttp.ClientSession() as session:
                 async with session.get(
                     "https://api.ipify.org",
-                    proxy=proxy_url,
+                    proxy=proxy.url,
                     timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as resp:
                     if resp.status == 200:
                         ip = await resp.text()
-                        log.debug(f"Прокси {proxy.host}:{proxy.port} OK, IP: {ip}")
+                        log.debug(f"HTTP прокси {proxy.host}:{proxy.port} OK, IP: {ip}")
                         return True
         except Exception as e:
-            log.debug(f"Прокси {proxy.host}:{proxy.port} недоступен: {e}")
+            log.debug(f"HTTP прокси {proxy.host}:{proxy.port} недоступен: {e}")
+        return False
+
+    async def _validate_socks(self, proxy: ProxyConfig, timeout: int = 10) -> bool:
+        """Проверить SOCKS5 прокси через python_socks."""
+        import asyncio
+        from python_socks.async_.asyncio import Proxy
+
+        try:
+            ptype = ProxyType.SOCKS5 if proxy.proxy_type.lower() == "socks5" else ProxyType.SOCKS4
+            p = Proxy(ptype, proxy.host, proxy.port, proxy.username, proxy.password)
+            sock = await asyncio.wait_for(
+                p.connect(dest_host="api.ipify.org", dest_port=80),
+                timeout=timeout,
+            )
+            # Отправить простой HTTP запрос через установленный SOCKS туннель
+            sock.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n")
+            data = await asyncio.wait_for(
+                asyncio.get_event_loop().run_in_executor(None, sock.recv, 1024),
+                timeout=timeout,
+            )
+            sock.close()
+            if b"200" in data:
+                # Извлечь IP из ответа
+                body = data.split(b"\r\n\r\n", 1)[-1].decode(errors="ignore").strip()
+                log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port} OK, IP: {body}")
+                return True
+        except asyncio.TimeoutError:
+            log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port}: таймаут")
+        except Exception as e:
+            log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port} недоступен: {e}")
         return False
 
     async def validate_all(self) -> dict[str, bool]:

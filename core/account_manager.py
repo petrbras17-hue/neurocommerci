@@ -2,6 +2,7 @@
 Менеджер аккаунтов — пул, ротация, статусы.
 """
 
+import asyncio
 from datetime import datetime
 from typing import Optional
 
@@ -30,6 +31,7 @@ class AccountManager:
         self.proxy_mgr = proxy_manager
         self.rate_limiter = rate_limiter
         self._rotation_index = 0
+        self._lock = asyncio.Lock()  # Защита от race condition при выборе аккаунта
 
     async def load_accounts(self) -> list[Account]:
         """Загрузить все аккаунты из БД."""
@@ -58,6 +60,8 @@ class AccountManager:
 
     async def connect_all(self) -> dict[str, str]:
         """Подключить все активные аккаунты. Возвращает {phone: status}."""
+        from telethon.errors import FloodWaitError
+
         accounts = await self.load_accounts()
         results = {}
 
@@ -67,41 +71,53 @@ class AccountManager:
                 continue
 
             proxy = self.proxy_mgr.assign_to_account(account.phone)
-            client = await self.session_mgr.connect_client(account.phone, proxy)
-
-            if client:
-                results[account.phone] = "connected"
-            else:
+            try:
+                client = await self.session_mgr.connect_client(account.phone, proxy)
+                if client:
+                    results[account.phone] = "connected"
+                else:
+                    results[account.phone] = "failed"
+                    await self._update_status(account.phone, "error")
+            except FloodWaitError as e:
+                results[account.phone] = f"flood_wait_{e.seconds}s"
+                await self.handle_error(account.phone, "flood_wait", str(e.seconds))
+            except Exception as e:
                 results[account.phone] = "failed"
                 await self._update_status(account.phone, "error")
+                log.error(f"Ошибка подключения {account.phone}: {e}")
 
         return results
 
     async def get_next_available(self) -> Optional[Account]:
-        """Получить следующий доступный аккаунт для комментирования (round-robin)."""
-        accounts = await self.load_accounts()
-        active = [a for a in accounts if a.status == "active"]
+        """Получить следующий доступный аккаунт для комментирования (round-robin).
 
-        if not active:
-            log.warning("Нет активных аккаунтов")
+        Используем asyncio.Lock для защиты от race condition:
+        без него два concurrent вызова могут выбрать один и тот же аккаунт.
+        """
+        async with self._lock:
+            accounts = await self.load_accounts()
+            active = [a for a in accounts if a.status == "active"]
+
+            if not active:
+                log.warning("Нет активных аккаунтов")
+                return None
+
+            # Round-robin с проверкой лимитов
+            for _ in range(len(active)):
+                idx = self._rotation_index % len(active)
+                self._rotation_index += 1
+                account = active[idx]
+
+                if self.rate_limiter.can_comment(account.phone, account.days_active):
+                    # Проверить что клиент подключён
+                    client = self.session_mgr.get_client(account.phone)
+                    if client and client.is_connected():
+                        return account
+                    else:
+                        log.debug(f"{account.phone}: клиент не подключён")
+
+            log.warning("Все аккаунты на cooldown или отключены")
             return None
-
-        # Round-robin с проверкой лимитов
-        for _ in range(len(active)):
-            idx = self._rotation_index % len(active)
-            self._rotation_index += 1
-            account = active[idx]
-
-            if self.rate_limiter.can_comment(account.phone, account.days_active):
-                # Проверить что клиент подключён
-                client = self.session_mgr.get_client(account.phone)
-                if client and client.is_connected():
-                    return account
-                else:
-                    log.debug(f"{account.phone}: клиент не подключён")
-
-        log.warning("Все аккаунты на cooldown или отключены")
-        return None
 
     async def record_comment(self, phone: str):
         """Зафиксировать комментарий: rate limiter + БД."""

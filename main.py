@@ -15,7 +15,7 @@ import signal
 import sys
 
 from config import settings
-from storage.sqlite_db import init_db
+from storage.sqlite_db import init_db, dispose_engine
 from utils.logger import log
 
 
@@ -26,8 +26,12 @@ async def run_bot():
     log.info("Инициализация базы данных...")
     await init_db()
 
-    log.info("Запуск NEURO COMMENTING в режиме Telegram-бота")
-    await start_bot()
+    try:
+        log.info("Запуск NEURO COMMENTING в режиме Telegram-бота")
+        await start_bot()
+    finally:
+        await dispose_engine()
+        log.info("БД соединение закрыто")
 
 
 async def run_cli():
@@ -37,11 +41,23 @@ async def run_cli():
     log.info("Инициализация базы данных...")
     await init_db()
 
-    log.info("Запуск NEURO COMMENTING в режиме CLI")
-    await cli_main()
+    try:
+        log.info("Запуск NEURO COMMENTING в режиме CLI")
+        await cli_main()
+    finally:
+        await dispose_engine()
 
 
 def main():
+    # Проверка критичных настроек
+    warnings = settings.validate_critical()
+    if warnings:
+        print()
+        print("  ⚠️  Предупреждения конфигурации:")
+        for w in warnings:
+            print(f"     • {w}")
+        print()
+
     if "--cli" in sys.argv:
         asyncio.run(run_cli())
     elif "--dry-run" in sys.argv:

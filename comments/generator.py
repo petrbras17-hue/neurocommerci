@@ -109,16 +109,19 @@ class CommentGenerator:
         )
 
         try:
-            response = await asyncio.to_thread(
-                self._client.models.generate_content,
-                model=settings.GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.9,
-                    top_p=0.95,
-                    max_output_tokens=300,
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._client.models.generate_content,
+                    model=settings.GEMINI_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0.9,
+                        top_p=0.95,
+                        max_output_tokens=300,
+                    ),
                 ),
+                timeout=30.0,  # 30 секунд макс на Gemini API
             )
 
             if not response or not response.text:
@@ -143,6 +146,9 @@ class CommentGenerator:
 
             return text
 
+        except asyncio.TimeoutError:
+            log.warning("Gemini API: таймаут (30с)")
+            return None
         except Exception as exc:
             log.error(f"Ошибка Gemini API: {exc}")
             return None

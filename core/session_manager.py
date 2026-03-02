@@ -4,11 +4,13 @@
 Читает JSON-метаданные от поставщика для device fingerprint каждого аккаунта.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Optional
 
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError
 from telethon.sessions import StringSession
 
 from config import settings
@@ -117,6 +119,16 @@ class SessionManager:
             log.info(f"Подключен аккаунт: {me.first_name} ({phone})")
             self._clients[phone] = client
             return client
+
+        except FloodWaitError as e:
+            wait = int(e.seconds * 1.5)
+            log.warning(f"FloodWait при подключении {phone}: ждать {e.seconds}с (cooldown {wait}с)")
+            # Не ретраим сразу — вызывающий код обработает через account_mgr.handle_error
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise  # Пробрасываем наверх чтобы account_manager мог выставить cooldown
 
         except Exception as e:
             log.error(f"Ошибка подключения {phone}: {e}")

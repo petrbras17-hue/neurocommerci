@@ -105,14 +105,15 @@ class ChannelMonitor:
         log.info("Мониторинг каналов запущен")
 
     async def stop(self):
-        """Остановить мониторинг."""
+        """Остановить мониторинг с гарантированной очисткой."""
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
             try:
-                await self._task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(asyncio.shield(self._task), timeout=10.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
+        self._task = None
         log.info("Мониторинг каналов остановлен")
 
     @property
@@ -145,15 +146,25 @@ class ChannelMonitor:
         return new_posts_total
 
     async def _monitor_loop(self):
-        """Основной цикл мониторинга."""
+        """Основной цикл мониторинга с exponential backoff при ошибках."""
         log.info(f"Цикл мониторинга: интервал {settings.MONITOR_POLL_INTERVAL_SEC}с")
+        consecutive_errors = 0
+        max_backoff = 600  # 10 мин макс
+
         while self._running:
             try:
                 new_count = await self.check_channels_once()
                 if new_count:
                     log.info(f"Очередь: {self.queue.size} постов ожидают комментария")
+                consecutive_errors = 0  # Сброс при успехе
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                log.error(f"Ошибка в цикле мониторинга: {exc}")
+                consecutive_errors += 1
+                backoff = min(settings.MONITOR_POLL_INTERVAL_SEC * (2 ** consecutive_errors), max_backoff)
+                log.error(f"Ошибка в цикле мониторинга ({consecutive_errors}x): {exc}. Backoff: {backoff}с")
+                await asyncio.sleep(backoff)
+                continue
 
             await asyncio.sleep(settings.MONITOR_POLL_INTERVAL_SEC)
 

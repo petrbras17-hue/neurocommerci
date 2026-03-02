@@ -85,5 +85,18 @@ class Settings(BaseSettings):
     def proxy_list_path(self) -> Path:
         return BASE_DIR / self.PROXY_LIST_FILE
 
+    def validate_critical(self) -> list[str]:
+        """Проверить критичные настройки при старте. Возвращает список предупреждений."""
+        warnings = []
+        if self.TELEGRAM_API_ID == 0:
+            warnings.append("TELEGRAM_API_ID не задан (=0)")
+        if not self.TELEGRAM_API_HASH:
+            warnings.append("TELEGRAM_API_HASH пуст")
+        if not self.ADMIN_BOT_TOKEN:
+            warnings.append("ADMIN_BOT_TOKEN не задан — бот не запустится")
+        if not self.GEMINI_API_KEY:
+            warnings.append("GEMINI_API_KEY не задан — AI генерация отключена, используются фоллбэки")
+        return warnings
+
 
 settings = Settings()

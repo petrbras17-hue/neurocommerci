@@ -2122,12 +2122,36 @@ async def process_add_channel_input(message: Message, state: FSMContext):
 
 # --- Настройки ---
 
+# Whitelist ключей, которые разрешено обновлять через бота
+_ALLOWED_ENV_KEYS = frozenset({
+    "ADMIN_TELEGRAM_ID",
+    "MAX_COMMENTS_PER_ACCOUNT_PER_DAY",
+    "MIN_DELAY_BETWEEN_COMMENTS_SEC",
+    "MAX_DELAY_BETWEEN_COMMENTS_SEC",
+    "COMMENT_COOLDOWN_AFTER_ERROR_SEC",
+    "SCENARIO_B_RATIO",
+    "DARTVPN_BOT_LINK",
+    "DARTVPN_CHANNEL_LINK",
+    "MONITOR_POLL_INTERVAL_SEC",
+    "POST_MAX_AGE_HOURS",
+    "LOG_LEVEL",
+    "PROXY_ROTATING",
+    "PROXY_STICKY_FORMAT",
+})
+
+
 def _update_env(key: str, value: str):
-    """Обновить значение в .env файле."""
+    """Обновить значение в .env файле (только из whitelist)."""
     from pathlib import Path
-    # Санитизация: удалить переводы строк и возвраты каретки для предотвращения инъекции
+    # Санитизация: удалить переводы строк и возвраты каретки
     value = value.replace("\n", "").replace("\r", "")
-    key = key.replace("\n", "").replace("\r", "").replace("=", "")
+    key = key.replace("\n", "").replace("\r", "").replace("=", "").strip()
+
+    # Whitelist: запрещаем запись произвольных ключей
+    if key not in _ALLOWED_ENV_KEYS:
+        log.warning(f"Попытка записи запрещённого ключа в .env: {key}")
+        return
+
     env_path = Path(settings.model_config["env_file"])
     if not env_path.exists():
         return
