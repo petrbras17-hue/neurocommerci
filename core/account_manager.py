@@ -203,7 +203,7 @@ class AccountManager:
 
         for acc in accounts:
             summary[acc.status] = summary.get(acc.status, 0) + 1
-            summary["total_comments_today"] += acc.comments_today
+            summary["total_comments_today"] += acc.comments_today or 0
             if self.session_mgr.get_client(acc.phone):
                 summary["connected"] += 1
 

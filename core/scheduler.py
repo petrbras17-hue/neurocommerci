@@ -11,9 +11,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Callable, Awaitable
+
+from utils.helpers import utcnow
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -120,7 +121,7 @@ class TaskScheduler:
         Отложенный запуск комментирования через N минут.
         Возвращает datetime когда запустится.
         """
-        run_at = datetime.now() + timedelta(minutes=delay_minutes)
+        run_at = utcnow() + timedelta(minutes=delay_minutes)
         self._delayed_start_time = run_at
 
         self._scheduler.add_job(

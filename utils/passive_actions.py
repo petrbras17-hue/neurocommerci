@@ -13,8 +13,8 @@ from telethon import TelegramClient
 from telethon.tl.functions.messages import (
     GetMessagesViewsRequest,
     SendReactionRequest,
-    ReadHistoryRequest,
 )
+from telethon.tl.functions.channels import ReadHistoryRequest
 from telethon.tl.types import ReactionEmoji
 
 from core.session_manager import SessionManager

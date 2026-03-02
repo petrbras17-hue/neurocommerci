@@ -58,6 +58,7 @@ class Settings(BaseSettings):
 
     # --- Paths ---
     SESSIONS_DIR: str = Field(default="data/sessions")
+    PROFILE_AVATARS_DIR: str = Field(default="data/avatars/profiles")
     DB_PATH: str = Field(default="data/neuro_commenting.db")
     LOG_LEVEL: str = Field(default="INFO")
 
@@ -73,6 +74,12 @@ class Settings(BaseSettings):
     @property
     def sessions_path(self) -> Path:
         path = BASE_DIR / self.SESSIONS_DIR
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def profile_avatars_path(self) -> Path:
+        path = BASE_DIR / self.PROFILE_AVATARS_DIR
         path.mkdir(parents=True, exist_ok=True)
         return path
 

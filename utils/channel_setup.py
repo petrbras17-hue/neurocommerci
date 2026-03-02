@@ -573,16 +573,21 @@ class ChannelSetup:
             current_bio = me.about or ""
 
             if not current_bio:
-                new_bio = f"👇 Подробнее в канале\n{channel_link}"
+                # Если ссылка + текст не влезают — ставим только ссылку
+                fallback_text = f"👇 Подробнее в канале\n{channel_link}"
+                if len(fallback_text) <= 70:
+                    new_bio = fallback_text
+                else:
+                    new_bio = channel_link[:70]
             elif channel_link in current_bio:
                 return
             else:
-                max_bio_for_link = 70 - len(channel_link) - 2
+                max_bio_for_link = 70 - len(channel_link) - 1  # \n = 1 символ
                 if max_bio_for_link > 10:
                     trimmed_bio = current_bio[:max_bio_for_link].rstrip()
                     new_bio = f"{trimmed_bio}\n{channel_link}"
                 else:
-                    new_bio = channel_link
+                    new_bio = channel_link[:70]
 
             await client(UpdateProfileRequest(about=new_bio[:70]))
             log.info(f"{phone}: bio обновлён с каналом-переходником")

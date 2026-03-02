@@ -3,7 +3,7 @@ SQLite база данных — инициализация и сессии.
 WAL mode + NullPool для корректной работы при конкурентных async-задачах.
 """
 
-from sqlalchemy import event, text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 

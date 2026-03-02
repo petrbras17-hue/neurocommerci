@@ -974,12 +974,16 @@ async def cb_acc_package(callback: CallbackQuery):
         return
 
     await callback.message.edit_text(
-        "🎨 <b>Упаковка профилей</b>\n"
+        "🎨 <b>Упаковка профилей (женские)</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Подключено аккаунтов: <b>{len(connected)}</b>\n\n"
-        "AI сгенерирует имя, фамилию и описание\n"
-        "для каждого аккаунта.\n\n"
-        "Стили: casual, expert, business, student",
+        "AI сгенерирует:\n"
+        "  — Женское имя и фамилию\n"
+        "  — Username (латиницей)\n"
+        "  — Аватарку (Gemini Imagen)\n"
+        "  — Bio с намёком на VPN/тех\n\n"
+        "Стили: beauty, casual, student, tech, lifestyle\n"
+        "blogger, fitness, business, creative, friendly",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Упаковать все аккаунты", callback_data="acc_package_run")],
@@ -991,7 +995,10 @@ async def cb_acc_package(callback: CallbackQuery):
 @router.callback_query(F.data == "acc_package_run")
 async def cb_acc_package_run(callback: CallbackQuery):
     await callback.answer("Упаковка запущена...")
-    await callback.message.edit_text("⏳ AI генерирует профили для аккаунтов...")
+    await callback.message.edit_text(
+        "⏳ AI генерирует женские профили и аватарки...\n"
+        "Это может занять несколько минут."
+    )
 
     results = await account_packager.package_all_accounts()
     lines = [
@@ -1002,14 +1009,23 @@ async def cb_acc_package_run(callback: CallbackQuery):
     for r in results:
         status = "✅" if r["applied"] else "❌"
         profile = r["profile"]
+        name = f"{profile['first_name']} {profile.get('last_name', '')}".strip()
+        username_str = f" (@{r['username']})" if r.get("username") else ""
+        avatar_str = " 📷" if r.get("avatar_applied") else ""
         lines.append(
             f"{status} <code>{r['phone']}</code>\n"
-            f"   {profile['first_name']} {profile.get('last_name', '')}\n"
+            f"   {name}{username_str}{avatar_str}\n"
             f"   <i>{profile.get('bio', '')[:50]}</i>"
         )
 
     applied = sum(1 for r in results if r["applied"])
-    lines.append(f"\nУпаковано: <b>{applied}/{len(results)}</b>")
+    usernames = sum(1 for r in results if r.get("username_applied"))
+    avatars = sum(1 for r in results if r.get("avatar_applied"))
+    lines.append(
+        f"\nПрофили: <b>{applied}/{len(results)}</b> | "
+        f"Username: <b>{usernames}/{len(results)}</b> | "
+        f"Аватарки: <b>{avatars}/{len(results)}</b>"
+    )
 
     await callback.message.edit_text(
         "\n".join(lines),
