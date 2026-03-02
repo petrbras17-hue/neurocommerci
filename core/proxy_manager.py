@@ -1,10 +1,12 @@
 """
 Менеджер прокси-серверов.
 Загрузка, валидация, назначение прокси аккаунтам.
+Поддержка статических и ротируемых (sticky session) прокси.
 """
 
+import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 import aiohttp
@@ -37,6 +39,20 @@ class ProxyConfig:
     def url(self) -> str:
         auth = f"{self.username}:{self.password}@" if self.username else ""
         return f"{self.proxy_type}://{auth}{self.host}:{self.port}"
+
+    def with_sticky_session(self, session_id: str) -> "ProxyConfig":
+        """Создать копию прокси со sticky session username.
+
+        Формат username подставляется из settings.PROXY_STICKY_FORMAT.
+        Например: 'user123-session-abc' → каждый session_id получает свой IP.
+        """
+        if not self.username:
+            log.warning("Sticky session невозможен без username в прокси")
+            return self
+
+        fmt = settings.PROXY_STICKY_FORMAT
+        sticky_user = fmt.format(user=self.username, session_id=session_id)
+        return replace(self, username=sticky_user)
 
 
 # Паттерн: type://user:pass@host:port или host:port:user:pass
@@ -81,11 +97,21 @@ def parse_proxy_line(line: str, default_type: str = "socks5") -> Optional[ProxyC
 
 
 class ProxyManager:
-    """Управление пулом прокси."""
+    """Управление пулом прокси.
+
+    Два режима:
+    - Статический (PROXY_ROTATING=False): N прокси → N аккаунтов, round-robin.
+    - Ротируемый (PROXY_ROTATING=True): 1 прокси-эндпоинт → N аккаунтов,
+      каждому присваивается sticky session ID для стабильного IP.
+    """
 
     def __init__(self):
         self.proxies: list[ProxyConfig] = []
         self._assignments: dict[str, ProxyConfig] = {}  # account_phone -> proxy
+
+    @property
+    def is_rotating(self) -> bool:
+        return settings.PROXY_ROTATING
 
     def load_from_file(self) -> int:
         """Загрузить прокси из файла. Возвращает количество загруженных."""
@@ -101,8 +127,18 @@ class ProxyManager:
                 if proxy:
                     self.proxies.append(proxy)
 
-        log.info(f"Загружено прокси: {len(self.proxies)}")
+        mode = "ротируемый" if self.is_rotating else "статический"
+        log.info(f"Загружено прокси: {len(self.proxies)} (режим: {mode})")
         return len(self.proxies)
+
+    def _make_session_id(self, phone: str) -> str:
+        """Генерировать детерминированный session ID из номера телефона.
+
+        Один и тот же номер всегда получает один session ID →
+        один и тот же IP при переподключении.
+        """
+        digest = hashlib.md5(phone.encode()).hexdigest()[:8]
+        return digest
 
     async def validate_proxy(self, proxy: ProxyConfig, timeout: int = 10) -> bool:
         """Проверить доступность прокси."""
@@ -133,7 +169,11 @@ class ProxyManager:
         return results
 
     def assign_to_account(self, phone: str) -> Optional[ProxyConfig]:
-        """Назначить прокси аккаунту (round-robin)."""
+        """Назначить прокси аккаунту.
+
+        Статический режим: round-robin из пула.
+        Ротируемый режим: один эндпоинт + sticky session per account.
+        """
         if not self.proxies:
             log.warning("Нет доступных прокси для назначения")
             return None
@@ -142,7 +182,20 @@ class ProxyManager:
         if phone in self._assignments:
             return self._assignments[phone]
 
-        # Round-robin: следующий неназначенный
+        if self.is_rotating:
+            # Ротируемый: берём первый (единственный) прокси,
+            # создаём sticky session для каждого аккаунта
+            base_proxy = self.proxies[0]
+            session_id = self._make_session_id(phone)
+            proxy = base_proxy.with_sticky_session(session_id)
+            self._assignments[phone] = proxy
+            log.info(
+                f"Прокси {proxy.host}:{proxy.port} (sticky: {session_id}) "
+                f"назначен аккаунту {phone}"
+            )
+            return proxy
+
+        # Статический: round-robin
         used_proxies = set(id(p) for p in self._assignments.values())
         for proxy in self.proxies:
             if id(proxy) not in used_proxies:
@@ -150,7 +203,7 @@ class ProxyManager:
                 log.info(f"Прокси {proxy.host}:{proxy.port} назначен аккаунту {phone}")
                 return proxy
 
-        # Если все заняты — переиспользовать первый
+        # Если все заняты — переиспользовать
         proxy = self.proxies[len(self._assignments) % len(self.proxies)]
         self._assignments[phone] = proxy
         log.info(f"Прокси {proxy.host}:{proxy.port} переназначен аккаунту {phone}")
@@ -159,3 +212,11 @@ class ProxyManager:
     def get_for_account(self, phone: str) -> Optional[ProxyConfig]:
         """Получить прокси, назначенный аккаунту."""
         return self._assignments.get(phone)
+
+    def get_status_info(self) -> dict:
+        """Информация о состоянии прокси для дашборда."""
+        return {
+            "total": len(self.proxies),
+            "assigned": len(self._assignments),
+            "mode": "rotating" if self.is_rotating else "static",
+        }

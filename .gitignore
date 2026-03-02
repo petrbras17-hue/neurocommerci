@@ -24,9 +24,11 @@ env/
 *.swo
 *~
 
-# Telegram sessions
+# Telegram sessions & account metadata
 data/sessions/*.session
 data/sessions/*.session-journal
+data/sessions/*.json
+data/sessions/*/
 
 # Google credentials
 credentials.json

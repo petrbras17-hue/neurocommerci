@@ -1,8 +1,10 @@
 """
 Менеджер Telethon сессий.
 Создание клиентов с прокси, управление подключениями.
+Читает JSON-метаданные от поставщика для device fingerprint каждого аккаунта.
 """
 
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -13,33 +15,78 @@ from config import settings
 from core.proxy_manager import ProxyConfig
 from utils.logger import log
 
+# Дефолтные параметры устройства (если JSON отсутствует)
+DEFAULT_DEVICE = {
+    "device": "Samsung Galaxy S23",
+    "sdk": "Android 14",
+    "app_version": "10.8.3",
+    "lang_pack": "ru",
+    "system_lang_pack": "ru",
+}
+
 
 class SessionManager:
-    """Фабрика Telethon клиентов."""
+    """Фабрика Telethon клиентов с поддержкой per-account device fingerprint."""
 
     def __init__(self):
         self._clients: dict[str, TelegramClient] = {}  # phone -> client
+        self._device_cache: dict[str, dict] = {}  # phone -> device params
+
+    def _load_device_params(self, session_name: str) -> dict:
+        """Загрузить параметры устройства из JSON-файла поставщика."""
+        if session_name in self._device_cache:
+            return self._device_cache[session_name]
+
+        json_path = settings.sessions_path / f"{session_name}.json"
+        if json_path.exists():
+            try:
+                data = json.loads(json_path.read_text(encoding="utf-8"))
+                params = {
+                    "device": data.get("device", DEFAULT_DEVICE["device"]),
+                    "sdk": data.get("sdk", DEFAULT_DEVICE["sdk"]),
+                    "app_version": data.get("app_version", DEFAULT_DEVICE["app_version"]),
+                    "lang_pack": data.get("lang_pack", DEFAULT_DEVICE["lang_pack"]),
+                    "system_lang_pack": data.get("system_lang_pack", DEFAULT_DEVICE["system_lang_pack"]),
+                    "app_id": data.get("app_id"),
+                    "app_hash": data.get("app_hash"),
+                    "first_name": data.get("first_name"),
+                    "twoFA": data.get("twoFA"),
+                }
+                self._device_cache[session_name] = params
+                log.debug(f"Device params для {session_name}: {params['device']}")
+                return params
+            except Exception as exc:
+                log.warning(f"Ошибка чтения {json_path}: {exc}")
+
+        self._device_cache[session_name] = DEFAULT_DEVICE
+        return DEFAULT_DEVICE
 
     def create_client(
         self,
         session_name: str,
         proxy: Optional[ProxyConfig] = None,
     ) -> TelegramClient:
-        """Создать Telethon клиент с опциональным прокси."""
+        """Создать Telethon клиент с device fingerprint из JSON метаданных."""
         session_path = str(settings.sessions_path / session_name)
-
         proxy_tuple = proxy.to_telethon_proxy() if proxy else None
+
+        # Загрузить per-account device params
+        device = self._load_device_params(session_name)
+
+        # Использовать api_id/api_hash из JSON если есть (важно для купленных аккаунтов!)
+        api_id = device.get("app_id") or settings.TELEGRAM_API_ID
+        api_hash = device.get("app_hash") or settings.TELEGRAM_API_HASH
 
         client = TelegramClient(
             session_path,
-            api_id=settings.TELEGRAM_API_ID,
-            api_hash=settings.TELEGRAM_API_HASH,
+            api_id=api_id,
+            api_hash=api_hash,
             proxy=proxy_tuple,
-            device_model="Samsung Galaxy S23",
-            system_version="Android 14",
-            app_version="10.8.3",
-            lang_code="ru",
-            system_lang_code="ru",
+            device_model=device.get("device", DEFAULT_DEVICE["device"]),
+            system_version=device.get("sdk", DEFAULT_DEVICE["sdk"]),
+            app_version=device.get("app_version", DEFAULT_DEVICE["app_version"]),
+            lang_code=device.get("lang_pack", "ru"),
+            system_lang_code=device.get("system_lang_pack", "ru"),
         )
 
         return client
@@ -102,6 +149,11 @@ class SessionManager:
     def get_connected_phones(self) -> list[str]:
         """Список подключённых номеров."""
         return [p for p, c in self._clients.items() if c.is_connected()]
+
+    def get_device_info(self, phone: str) -> dict:
+        """Получить device params для аккаунта (для отображения в боте)."""
+        session_name = phone.lstrip("+").replace(" ", "")
+        return self._load_device_params(session_name)
 
     def list_session_files(self) -> list[str]:
         """Список .session файлов в директории сессий."""
