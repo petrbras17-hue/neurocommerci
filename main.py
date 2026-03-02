@@ -16,6 +16,7 @@ import sys
 
 from config import settings
 from storage.sqlite_db import init_db, dispose_engine
+from utils.bootstrap import bootstrap
 from utils.logger import log
 
 
@@ -57,6 +58,9 @@ def main():
         for w in warnings:
             print(f"     • {w}")
         print()
+
+    # Bootstrap: восстановить данные из env vars (Railway)
+    bootstrap()
 
     if "--cli" in sys.argv:
         asyncio.run(run_cli())
