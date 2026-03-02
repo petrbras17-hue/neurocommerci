@@ -1,0 +1,52 @@
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Telegram sessions
+data/sessions/*.session
+data/sessions/*.session-journal
+
+# Google credentials
+credentials.json
+token.json
+service_account.json
+
+# Database
+data/*.db
+data/*.db-journal
+
+# Logs
+data/logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Avatars (user-provided)
+data/avatars/*
+!data/avatars/.gitkeep
+
+# Proxy list
+data/proxies.txt

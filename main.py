@@ -1,0 +1,72 @@
+"""
+NEURO COMMENTING — Точка входа.
+Система автоматического комментирования в Telegram для продвижения DartVPN.
+
+Запуск:
+    python main.py          — Telegram-бот (основной режим)
+    python main.py --cli    — CLI интерфейс в терминале
+    python main.py --dry-run — Тестовый запуск без реальной отправки
+
+Graceful shutdown: Ctrl+C для безопасного завершения (сохраняет состояние).
+"""
+
+import asyncio
+import signal
+import sys
+
+from config import settings
+from storage.sqlite_db import init_db
+from utils.logger import log
+
+
+async def run_bot():
+    """Запуск Telegram-бота (основной режим)."""
+    from admin.bot_admin import start_bot
+
+    log.info("Инициализация базы данных...")
+    await init_db()
+
+    log.info("Запуск NEURO COMMENTING в режиме Telegram-бота")
+    await start_bot()
+
+
+async def run_cli():
+    """Запуск CLI интерфейса."""
+    from admin.cli_menu import main as cli_main
+
+    log.info("Инициализация базы данных...")
+    await init_db()
+
+    log.info("Запуск NEURO COMMENTING в режиме CLI")
+    await cli_main()
+
+
+def main():
+    if "--cli" in sys.argv:
+        asyncio.run(run_cli())
+    elif "--dry-run" in sys.argv:
+        import os
+        os.environ["NEURO_DRY_RUN"] = "1"
+        print()
+        print("  🧪 NEURO COMMENTING — DRY RUN")
+        print("  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("  Тестовый запуск без реальной отправки")
+        print()
+        asyncio.run(run_bot())
+    else:
+        print()
+        print("  🚀 NEURO COMMENTING")
+        print("  ━━━━━━━━━━━━━━━━━━")
+        print("  Запуск Telegram-бота...")
+        print(f"  AI: {settings.GEMINI_MODEL}")
+        print(f"  DartVPN: {settings.DARTVPN_BOT_LINK}")
+        print()
+        print("  Ctrl+C для graceful shutdown")
+        print("  --cli для терминального интерфейса")
+        print("  --dry-run для тестового режима")
+        print()
+        asyncio.run(run_bot())
+
+
+if __name__ == "__main__":
+    main()
