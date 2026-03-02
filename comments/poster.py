@@ -12,8 +12,10 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 import random
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -48,6 +50,28 @@ SWAP_EMOJIS = ["👀", "🔥", "💯", "👍", "😄", "✨", "🤔", "📌", "�
 
 # Задержка перед заменой эмодзи на текст (секунды)
 EMOJI_SWAP_DELAY_SEC = 60
+
+# Скрытая ссылка: @DartVPNBot → синий кликабельный текст в Telegram
+HIDDEN_LINK_WORDS = [
+    "один VPN-бот",
+    "один сервис",
+    "один VPN",
+    "один бот в тг",
+    "один ВПН",
+    "этот сервис",
+    "этим ботом",
+]
+
+
+def _apply_hidden_link(text: str) -> str:
+    """
+    Заменить @DartVPNBot на скрытую HTML-ссылку (синий текст в Telegram).
+    Сначала экранируем HTML-символы в тексте, затем вставляем <a href>.
+    """
+    safe_text = html.escape(text)
+    word = random.choice(HIDDEN_LINK_WORDS)
+    link_html = f'<a href="{settings.DARTVPN_BOT_LINK}">{word}</a>'
+    return re.sub(r"@DartVPNBot", link_html, safe_text, flags=re.IGNORECASE)
 
 
 class CommentPoster:
@@ -218,10 +242,19 @@ class CommentPoster:
             discussion_group = await client.get_entity(discussion_group_id)
             telegram_post_id = post_data.get("telegram_post_id")
 
+            # Сценарий B: скрытая ссылка (синий текст в Telegram)
+            if scenario == "B" and "@dartvpnbot" in comment_text.lower():
+                send_text = _apply_hidden_link(comment_text)
+                parse_mode = "html"
+            else:
+                send_text = comment_text
+                parse_mode = None
+
             await client.send_message(
                 discussion_group,
-                comment_text,
+                send_text,
                 comment_to=telegram_post_id,
+                parse_mode=parse_mode,
             )
 
             await self._save_comment(
@@ -365,10 +398,19 @@ class CommentPoster:
                 log.warning(f"{account_phone}: клиент отключился, swap отменён")
                 return
 
+            # Сценарий B: скрытая ссылка (синий текст в Telegram)
+            if scenario == "B" and "@dartvpnbot" in new_text.lower():
+                send_text = _apply_hidden_link(new_text)
+                parse_mode = "html"
+            else:
+                send_text = new_text
+                parse_mode = None
+
             await client.edit_message(
                 discussion_group,
                 message_id,
-                new_text,
+                send_text,
+                parse_mode=parse_mode,
             )
             log.info(f"{account_phone}: emoji→text swap выполнен (msg_id={message_id})")
 

@@ -42,8 +42,9 @@ class Settings(BaseSettings):
     COMMENT_COOLDOWN_AFTER_ERROR_SEC: int = Field(default=1800)
 
     # --- DartVPN Promotion ---
-    DARTVPN_BOT_LINK: str = Field(default="https://t.me/DartVPNBot")
+    DARTVPN_BOT_LINK: str = Field(default="https://t.me/DartVPNBot?start=fly")
     DARTVPN_CHANNEL_LINK: str = Field(default="")
+    DARTVPN_AVATAR_PATH: str = Field(default="data/avatars/dartvpn_banner.jpg")
     SCENARIO_B_RATIO: float = Field(default=0.3)
 
     # --- Warm-up (прогрев новых аккаунтов) ---
