@@ -9,11 +9,8 @@ from __future__ import annotations
 import asyncio
 import random
 from collections import OrderedDict
-from datetime import datetime
-from typing import Optional
 
 from telethon import TelegramClient, events
-from telethon.tl.types import PeerUser
 
 from config import settings
 from core.session_manager import SessionManager

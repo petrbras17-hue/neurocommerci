@@ -168,7 +168,10 @@ class AccountManager:
         """Сбросить дневные счётчики (вызывается в полночь)."""
         async with async_session() as session:
             await session.execute(
-                update(Account).values(comments_today=0)
+                update(Account).values(
+                    comments_today=0,
+                    days_active=Account.days_active + 1,
+                )
             )
             # Восстановить cooldown аккаунты
             await session.execute(
@@ -177,7 +180,7 @@ class AccountManager:
                 .values(status="active")
             )
             await session.commit()
-        log.info("Дневные счётчики сброшены")
+        log.info("Дневные счётчики сброшены, days_active увеличен")
 
     async def get_status_summary(self) -> dict:
         """Сводка по всем аккаунтам."""
@@ -188,6 +191,7 @@ class AccountManager:
             "cooldown": 0,
             "banned": 0,
             "flood_wait": 0,
+            "error": 0,
             "connected": 0,
             "total_comments_today": 0,
         }

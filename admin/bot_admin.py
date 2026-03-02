@@ -1418,7 +1418,6 @@ async def cb_com_start(callback: CallbackQuery):
             log.error(f"Ошибка обработки очереди: {exc}")
 
     task_scheduler.add_commenting_job(process_comment_queue, interval_sec=30)
-    task_scheduler.add_sheets_sync_job(sync_to_sheets_snapshot)
     task_scheduler.add_daily_reset_job(account_mgr.reset_daily_counters)
     task_scheduler.add_auto_recovery_job(account_mgr.auto_recover, interval_sec=600)
     task_scheduler.start()
@@ -1538,6 +1537,7 @@ async def process_delayed_minutes(message: Message, state: FSMContext):
                     log.error(f"Ошибка обработки очереди: {exc}")
 
             task_scheduler.add_commenting_job(process_comment_queue, interval_sec=30)
+            task_scheduler.add_daily_reset_job(account_mgr.reset_daily_counters)
             task_scheduler.add_auto_recovery_job(account_mgr.auto_recover, interval_sec=600)
 
             channels = await channel_db.get_all_active()
@@ -1803,7 +1803,8 @@ async def cb_com_autoresponder_toggle(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "back_commenting")
-async def cb_back_commenting(callback: CallbackQuery):
+async def cb_back_commenting(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     await callback.answer()
     await callback.message.edit_text(
         "💬 <b>Комментинг</b>",
@@ -2560,8 +2561,8 @@ async def handle_document(message: Message):
 async def start_bot():
     """Запустить Telegram бота."""
     if not settings.ADMIN_BOT_TOKEN:
-        log.error("ADMIN_BOT_TOKEN не задан в .env!")
-        return
+        log.error("ADMIN_BOT_TOKEN не задан в .env! Бот не может запуститься.")
+        raise SystemExit("ADMIN_BOT_TOKEN не задан")
 
     scheduler: Optional[AsyncIOScheduler] = None
     bot = Bot(token=settings.ADMIN_BOT_TOKEN)

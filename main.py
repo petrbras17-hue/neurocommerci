@@ -11,7 +11,6 @@ Graceful shutdown: Ctrl+C для безопасного завершения (с
 """
 
 import asyncio
-import signal
 import sys
 
 from config import settings

@@ -4,14 +4,11 @@
 Читает JSON-метаданные от поставщика для device fingerprint каждого аккаунта.
 """
 
-import asyncio
 import json
-from pathlib import Path
 from typing import Optional
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
-from telethon.sessions import StringSession
 
 from config import settings
 from core.proxy_manager import ProxyConfig

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Optional
 
 from utils.logger import log
@@ -132,7 +133,7 @@ class PostAnalyzer:
                 scored.append(post)
 
         # Сортировка: высокий скор → новее
-        scored.sort(key=lambda p: (p["relevance_score"], p.get("posted_at", 0)), reverse=True)
+        scored.sort(key=lambda p: (p["relevance_score"], p.get("posted_at") or datetime.min), reverse=True)
         return scored
 
     @staticmethod

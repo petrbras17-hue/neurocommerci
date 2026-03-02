@@ -27,6 +27,7 @@ class RateLimiter:
                 "cooldown_until": 0.0,
                 "day_start": today,
                 "session_comments": 0,  # для пауз каждые 8-10 коммент.
+                "rest_threshold": random.randint(8, 10),
             }
 
         state = self._state[phone]
@@ -103,13 +104,13 @@ class RateLimiter:
     def needs_rest(self, phone: str) -> bool:
         """Нужна ли длинная пауза (после 8-10 комментариев подряд)."""
         state = self._get_state(phone)
-        threshold = random.randint(8, 10)
-        return state["session_comments"] >= threshold
+        return state["session_comments"] >= state["rest_threshold"]
 
     def reset_session(self, phone: str):
         """Сбросить счётчик сессии после отдыха."""
         state = self._get_state(phone)
         state["session_comments"] = 0
+        state["rest_threshold"] = random.randint(8, 10)  # новый порог для следующей сессии
 
     def get_stats(self, phone: str) -> dict:
         """Статистика по аккаунту."""

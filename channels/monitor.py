@@ -110,7 +110,7 @@ class ChannelMonitor:
         if self._task and not self._task.done():
             self._task.cancel()
             try:
-                await asyncio.wait_for(asyncio.shield(self._task), timeout=10.0)
+                await asyncio.wait_for(self._task, timeout=10.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
         self._task = None

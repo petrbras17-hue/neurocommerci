@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -71,7 +72,9 @@ class ChannelDiscovery:
         client = await self._get_working_client()
         discovered: dict[int, ChannelInfo] = {}
 
-        for keyword in cleaned_keywords:
+        for i, keyword in enumerate(cleaned_keywords):
+            if i > 0:
+                await asyncio.sleep(2.0)  # Задержка между запросами (FloodWait)
             found = await self._search_one_keyword(client, keyword, min_subscribers=min_subscribers)
             for item in found:
                 if item.telegram_id not in discovered:

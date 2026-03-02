@@ -187,6 +187,7 @@ class ProxyManager:
         import asyncio
         from python_socks.async_.asyncio import Proxy
 
+        sock = None
         try:
             ptype = ProxyType.SOCKS5 if proxy.proxy_type.lower() == "socks5" else ProxyType.SOCKS4
             p = Proxy(ptype, proxy.host, proxy.port, proxy.username, proxy.password)
@@ -194,15 +195,17 @@ class ProxyManager:
                 p.connect(dest_host="api.ipify.org", dest_port=80),
                 timeout=timeout,
             )
-            # Отправить простой HTTP запрос через установленный SOCKS туннель
-            sock.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n")
+            loop = asyncio.get_running_loop()
+            # Отправить HTTP запрос через SOCKS туннель (в executor чтобы не блокировать)
+            await loop.run_in_executor(
+                None, sock.sendall,
+                b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n",
+            )
             data = await asyncio.wait_for(
-                asyncio.get_event_loop().run_in_executor(None, sock.recv, 1024),
+                loop.run_in_executor(None, sock.recv, 1024),
                 timeout=timeout,
             )
-            sock.close()
             if b"200" in data:
-                # Извлечь IP из ответа
                 body = data.split(b"\r\n\r\n", 1)[-1].decode(errors="ignore").strip()
                 log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port} OK, IP: {body}")
                 return True
@@ -210,6 +213,12 @@ class ProxyManager:
             log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port}: таймаут")
         except Exception as e:
             log.debug(f"SOCKS5 прокси {proxy.host}:{proxy.port} недоступен: {e}")
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
         return False
 
     async def validate_all(self) -> dict[str, bool]:

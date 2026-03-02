@@ -19,15 +19,8 @@ from typing import Optional
 from google import genai
 from google.genai import types
 from telethon import TelegramClient
-from telethon.errors import (
-    FloodWaitError,
-    ChannelPrivateError,
-)
-from telethon.tl.functions.channels import (
-    CreateChannelRequest,
-    EditPhotoRequest,
-    UpdateUsernameRequest,
-)
+from telethon.errors import FloodWaitError
+from telethon.tl.functions.channels import CreateChannelRequest
 from telethon.tl.functions.messages import (
     ExportChatInviteRequest,
     UpdatePinnedMessageRequest,

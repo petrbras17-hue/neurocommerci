@@ -5,7 +5,7 @@ ORM модели для SQLite базы данных.
 from datetime import datetime
 
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, Text, ForeignKey
+    Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, ForeignKey
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -62,13 +62,13 @@ class Channel(Base):
     __tablename__ = "channels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(Integer, unique=True, nullable=False)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(255), nullable=True)
     title = Column(String(500), nullable=False)
     subscribers = Column(Integer, default=0)
     topic = Column(String(100), nullable=True)  # vpn, ai, services, etc.
     comments_enabled = Column(Boolean, default=True)
-    discussion_group_id = Column(Integer, nullable=True)  # ID группы обсуждений
+    discussion_group_id = Column(BigInteger, nullable=True)  # ID группы обсуждений
     is_active = Column(Boolean, default=True)
     is_blacklisted = Column(Boolean, default=False)
     last_post_checked = Column(Integer, default=0)  # ID последнего проверенного поста

@@ -41,6 +41,7 @@ class CommentGenerator:
 
         if not settings.GEMINI_API_KEY:
             log.warning("GEMINI_API_KEY не задан — генерация через фоллбэки")
+            self._initialized = True
             return
 
         self._client = genai.Client(api_key=settings.GEMINI_API_KEY)

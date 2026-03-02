@@ -13,7 +13,6 @@ from google import genai
 from google.genai import types
 from telethon import TelegramClient
 from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.tl.functions.photos import UploadProfilePhotoRequest
 
 from config import settings
 from core.session_manager import SessionManager

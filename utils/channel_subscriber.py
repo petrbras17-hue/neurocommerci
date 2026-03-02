@@ -7,26 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Optional
 
-from telethon import TelegramClient
 from telethon.errors import (
     FloodWaitError,
     ChannelPrivateError,
     UserAlreadyParticipantError,
-    InviteHashExpiredError,
-    ChatWriteForbiddenError,
 )
 from telethon.tl.functions.channels import JoinChannelRequest, LeaveChannelRequest
-from telethon.tl.types import Channel
 
-from config import settings
 from core.session_manager import SessionManager
 from core.account_manager import AccountManager
-from core.proxy_manager import ProxyManager
 from channels.channel_db import ChannelDB
-from storage.sqlite_db import async_session
-from storage.models import Channel as DbChannel
 from utils.anti_ban import AntibanManager
 from utils.logger import log
 

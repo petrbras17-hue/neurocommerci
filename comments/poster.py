@@ -282,6 +282,10 @@ class CommentPoster:
         Emoji→Link Swap: отправить эмодзи, через 60 сек заменить на текст.
         Обходит первичный спам-фильтр Telegram.
         """
+        if os.environ.get("NEURO_DRY_RUN") == "1":
+            log.info(f"[DRY-RUN] [SWAP] [{scenario}] {account_phone} → {post_data.get('channel_title')}: {comment_text[:80]}...")
+            return True
+
         client = self.session_mgr.get_client(account_phone)
         if not client or not client.is_connected():
             return False
@@ -394,9 +398,13 @@ class CommentPoster:
                 if not account_id:
                     return
 
+                if not post_db_id:
+                    log.debug("post_db_id отсутствует, комментарий не сохранён в БД")
+                    return
+
                 comment = Comment(
                     account_id=account_id,
-                    post_id=post_db_id or 0,
+                    post_id=post_db_id,
                     text=text,
                     scenario=scenario,
                     status=status,
