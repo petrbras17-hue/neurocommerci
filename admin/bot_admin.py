@@ -45,6 +45,7 @@ from utils.channel_subscriber import ChannelSubscriber
 from utils.channel_setup import ChannelSetup
 from utils.account_packager import AccountPackager
 from utils.auto_responder import AutoResponder
+from core.engine import CommentingEngine
 from utils.notifier import notifier
 
 router = Router()
@@ -86,6 +87,17 @@ channel_subscriber = ChannelSubscriber(session_mgr, account_mgr)
 channel_setup = ChannelSetup(session_mgr, account_mgr)
 account_packager = AccountPackager(session_mgr)
 auto_responder = AutoResponder(session_mgr)
+
+# --- Движок нейрокомментирования ---
+commenting_engine = CommentingEngine(
+    account_manager=account_mgr,
+    session_manager=session_mgr,
+    proxy_manager=proxy_mgr,
+    rate_limiter=rate_limiter,
+    poster=comment_poster,
+    monitor=channel_monitor,
+    subscriber=channel_subscriber,
+)
 
 TOPIC_TITLES = {
     "vpn": "VPN и обход блокировок",
@@ -167,6 +179,7 @@ def channels_kb() -> InlineKeyboardMarkup:
 def commenting_kb() -> InlineKeyboardMarkup:
     """Меню комментинга."""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 ДВИЖОК (авто)", callback_data="engine_menu")],
         [InlineKeyboardButton(text="▶️ Запустить комментинг", callback_data="com_start")],
         [InlineKeyboardButton(text="⏸ Остановить", callback_data="com_stop")],
         [InlineKeyboardButton(text="⏰ Отложенный запуск", callback_data="com_delayed")],
@@ -177,6 +190,18 @@ def commenting_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📜 Старые посты", callback_data="com_old_posts")],
         [InlineKeyboardButton(text="💬 Автоответчик ЛС", callback_data="com_autoresponder")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="back_main")],
+    ])
+
+
+def engine_kb() -> InlineKeyboardMarkup:
+    """Меню движка нейрокомментирования."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Запустить движок", callback_data="engine_start")],
+        [InlineKeyboardButton(text="⏹ Остановить движок", callback_data="engine_stop")],
+        [InlineKeyboardButton(text="📊 Статус движка", callback_data="engine_status")],
+        [InlineKeyboardButton(text="🔌 Batch-подключение", callback_data="engine_batch_connect")],
+        [InlineKeyboardButton(text="📢 Подписка + капча", callback_data="engine_subscribe")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_commenting")],
     ])
 
 
@@ -508,7 +533,7 @@ async def menu_settings(message: Message):
         f"📊 Лимит/день: {settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}\n"
         f"⏱ Задержка: {settings.MIN_DELAY_BETWEEN_COMMENTS_SEC}-{settings.MAX_DELAY_BETWEEN_COMMENTS_SEC} сек\n"
         f"🎯 Сценарий B: {int(settings.SCENARIO_B_RATIO * 100)}%\n"
-        f"🔥 Прогрев: {settings.WARMUP_DAY_1_LIMIT}→{settings.WARMUP_DAY_2_LIMIT}→{settings.WARMUP_DAY_3_LIMIT}→{settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}",
+        f"🔥 Прогрев (14д): 0→0→{settings.WARMUP_LIGHT_LIMIT}→{settings.WARMUP_MODERATE_LIMIT}→{settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}",
         parse_mode=ParseMode.HTML,
         reply_markup=settings_kb(),
     )
@@ -1820,6 +1845,183 @@ async def cb_com_autoresponder_toggle(callback: CallbackQuery):
     )
 
 
+# --- Движок нейрокомментирования ---
+
+@router.callback_query(F.data == "engine_menu")
+async def cb_engine_menu(callback: CallbackQuery):
+    await callback.answer()
+    status = "ЗАПУЩЕН" if commenting_engine.is_running else "ОСТАНОВЛЕН"
+    await callback.message.edit_text(
+        f"🚀 <b>Движок нейрокомментирования</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Статус: <b>{status}</b>\n\n"
+        f"Автоматический режим:\n"
+        f"• Мониторинг каналов\n"
+        f"• Комментирование (8:00-23:00 MSK)\n"
+        f"• Прогрев новых аккаунтов (14 дней)\n"
+        f"• Проверка здоровья (SpamBot)\n"
+        f"• Авто-восстановление\n",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
+@router.callback_query(F.data == "engine_start")
+async def cb_engine_start(callback: CallbackQuery):
+    if commenting_engine.is_running:
+        await callback.answer("Движок уже запущен!", show_alert=True)
+        return
+
+    accounts = await account_mgr.load_accounts()
+    channels = await channel_db.get_all_active()
+
+    if not accounts:
+        await callback.answer("Нет аккаунтов!", show_alert=True)
+        return
+
+    await callback.answer("Запускаю движок...")
+
+    # Подключить аккаунты (batch)
+    results = await account_mgr.connect_batch(batch_size=15)
+    connected = sum(1 for s in results.values() if s == "connected")
+
+    if connected == 0:
+        await callback.message.edit_text(
+            "❌ <b>Не удалось подключить аккаунты</b>\n\n"
+            "Проверьте прокси и сессии.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=engine_kb(),
+        )
+        return
+
+    # Запустить движок
+    asyncio.create_task(commenting_engine.start())
+
+    await callback.message.edit_text(
+        "🚀 <b>Движок запущен!</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Подключено: <b>{connected}/{len(accounts)}</b>\n"
+        f"📢 Каналов: <b>{len(channels)}</b>\n"
+        f"⏱ Мониторинг: <b>{settings.MONITOR_POLL_INTERVAL_SEC}с</b>\n"
+        f"🕐 Активность: <b>8:00-23:00 MSK</b>\n\n"
+        "Система работает автономно.\n"
+        "Прогрев, комментирование, проверки — всё автоматически.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
+@router.callback_query(F.data == "engine_stop")
+async def cb_engine_stop(callback: CallbackQuery):
+    if not commenting_engine.is_running:
+        await callback.answer("Движок не запущен", show_alert=True)
+        return
+
+    await callback.answer("Останавливаю...")
+    await commenting_engine.stop()
+
+    stats = commenting_engine.get_stats()
+    engine_stats = stats["engine"]
+
+    await callback.message.edit_text(
+        "⏹ <b>Движок остановлен</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Комментариев: <b>{engine_stats['comments_sent']}</b>\n"
+        f"Прогрев действий: <b>{engine_stats['warmup_actions']}</b>\n"
+        f"Проверок здоровья: <b>{engine_stats['health_checks']}</b>\n"
+        f"Ошибок: <b>{engine_stats['errors']}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
+@router.callback_query(F.data == "engine_status")
+async def cb_engine_status(callback: CallbackQuery):
+    await callback.answer()
+
+    stats = commenting_engine.get_stats()
+    engine_stats = stats["engine"]
+    pool = stats["pool"]
+    poster_stats = stats.get("poster", {})
+
+    status = "ЗАПУЩЕН" if stats["running"] else "ОСТАНОВЛЕН"
+    monitor = "Да" if stats["monitor_running"] else "Нет"
+
+    await callback.message.edit_text(
+        f"📊 <b>Статус движка</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Статус: <b>{status}</b>\n"
+        f"Мониторинг: <b>{monitor}</b>\n"
+        f"Очередь постов: <b>{stats['queue_size']}</b>\n\n"
+        f"<b>Комментарии:</b>\n"
+        f"  Отправлено: {engine_stats['comments_sent']}\n"
+        f"  Ошибок: {engine_stats['errors']}\n"
+        f"  Emoji Swap: {poster_stats.get('swapped', 0)}\n\n"
+        f"<b>Прогрев:</b>\n"
+        f"  Действий: {engine_stats['warmup_actions']}\n\n"
+        f"<b>Пул соединений:</b>\n"
+        f"  Подключено: {pool['connected']}/{pool['max_concurrent']}\n",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
+@router.callback_query(F.data == "engine_batch_connect")
+async def cb_engine_batch_connect(callback: CallbackQuery):
+    await callback.answer("Batch-подключение...")
+
+    await callback.message.edit_text(
+        "🔌 <b>Batch-подключение аккаунтов...</b>\n\n"
+        "Подключение пачками по 15 с задержкой.",
+        parse_mode=ParseMode.HTML,
+    )
+
+    results = await account_mgr.connect_batch(batch_size=15)
+    connected = sum(1 for s in results.values() if s == "connected")
+    failed = sum(1 for s in results.values() if s != "connected")
+
+    await callback.message.edit_text(
+        f"🔌 <b>Batch-подключение завершено</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Подключено: <b>{connected}</b>\n"
+        f"Ошибок: <b>{failed}</b>\n"
+        f"Всего: <b>{len(results)}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
+@router.callback_query(F.data == "engine_subscribe")
+async def cb_engine_subscribe(callback: CallbackQuery):
+    connected = session_mgr.get_connected_phones()
+    if not connected:
+        await callback.answer("Нет подключённых аккаунтов!", show_alert=True)
+        return
+
+    await callback.answer("Подписка с решением капч...")
+
+    await callback.message.edit_text(
+        f"📢 <b>Подписка на каналы + капча</b>\n\n"
+        f"Аккаунтов: {len(connected)}\n"
+        f"Решаю математические капчи автоматически.",
+        parse_mode=ParseMode.HTML,
+    )
+
+    total = await channel_subscriber.subscribe_all_accounts()
+
+    await callback.message.edit_text(
+        f"📢 <b>Подписка завершена</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Аккаунтов: <b>{total['accounts']}</b>\n"
+        f"Новых подписок: <b>{total['subscribed']}</b>\n"
+        f"Уже были: <b>{total['already']}</b>\n"
+        f"Ошибок: <b>{total['failed']}</b>\n"
+        f"Капч решено: <b>{channel_subscriber.get_stats().get('captcha_solved', 0)}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=engine_kb(),
+    )
+
+
 @router.callback_query(F.data == "back_commenting")
 async def cb_back_commenting(callback: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -2199,7 +2401,7 @@ async def cb_set_limits(callback: CallbackQuery):
         f"⏱ Мин. задержка: <b>{settings.MIN_DELAY_BETWEEN_COMMENTS_SEC} сек</b>\n"
         f"⏱ Макс. задержка: <b>{settings.MAX_DELAY_BETWEEN_COMMENTS_SEC} сек</b>\n"
         f"❄️ Cooldown после ошибки: <b>{settings.COMMENT_COOLDOWN_AFTER_ERROR_SEC} сек</b>\n"
-        f"🔥 Прогрев: {settings.WARMUP_DAY_1_LIMIT}→{settings.WARMUP_DAY_2_LIMIT}→{settings.WARMUP_DAY_3_LIMIT}→{settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}",
+        f"🔥 Прогрев (14д): 0→0→{settings.WARMUP_LIGHT_LIMIT}→{settings.WARMUP_MODERATE_LIMIT}→{settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Изменить лимит/день", callback_data="set_change_limit")],

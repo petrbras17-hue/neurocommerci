@@ -62,8 +62,6 @@ class AccountManager:
 
     async def connect_all(self) -> dict[str, str]:
         """Подключить все активные аккаунты. Возвращает {phone: status}."""
-        from telethon.errors import FloodWaitError
-
         accounts = await self.load_accounts()
         results = {}
 
@@ -78,20 +76,71 @@ class AccountManager:
                 await asyncio.sleep(5)
 
             proxy = self.proxy_mgr.assign_to_account(account.phone)
-            try:
-                client = await self.session_mgr.connect_client(account.phone, proxy)
-                if client:
-                    results[account.phone] = "connected"
+            results[account.phone] = await self._connect_one(account.phone, proxy)
+
+        return results
+
+    async def _connect_one(self, phone: str, proxy) -> str:
+        """Подключить один аккаунт. Возвращает статус строкой."""
+        from telethon.errors import FloodWaitError
+
+        try:
+            client = await self.session_mgr.connect_client(phone, proxy)
+            if client:
+                return "connected"
+            await self._update_status(phone, "error")
+            return "failed"
+        except FloodWaitError as e:
+            await self.handle_error(phone, "flood_wait", str(e.seconds))
+            return f"flood_wait_{e.seconds}s"
+        except Exception as e:
+            await self._update_status(phone, "error")
+            log.error(f"Ошибка подключения {phone}: {e}")
+            return "failed"
+
+    async def connect_batch(
+        self,
+        batch_size: int = 15,
+        progress_callback=None,
+    ) -> dict[str, str]:
+        """
+        Подключить аккаунты пачками (для масштабирования до 1000).
+        batch_size — сколько подключать одновременно.
+        progress_callback(done, total, results) — для отчётности в боте.
+        """
+        import random as _random
+
+        accounts = await self.load_accounts()
+        active = [a for a in accounts if a.status != "banned"]
+        results: dict[str, str] = {}
+
+        for i in range(0, len(active), batch_size):
+            batch = active[i : i + batch_size]
+            tasks = []
+            for acc in batch:
+                proxy = self.proxy_mgr.assign_to_account(acc.phone)
+                tasks.append(self._connect_one(acc.phone, proxy))
+
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for acc, res in zip(batch, batch_results):
+                if isinstance(res, Exception):
+                    results[acc.phone] = str(res)[:50]
                 else:
-                    results[account.phone] = "failed"
-                    await self._update_status(account.phone, "error")
-            except FloodWaitError as e:
-                results[account.phone] = f"flood_wait_{e.seconds}s"
-                await self.handle_error(account.phone, "flood_wait", str(e.seconds))
-            except Exception as e:
-                results[account.phone] = "failed"
-                await self._update_status(account.phone, "error")
-                log.error(f"Ошибка подключения {account.phone}: {e}")
+                    results[acc.phone] = res
+
+            done = min(i + batch_size, len(active))
+            log.info(f"Batch connect: {done}/{len(active)} аккаунтов обработано")
+
+            if progress_callback:
+                try:
+                    await progress_callback(done, len(active), results)
+                except Exception:
+                    pass
+
+            # Задержка между батчами (5-10с)
+            if i + batch_size < len(active):
+                await asyncio.sleep(_random.uniform(5, 10))
 
         return results
 

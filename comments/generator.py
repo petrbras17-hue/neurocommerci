@@ -84,7 +84,7 @@ class CommentGenerator:
                 }
 
         # Фоллбэк
-        text = self._get_fallback(scenario)
+        text = self.get_fallback(scenario)
         return {
             "text": text,
             "scenario": scenario,
@@ -233,7 +233,7 @@ class CommentGenerator:
         return len(intersection) / len(union)
 
     @staticmethod
-    def _get_fallback(scenario: str) -> str:
+    def get_fallback(scenario: str) -> str:
         """Случайный фоллбэк-комментарий."""
         pool = FALLBACK_COMMENTS_A if scenario == "A" else FALLBACK_COMMENTS_B
         return random.choice(pool)

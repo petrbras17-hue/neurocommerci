@@ -19,6 +19,7 @@ from core.session_manager import SessionManager
 from core.account_manager import AccountManager
 from channels.channel_db import ChannelDB
 from utils.anti_ban import AntibanManager
+from utils.captcha_solver import check_and_solve_captcha
 from utils.logger import log
 
 
@@ -34,7 +35,7 @@ class ChannelSubscriber:
         self.account_mgr = account_manager
         self.channel_db = ChannelDB()
         self.antiban = AntibanManager()
-        self._stats = {"subscribed": 0, "already": 0, "failed": 0, "unsubscribed": 0}
+        self._stats = {"subscribed": 0, "already": 0, "failed": 0, "unsubscribed": 0, "captcha_solved": 0}
 
     async def subscribe_account_to_channels(
         self,
@@ -66,6 +67,12 @@ class ChannelSubscriber:
                 result["subscribed"] += 1
                 self._stats["subscribed"] += 1
                 log.debug(f"{phone}: подписан на {channel.title}")
+
+                # Проверить капчу от антифрод-бота
+                captcha_solved = await check_and_solve_captcha(client, entity)
+                if captcha_solved:
+                    self._stats["captcha_solved"] += 1
+                    log.info(f"{phone}: капча решена для {channel.title}")
 
                 # Если есть группа обсуждений — подписаться и на неё
                 if channel.discussion_group_id:

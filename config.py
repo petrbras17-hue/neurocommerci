@@ -20,9 +20,13 @@ class Settings(BaseSettings):
     ADMIN_BOT_TOKEN: str = Field(default="")
     ADMIN_TELEGRAM_ID: int = Field(default=0)
 
-    # --- Google Gemini API ---
+    # --- Google Gemini API (исполнитель — генерация текста) ---
     GEMINI_API_KEY: str = Field(default="")
     GEMINI_MODEL: str = Field(default="gemini-3.1-pro-preview")
+
+    # --- Anthropic Claude API (дирижёр — анализ, стратегия, контроль) ---
+    ANTHROPIC_API_KEY: str = Field(default="")
+    CLAUDE_MODEL: str = Field(default="claude-sonnet-4-6")
 
     # --- Google Sheets ---
     GOOGLE_SHEETS_CREDENTIALS_FILE: str = Field(default="credentials.json")
@@ -47,10 +51,9 @@ class Settings(BaseSettings):
     DARTVPN_AVATAR_PATH: str = Field(default="data/avatars/dartvpn_banner.jpg")
     SCENARIO_B_RATIO: float = Field(default=0.3)
 
-    # --- Warm-up (прогрев новых аккаунтов) ---
-    WARMUP_DAY_1_LIMIT: int = Field(default=5)
-    WARMUP_DAY_2_LIMIT: int = Field(default=10)
-    WARMUP_DAY_3_LIMIT: int = Field(default=20)
+    # --- Warm-up (14-дневный прогрев новых аккаунтов) ---
+    WARMUP_LIGHT_LIMIT: int = Field(default=3)      # Дни 5-7: 1-3 коммента
+    WARMUP_MODERATE_LIMIT: int = Field(default=8)    # Дни 8-14: 5-8 комментов
 
     # --- Monitoring ---
     MONITOR_POLL_INTERVAL_SEC: int = Field(default=180)  # 3 мин

@@ -55,13 +55,19 @@ class RateLimiter:
         return state
 
     def get_daily_limit(self, days_active: int) -> int:
-        """Дневной лимит с учётом прогрева (0→5, 1→10, 2→20, 3+→35)."""
-        if days_active == 0:
-            return settings.WARMUP_DAY_1_LIMIT
-        elif days_active == 1:
-            return settings.WARMUP_DAY_2_LIMIT
-        elif days_active == 2:
-            return settings.WARMUP_DAY_3_LIMIT
+        """
+        14-дневный прогрев:
+        0-2: readonly (0), 3-4: reactions (0), 5-7: light (3),
+        8-14: moderate (8), 15+: full (35).
+        """
+        if days_active < 3:
+            return 0  # readonly
+        elif days_active < 5:
+            return 0  # reactions only
+        elif days_active < 8:
+            return settings.WARMUP_LIGHT_LIMIT
+        elif days_active < 15:
+            return settings.WARMUP_MODERATE_LIMIT
         return settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY
 
     def can_comment(self, phone: str, days_active: int = 99) -> bool:

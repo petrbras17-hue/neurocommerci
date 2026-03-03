@@ -2,9 +2,11 @@
 Менеджер Telethon сессий.
 Создание клиентов с прокси, управление подключениями.
 Читает JSON-метаданные от поставщика для device fingerprint каждого аккаунта.
+LRU connection pool для масштабирования до 1000 аккаунтов.
 """
 
 import json
+import time
 from typing import Optional
 
 from telethon import TelegramClient
@@ -23,13 +25,17 @@ DEFAULT_DEVICE = {
     "system_lang_pack": "ru",
 }
 
+# Максимум одновременных подключений (для 1000 аккаунтов нельзя держать все)
+MAX_CONCURRENT_CONNECTIONS = 50
+
 
 class SessionManager:
-    """Фабрика Telethon клиентов с поддержкой per-account device fingerprint."""
+    """Фабрика Telethon клиентов с LRU pool и per-account device fingerprint."""
 
     def __init__(self):
         self._clients: dict[str, TelegramClient] = {}  # phone -> client
         self._device_cache: dict[str, dict] = {}  # phone -> device params
+        self._last_used: dict[str, float] = {}  # phone -> timestamp последнего использования
 
     def _load_device_params(self, session_name: str) -> dict:
         """Загрузить параметры устройства из JSON-файла поставщика."""
@@ -86,9 +92,27 @@ class SessionManager:
             app_version=device.get("app_version", DEFAULT_DEVICE["app_version"]),
             lang_code=device.get("lang_pack", "ru"),
             system_lang_code=device.get("system_lang_pack", "ru"),
+            flood_sleep_threshold=10,
+            receive_updates=True,
+            timeout=30,
+            connection_retries=5,
         )
 
         return client
+
+    async def _evict_lru(self):
+        """Отключить наименее используемый клиент если превышен лимит."""
+        if len(self._clients) < MAX_CONCURRENT_CONNECTIONS:
+            return
+        if not self._last_used:
+            return
+        oldest_phone = min(self._last_used, key=self._last_used.get)
+        log.debug(f"LRU eviction: отключаем {oldest_phone} (лимит {MAX_CONCURRENT_CONNECTIONS})")
+        await self.disconnect_client(oldest_phone)
+
+    def _touch(self, phone: str):
+        """Обновить timestamp последнего использования."""
+        self._last_used[phone] = time.time()
 
     async def connect_client(
         self,
@@ -106,6 +130,7 @@ class SessionManager:
         if phone in self._clients:
             client = self._clients[phone]
             if client.is_connected():
+                self._touch(phone)
                 return client
             # Старый клиент отключён — освободить ресурсы перед созданием нового
             try:
@@ -113,6 +138,10 @@ class SessionManager:
             except Exception:
                 pass
             del self._clients[phone]
+            self._last_used.pop(phone, None)
+
+        # LRU eviction: освободить место если нужно
+        await self._evict_lru()
 
         # Имя сессии = номер телефона (без +)
         session_name = phone.lstrip("+").replace(" ", "")
@@ -128,6 +157,7 @@ class SessionManager:
             me = await client.get_me()
             log.info(f"Подключен аккаунт: {me.first_name} ({phone})")
             self._clients[phone] = client
+            self._touch(phone)
             return client
 
         except FloodWaitError as e:
@@ -151,6 +181,7 @@ class SessionManager:
     async def disconnect_client(self, phone: str):
         """Отключить клиент."""
         client = self._clients.pop(phone, None)
+        self._last_used.pop(phone, None)
         if client:
             try:
                 await client.disconnect()
@@ -166,7 +197,10 @@ class SessionManager:
 
     def get_client(self, phone: str) -> Optional[TelegramClient]:
         """Получить подключённый клиент по номеру."""
-        return self._clients.get(phone)
+        client = self._clients.get(phone)
+        if client:
+            self._touch(phone)
+        return client
 
     def get_connected_phones(self) -> list[str]:
         """Список подключённых номеров."""
@@ -183,3 +217,12 @@ class SessionManager:
         return [
             f.stem for f in sessions_dir.glob("*.session")
         ]
+
+    @property
+    def pool_stats(self) -> dict:
+        """Статистика пула соединений."""
+        return {
+            "connected": len(self._clients),
+            "max_concurrent": MAX_CONCURRENT_CONNECTIONS,
+            "cached_devices": len(self._device_cache),
+        }

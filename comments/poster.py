@@ -35,6 +35,7 @@ from channels.analyzer import PostAnalyzer
 from channels.monitor import ChannelMonitor
 from comments.generator import CommentGenerator
 from core.account_manager import AccountManager
+from core.ai_orchestrator import AIOrchestrator
 from core.session_manager import SessionManager
 from core.rate_limiter import RateLimiter
 from storage.models import Comment, Post, Channel
@@ -92,6 +93,7 @@ class CommentPoster:
         self.generator = generator
         self.monitor = monitor
         self.analyzer = PostAnalyzer()
+        self.orchestrator = AIOrchestrator()  # Claude-дирижёр
         self.antiban = AntibanManager()
         self.passive = PassiveActionsManager(session_manager)
         self._running = False
@@ -116,15 +118,35 @@ class CommentPoster:
         if not post_data:
             return 0
 
-        # Проверка релевантности
-        analysis = self.analyzer.analyze(
-            post_data.get("text", ""),
-            post_data.get("channel_topic"),
-        )
-        if not analysis["should_comment"]:
-            self._stats["skipped"] += 1
-            log.debug(f"Пост пропущен (скор {analysis['score']}): {post_data.get('channel_title')}")
-            return 0
+        # ── Claude-дирижёр: анализ поста (или fallback на keywords) ──
+        scenario_override = None
+        persona_override = None
+
+        if self.orchestrator.is_available:
+            claude_analysis = await self.orchestrator.analyze_post(
+                post_text=post_data.get("text", ""),
+                channel_title=post_data.get("channel_title", ""),
+                channel_topic=post_data.get("channel_topic", ""),
+            )
+            if claude_analysis:
+                if not claude_analysis.get("should_comment"):
+                    self._stats["skipped"] += 1
+                    log.debug(f"Claude: пропустить пост ({claude_analysis.get('reason', '')})")
+                    return 0
+                scenario_override = claude_analysis.get("scenario")
+                persona_override = claude_analysis.get("persona_style")
+            # Если Claude вернул None — fallback на keyword analyzer ниже
+
+        # Fallback: keyword-based анализ
+        if not scenario_override:
+            analysis = self.analyzer.analyze(
+                post_data.get("text", ""),
+                post_data.get("channel_topic"),
+            )
+            if not analysis["should_comment"]:
+                self._stats["skipped"] += 1
+                log.debug(f"Пост пропущен (скор {analysis['score']}): {post_data.get('channel_title')}")
+                return 0
 
         # Получить аккаунт
         account = await self.account_mgr.get_next_available()
@@ -160,16 +182,30 @@ class CommentPoster:
                     log.debug(f"{account.phone}: пассивное действие '{action}' перед комментарием")
                     await asyncio.sleep(random.uniform(2.0, 5.0))
 
-        # Сгенерировать комментарий
+        # Gemini генерирует комментарий (используя рекомендации Claude если есть)
         comment_data = await self.generator.generate(
             post_text=post_data.get("text", ""),
-            persona_style=account.persona_style or "casual",
+            scenario=scenario_override,
+            persona_style=persona_override or account.persona_style or "casual",
         )
 
-        # Human-like задержка перед отправкой
-        delay = self.antiban.get_typing_delay(len(comment_data["text"]))
-        log.debug(f"Задержка перед отправкой: {delay:.1f}с")
-        await asyncio.sleep(delay)
+        # ── Claude-дирижёр: проверка качества перед отправкой ──
+        if self.orchestrator.is_available and comment_data["source"] == "ai":
+            review = await self.orchestrator.review_comment(
+                comment=comment_data["text"],
+                post_text=post_data.get("text", ""),
+                scenario=comment_data["scenario"],
+            )
+            if review:
+                if not review.get("approved"):
+                    if review.get("improved"):
+                        log.info(f"Claude улучшил комментарий: {review['improved'][:80]}")
+                        comment_data["text"] = review["improved"]
+                        comment_data["source"] = "claude_improved"
+                    else:
+                        log.debug("Claude отклонил комментарий, используем fallback")
+                        comment_data["text"] = self.generator.get_fallback(comment_data["scenario"])
+                        comment_data["source"] = "fallback"
 
         # Решаем: emoji swap или прямая отправка
         use_swap = (
@@ -257,6 +293,9 @@ class CommentPoster:
                 send_text = comment_text
                 parse_mode = None
 
+            # Имитация набора текста (SetTypingRequest)
+            await self.antiban.send_typing(client, discussion_group, len(send_text))
+
             await client.send_message(
                 discussion_group,
                 send_text,
@@ -338,6 +377,9 @@ class CommentPoster:
             discussion_group = await client.get_entity(discussion_group_id)
             telegram_post_id = post_data.get("telegram_post_id")
             emoji = random.choice(SWAP_EMOJIS)
+
+            # Имитация набора перед эмодзи
+            await self.antiban.send_typing(client, discussion_group, len(emoji))
 
             # Шаг 1: отправляем эмодзи
             sent_message = await client.send_message(
@@ -534,5 +576,6 @@ class CommentPoster:
             "pending_swaps": len([t for t in self._pending_swaps if not t.done()]),
             "passive_actions": self.passive.get_stats(),
             "generator": self.generator.get_stats(),
+            "orchestrator": self.orchestrator.get_stats(),
             "queue_size": self.monitor.queue.size,
         }

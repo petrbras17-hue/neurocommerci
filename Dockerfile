@@ -17,4 +17,7 @@ COPY . .
 # Create data directories
 RUN mkdir -p data/sessions data/logs data/avatars
 
+# Railway volume mount point (persistent storage for sessions/db)
+VOLUME ["/app/data"]
+
 CMD ["python", "main.py"]
