@@ -67,10 +67,15 @@ class AccountManager:
         accounts = await self.load_accounts()
         results = {}
 
-        for account in accounts:
+        for i, account in enumerate(accounts):
             if account.status == "banned":
                 results[account.phone] = "banned"
                 continue
+
+            # Антибан задержка 5с между подключениями аккаунтов
+            if i > 0:
+                log.info("Антибан задержка 5с...")
+                await asyncio.sleep(5)
 
             proxy = self.proxy_mgr.assign_to_account(account.phone)
             try:

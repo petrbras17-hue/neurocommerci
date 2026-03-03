@@ -96,6 +96,13 @@ class SessionManager:
         proxy: Optional[ProxyConfig] = None,
     ) -> Optional[TelegramClient]:
         """Подключить клиент и проверить авторизацию."""
+        # АНТИБАН: запрет подключения нескольких аккаунтов с одного IP (без прокси)
+        if proxy is None and len(self.get_connected_phones()) > 0:
+            log.warning(
+                "АНТИБАН: подключение без прокси запрещено при наличии других аккаунтов"
+            )
+            return None
+
         if phone in self._clients:
             client = self._clients[phone]
             if client.is_connected():

@@ -208,9 +208,10 @@ async def connect_accounts(phones: list[str], proxy_tuple) -> list[str]:
             except Exception:
                 pass
 
-        # Задержка между подключениями
+        # Антибан задержка между подключениями
         if i < len(phones) - 1:
-            await asyncio.sleep(2)
+            print(f"    Антибан задержка 5с...")
+            await asyncio.sleep(5)
 
     return connected
 
@@ -335,6 +336,18 @@ async def main():
     # 0. Загрузить прокси
     proxy_tuple = load_proxy_tuple()
 
+    # АНТИБАН: проверка прокси перед подключением нескольких аккаунтов
+    session_files = list(settings.sessions_path.glob("*.session"))
+    session_count = len([f for f in session_files if f.stem.isdigit()])
+    if proxy_tuple is None and session_count > 1:
+        print()
+        print("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print("  СТОП! Для подключения нескольких аккаунтов ОБЯЗАТЕЛЕН прокси.")
+        print("  Добавьте прокси в data/proxies.txt")
+        print("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        print()
+        sys.exit(1)
+
     # 1. Восстановить оригинальные сессии
     print("  [1/5] Восстанавливаю оригинальные сессии...")
     phones = restore_original_sessions()
@@ -354,9 +367,8 @@ async def main():
     if not connected:
         print("\n  ❌ Ни один аккаунт не авторизован.")
         print("  Сессии были отозваны Telegram.")
-        print("  Для реавторизации нужны SMS-коды:")
-        print("    python reauth_sessions.py send all")
-        print("    python reauth_sessions.py code <phone> <code>")
+        print("  ВНИМАНИЕ: НЕ вызывайте send_code_request — это забанит аккаунты!")
+        print("  Нужно покупать НОВЫЕ аккаунты с валидными сессиями.")
         await dispose_engine()
         return
 
