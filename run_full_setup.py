@@ -118,14 +118,16 @@ async def register_accounts_in_db(phones: list[str]) -> int:
             existing = result.scalar_one_or_none()
 
             if existing:
-                # Обновить статус на active если был banned
-                if existing.status == "banned":
+                # Всегда сбрасываем статус на active (свежие сессии)
+                if existing.status != "active":
                     existing.status = "active"
+                    existing.comments_today = 0
+                    existing.days_active = 0
                     await session.commit()
-                    print(f"    ♻️  +{phone} — реактивирован")
+                    print(f"    ♻️  +{phone} — сброшен на active")
                     registered += 1
                 else:
-                    print(f"    ✓  +{phone} — уже в БД (статус: {existing.status})")
+                    print(f"    ✓  +{phone} — уже в БД (active)")
             else:
                 session_file = f"{phone}.session"
                 account = Account(
