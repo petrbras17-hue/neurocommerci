@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import time
 
@@ -27,7 +28,7 @@ from utils.standalone_helpers import load_proxy_for_phone, load_account_json, bu
 APPEAL_ANSWERS_ORDERED = [
     "I believe my account was blocked by mistake. I did not violate any rules. I use Telegram only for personal messaging with friends and reading news channels.",
     None,  # Заполняется из текущего имени в ТГ
-    "alina.moroz.2024@mail.ru",
+    os.getenv("APPEAL_EMAIL", "appeal@example.com"),
     "2024",
     "A friend recommended Telegram to me",
     "I mainly use Telegram to chat with friends and family, read news channels, and share photos. I also enjoy using group chats to discuss hobbies and interests.",

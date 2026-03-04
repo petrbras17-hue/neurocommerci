@@ -53,7 +53,10 @@ router = Router()
 
 
 class UserContextMiddleware(BaseMiddleware):
-    """Middleware: загружает/создаёт User и передаёт в data['db_user']."""
+    """Middleware: загружает/создаёт User и передаёт в data['db_user'].
+
+    Блокирует неактивных и не-админов для CallbackQuery.
+    """
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
         from_user = None
@@ -72,6 +75,10 @@ class UserContextMiddleware(BaseMiddleware):
                 elif isinstance(event, Message):
                     await event.answer("⛔ Ваш аккаунт деактивирован.")
                 return
+            # Блокировать CallbackQuery для не-админов (безопасность)
+            if isinstance(event, CallbackQuery) and not db_user.is_admin:
+                await event.answer("⛔ Доступ только для админов.", show_alert=True)
+                return
             data["db_user"] = db_user
 
         return await handler(event, data)
@@ -79,6 +86,9 @@ class UserContextMiddleware(BaseMiddleware):
 
 router.message.middleware(UserContextMiddleware())
 router.callback_query.middleware(UserContextMiddleware())
+
+# Lock для защиты от race condition при первой регистрации admin
+_admin_registration_lock = asyncio.Lock()
 
 proxy_mgr = ProxyManager()
 session_mgr = SessionManager()
@@ -287,11 +297,13 @@ async def get_or_create_user(telegram_id: int, username: str = None, first_name:
 
         # Новый пользователь
         # Первый пользователь или ADMIN_TELEGRAM_ID → admin
-        user_is_admin = (telegram_id == settings.ADMIN_TELEGRAM_ID) or (settings.ADMIN_TELEGRAM_ID == 0)
+        # Lock для защиты от race condition при одновременной регистрации
+        async with _admin_registration_lock:
+            user_is_admin = (telegram_id == settings.ADMIN_TELEGRAM_ID) or (settings.ADMIN_TELEGRAM_ID == 0)
 
-        if user_is_admin and settings.ADMIN_TELEGRAM_ID == 0:
-            settings.ADMIN_TELEGRAM_ID = telegram_id
-            _update_env("ADMIN_TELEGRAM_ID", str(telegram_id))
+            if user_is_admin and settings.ADMIN_TELEGRAM_ID == 0:
+                settings.ADMIN_TELEGRAM_ID = telegram_id
+                _update_env("ADMIN_TELEGRAM_ID", str(telegram_id))
 
         user = User(
             telegram_id=telegram_id,
@@ -323,7 +335,7 @@ async def get_or_create_user(telegram_id: int, username: str = None, first_name:
 def is_admin(user_id: int) -> bool:
     """Legacy: проверить что пользователь — администратор (deprecated, use db_user)."""
     if settings.ADMIN_TELEGRAM_ID == 0:
-        return True  # Первый запуск — разрешить
+        return False  # Если ID не задан — запретить доступ (безопасность)
     return user_id == settings.ADMIN_TELEGRAM_ID
 
 
