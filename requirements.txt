@@ -15,3 +15,7 @@ aiohttp>=3.9.0
 python-socks[asyncio]>=2.4.0
 PySocks>=1.7.1
 Pillow>=10.0.0
+asyncpg>=0.29.0
+redis>=5.0.0
+alembic>=1.13.0
+psycopg2-binary>=2.9.0

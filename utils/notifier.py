@@ -76,6 +76,26 @@ class TelegramNotifier:
         )
         await self.notify(text)
 
+    async def session_dead(self, account_phone: str, error_type: str = "AuthKeyUnregistered"):
+        """Уведомление о мёртвой сессии (auth key отозван Telegram)."""
+        text = (
+            f"💀 <b>СЕССИЯ МЕРТВА</b>\n"
+            f"👤 <code>{account_phone}</code>\n"
+            f"Ошибка: {error_type}\n"
+            f"Auth key отозван сервером. Восстановление невозможно без SMS."
+        )
+        await self.notify(text)
+
+    async def health_report(self, alive: int, dead: int, unknown: int):
+        """Отчёт о здоровье сессий."""
+        text = (
+            f"🏥 <b>Здоровье сессий</b>\n"
+            f"✅ Живых: {alive}\n"
+            f"💀 Мёртвых: {dead}\n"
+            f"❓ Неизвестно: {unknown}"
+        )
+        await self.notify(text, silent=True)
+
     async def account_banned(self, account_phone: str):
         """Уведомление о бане аккаунта."""
         text = (

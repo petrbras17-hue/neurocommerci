@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     WARMUP_LIGHT_LIMIT: int = Field(default=3)      # Дни 5-7: 1-3 коммента
     WARMUP_MODERATE_LIMIT: int = Field(default=8)    # Дни 8-14: 5-8 комментов
 
+    # --- Session Health & Keep-Alive ---
+    SESSION_HEALTH_CHECK_HOURS: int = Field(default=4)  # Проверка авторизации
+    KEEP_ALIVE_INTERVAL_HOURS: int = Field(default=6)   # Периодический get_me / read
+    ACCOUNT_SLEEP_START_HOUR: int = Field(default=23)    # Начало "сна" (UTC)
+    ACCOUNT_SLEEP_END_HOUR: int = Field(default=7)       # Конец "сна" (UTC)
+    SESSION_BACKUP_KEY: str = Field(default="")          # Fernet key для шифрования бэкапов
+
     # --- Monitoring ---
     MONITOR_POLL_INTERVAL_SEC: int = Field(default=180)  # 3 мин
     POST_MAX_AGE_HOURS: int = Field(default=2)
@@ -78,6 +85,13 @@ class Settings(BaseSettings):
 
     # --- Google Sheets sync ---
     SHEETS_SYNC_INTERVAL_SEC: int = Field(default=300)  # 5 мин
+
+    # --- Infrastructure ---
+    DATABASE_URL: str = Field(default="")  # postgresql+asyncpg://... (empty = use SQLite)
+    REDIS_URL: str = Field(default="redis://localhost:6379/0")
+    WORKER_ID: str = Field(default="main")  # Worker identifier for distributed mode
+    MAX_ACCOUNTS_PER_WORKER: int = Field(default=50)
+    API_ID_4_STRICT_MODE: bool = Field(default=True)  # Stricter limits for flagged API ID 4
 
     model_config = {
         "env_file": str(BASE_DIR / ".env"),
@@ -108,6 +122,8 @@ class Settings(BaseSettings):
 
     @property
     def db_url(self) -> str:
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
         self._ensure_dirs()
         return f"sqlite+aiosqlite:///{BASE_DIR / self.DB_PATH}"
 
@@ -139,6 +155,11 @@ class Settings(BaseSettings):
         warnings = []
         if self.TELEGRAM_API_ID == 0:
             warnings.append("TELEGRAM_API_ID не задан (=0)")
+        if self.TELEGRAM_API_ID == 4:
+            warnings.append(
+                "TELEGRAM_API_ID=4 ПОМЕЧЕН Telegram как опасный! "
+                "Используйте 2040 (Desktop) или 21724 (AndroidX) для новых аккаунтов"
+            )
         if not self.TELEGRAM_API_HASH:
             warnings.append("TELEGRAM_API_HASH пуст")
         if not self.ADMIN_BOT_TOKEN:

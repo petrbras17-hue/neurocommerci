@@ -64,6 +64,13 @@ class Account(Base):
     days_active = Column(Integer, default=0)  # для прогрева
     persona_style = Column(String(50), default="casual")  # casual, formal, slang, tech
     channel_link = Column(String(500), nullable=True)  # Ссылка на канал-переходник аккаунта
+    api_id = Column(Integer, nullable=True)  # API ID, с которым создана сессия
+    health_status = Column(String(20), default="unknown")  # unknown, alive, dead, expired
+    lifecycle_stage = Column(String(20), default="uploaded")
+    # Values: uploaded, packaging, warming_up, active, commenting, resting, cooldown, dead
+    last_health_check = Column(DateTime, nullable=True)
+    session_backup_at = Column(DateTime, nullable=True)
+    account_age_days = Column(Integer, default=0)  # Возраст аккаунта (из register_time)
     created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
 

@@ -1,12 +1,20 @@
 """
-SQLite база данных — инициализация и сессии.
-WAL mode + NullPool для корректной работы при конкурентных async-задачах.
+Dual-mode database — SQLite (dev/single) or PostgreSQL (production/distributed).
+
+Reads DATABASE_URL from config:
+  - If set and contains "postgresql" -> asyncpg with connection pool
+  - Otherwise -> SQLite with aiosqlite, NullPool, WAL mode
+
+Public API (unchanged):
+  - async_session   — async sessionmaker
+  - init_db()       — create tables + migrate
+  - dispose_engine() — graceful shutdown
 """
 
 import logging
 from sqlalchemy import event, text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
 
 from config import settings
 from storage.models import Base
@@ -14,24 +22,49 @@ from storage.models import Base
 
 log = logging.getLogger(__name__)
 
-engine = create_async_engine(
-    settings.db_url,
-    echo=False,
-    poolclass=NullPool,
-    connect_args={"check_same_thread": False},
-)
+_db_url = settings.db_url
+_is_postgres = "postgresql" in _db_url
+
+
+def _build_engine():
+    """Create the appropriate engine based on the database URL."""
+    if _is_postgres:
+        log.info("Database: PostgreSQL mode (asyncpg + pool)")
+        return create_async_engine(
+            _db_url,
+            echo=False,
+            poolclass=AsyncAdaptedQueuePool,
+            pool_size=20,
+            max_overflow=10,
+        )
+    else:
+        log.info("Database: SQLite mode (aiosqlite + NullPool)")
+        return create_async_engine(
+            _db_url,
+            echo=False,
+            poolclass=NullPool,
+            connect_args={"check_same_thread": False},
+        )
+
+
+engine = _build_engine()
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-@event.listens_for(engine.sync_engine, "connect")
-def _set_sqlite_pragma(dbapi_conn, connection_record):
-    """Включить WAL mode и оптимизации SQLite при каждом новом соединении."""
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
+# --- SQLite pragmas (only for SQLite) ---
 
+if not _is_postgres:
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):
+        """Enable WAL mode and SQLite optimizations on each new connection."""
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
+# --- Migration helpers (SQLite only) ---
 
 def _get_table_columns(inspector, table_name: str) -> set[str]:
     """Get column names for a table."""
@@ -42,7 +75,9 @@ def _get_table_columns(inspector, table_name: str) -> set[str]:
 
 
 def _migrate_existing_db(connection):
-    """Add new columns/tables to existing DB without losing data."""
+    """Add new columns/tables to existing DB without losing data.
+    Only runs for SQLite — PostgreSQL uses Alembic migrations.
+    """
     inspector = inspect(connection)
     existing_tables = set(inspector.get_table_names())
 
@@ -85,6 +120,14 @@ def _migrate_existing_db(connection):
         ("accounts", "user_id", "INTEGER DEFAULT 1"),
         ("proxies", "user_id", "INTEGER DEFAULT 1"),
         ("channels", "user_id", "INTEGER DEFAULT 1"),
+        # Session health columns
+        ("accounts", "api_id", "INTEGER"),
+        ("accounts", "health_status", "VARCHAR(20) DEFAULT 'unknown'"),
+        ("accounts", "last_health_check", "DATETIME"),
+        ("accounts", "session_backup_at", "DATETIME"),
+        ("accounts", "account_age_days", "INTEGER DEFAULT 0"),
+        # Lifecycle stage for account pipeline tracking
+        ("accounts", "lifecycle_stage", "VARCHAR(20) DEFAULT 'uploaded'"),
     ]
     for table, col, col_type in migrations:
         if table in existing_tables:
@@ -95,12 +138,15 @@ def _migrate_existing_db(connection):
 
 
 async def init_db():
-    """Создать все таблицы + мигрировать существующую БД."""
+    """Create all tables + migrate existing DB (SQLite only)."""
     async with engine.begin() as conn:
-        await conn.run_sync(_migrate_existing_db)
+        if not _is_postgres:
+            # SQLite: run inline migrations
+            await conn.run_sync(_migrate_existing_db)
+        # Create any missing tables from ORM models
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def dispose_engine():
-    """Корректно закрыть engine при остановке приложения."""
+    """Gracefully close the engine on application shutdown."""
     await engine.dispose()

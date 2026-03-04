@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, AuthKeyUnregisteredError
 
 from config import settings, BASE_DIR
 from core.proxy_manager import ProxyConfig
@@ -112,6 +112,12 @@ class SessionManager:
         api_id = device.get("app_id") or settings.TELEGRAM_API_ID
         api_hash = device.get("app_hash") or settings.TELEGRAM_API_HASH
 
+        if api_id == 4:
+            log.warning(
+                f"ВНИМАНИЕ: аккаунт {session_name} использует API ID 4 (помечен Telegram)! "
+                "Сессия не может быть перенесена — используйте осторожно."
+            )
+
         client = TelegramClient(
             session_path,
             api_id=api_id,
@@ -201,6 +207,17 @@ class SessionManager:
             except Exception:
                 pass
             raise
+
+        except AuthKeyUnregisteredError:
+            log.critical(
+                f"СЕССИЯ МЕРТВА: {phone} — auth key отозван Telegram. "
+                "Восстановление невозможно без повторной авторизации (SMS)."
+            )
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            return None
 
         except Exception as e:
             log.error(f"Ошибка подключения {phone}: {e}")

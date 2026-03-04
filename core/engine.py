@@ -23,6 +23,9 @@ from core.account_manager import AccountManager
 from core.session_manager import SessionManager
 from core.proxy_manager import ProxyManager
 from core.rate_limiter import RateLimiter
+from core.session_health import SessionHealthMonitor
+from core.session_backup import SessionBackupManager
+from core.activity_simulator import ActivitySimulator
 from channels.monitor import ChannelMonitor
 from comments.poster import CommentPoster
 from utils.anti_ban import AntibanManager
@@ -58,6 +61,11 @@ class CommentingEngine:
         self.subscriber = subscriber
         self.antiban = AntibanManager()
         self.passive = PassiveActionsManager(session_manager)
+
+        # Session survival modules
+        self.health_monitor = SessionHealthMonitor(session_manager, notifier)
+        self.backup_manager = SessionBackupManager()
+        self.activity_sim = ActivitySimulator(session_manager)
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
@@ -106,6 +114,10 @@ class CommentingEngine:
                 asyncio.create_task(self._auto_recover_loop(), name="auto_recover"),
             ]
 
+            # Запустить session survival модули
+            await self.health_monitor.start()
+            await self.activity_sim.start()
+
             # Флаг только после успешного создания задач
             self._running = True
             log.info("=== ДВИЖОК НЕЙРОКОММЕНТИРОВАНИЯ ЗАПУЩЕН ===")
@@ -146,6 +158,12 @@ class CommentingEngine:
             ),
         }
 
+        # Session survival modules (start once, shared across users)
+        if not self.health_monitor.is_running:
+            await self.health_monitor.start()
+        if not self.activity_sim.is_running:
+            await self.activity_sim.start()
+
         # Set global running flag if any user is running
         self._running = True
         log.info(f"=== ДВИЖОК ДЛЯ USER {user_id} ЗАПУЩЕН ===")
@@ -170,6 +188,10 @@ class CommentingEngine:
 
         self._running = False
         log.info("=== ОСТАНОВКА ДВИЖКА ===")
+
+        # Остановить session survival модули
+        await self.health_monitor.stop()
+        await self.activity_sim.stop()
 
         # Остановить мониторинг
         await self.monitor.stop()

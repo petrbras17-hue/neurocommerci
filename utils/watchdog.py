@@ -87,7 +87,9 @@ class Watchdog:
                     break  # start_for_user перезапускает все задачи
 
     async def _check_connections(self):
-        """Проверить подключения клиентов."""
+        """Проверить подключения клиентов и валидность auth key."""
+        from telethon.errors import AuthKeyUnregisteredError, UserDeactivatedBanError
+
         phones = self.session_mgr.get_connected_phones()
         disconnected = []
         for phone in phones:
@@ -101,5 +103,35 @@ class Watchdog:
                 try:
                     await self.session_mgr.connect_client(phone)
                     log.info(f"Watchdog: reconnect {phone} успешен")
+                except AuthKeyUnregisteredError:
+                    log.critical(f"Watchdog: {phone} — сессия мертва (AuthKeyUnregistered)")
+                    await self._mark_dead(phone, "AuthKeyUnregistered")
+                except UserDeactivatedBanError:
+                    log.critical(f"Watchdog: {phone} — аккаунт забанен")
+                    await self._mark_dead(phone, "UserDeactivatedBan")
                 except Exception as exc:
                     log.warning(f"Watchdog: reconnect {phone} не удался: {exc}")
+
+    async def _mark_dead(self, phone: str, error_type: str):
+        """Пометить аккаунт как мёртвый в БД и уведомить."""
+        try:
+            from storage.sqlite_db import async_session
+            from storage.models import Account
+            from sqlalchemy import update
+            from utils.helpers import utcnow
+
+            async with async_session() as session:
+                await session.execute(
+                    update(Account)
+                    .where(Account.phone == phone)
+                    .values(
+                        health_status="dead",
+                        status="dead",
+                        last_health_check=utcnow(),
+                    )
+                )
+                await session.commit()
+        except Exception as exc:
+            log.error(f"Watchdog: ошибка обновления статуса {phone}: {exc}")
+
+        await notifier.session_dead(phone, error_type)

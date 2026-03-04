@@ -52,12 +52,13 @@ class AntibanManager:
     @staticmethod
     def get_warmup_phase(days_active: int) -> str:
         """
-        Фаза 14-дневного прогрева:
+        Фаза прогрева:
         - readonly (0-2): только connect, get_me, чтение
         - reactions (3-4): реакции, send_read_acknowledge
         - light (5-7): 1-3 комментария
         - moderate (8-14): 5-8 комментариев
-        - full (14+): полный режим
+        - full (15-30): 20 комментариев
+        - veteran (30+): полный режим (35)
         """
         if days_active < 3:
             return "readonly"
@@ -67,7 +68,19 @@ class AntibanManager:
             return "light"
         elif days_active < 15:
             return "moderate"
-        return "full"
+        elif days_active < 30:
+            return "full"
+        return "veteran"
+
+    @staticmethod
+    def get_account_age_factor(account_age_days: int) -> float:
+        """
+        Множитель лимитов по возрасту аккаунта.
+        Аккаунты младше 90 дней получают пропорционально меньшие лимиты.
+        """
+        if account_age_days <= 0:
+            return 0.5  # Неизвестный возраст — консервативно
+        return min(1.0, account_age_days / 90)
 
     def get_rest_duration(self) -> int:
         """
@@ -94,3 +107,49 @@ class AntibanManager:
         """Добавить случайный разброс к задержке."""
         noise = random.gauss(0, base_seconds * spread)
         return max(1.0, base_seconds + noise)
+
+    @staticmethod
+    def get_account_active_window(phone: str) -> tuple[int, int]:
+        """Per-account active hours window with random offset."""
+        from config import settings as cfg
+        # Use phone hash for deterministic but varied offsets
+        offset = hash(phone) % 5 - 2  # -2 to +2 hours
+        start = cfg.ACCOUNT_SLEEP_END_HOUR + offset
+        end = cfg.ACCOUNT_SLEEP_START_HOUR + offset
+        return (start % 24, end % 24)
+
+    @staticmethod
+    def is_lazy_day(phone: str) -> bool:
+        """20% chance of a lazy day (50% fewer comments)."""
+        from datetime import date
+        day_seed = hash(f"{phone}:{date.today().isoformat()}")
+        return (day_seed % 5) == 0  # 20% chance
+
+    @staticmethod
+    def get_strict_daily_limit(days_active: int, account_age_days: int = 0) -> int:
+        """Stricter limits for API ID 4 accounts.
+
+        Uses warmup phase logic from get_warmup_phase and account age factor
+        to compute the normal limit, then applies a 0.6x multiplier in strict mode.
+        """
+        from config import settings as cfg
+
+        # Compute normal daily limit based on warmup phase
+        phase = AntibanManager.get_warmup_phase(days_active)
+        phase_limits = {
+            "readonly": 0,
+            "reactions": 0,
+            "light": cfg.WARMUP_LIGHT_LIMIT,
+            "moderate": cfg.WARMUP_MODERATE_LIMIT,
+            "full": 20,
+            "veteran": cfg.MAX_COMMENTS_PER_ACCOUNT_PER_DAY,
+        }
+        base_limit = phase_limits.get(phase, 0)
+        age_factor = AntibanManager.get_account_age_factor(account_age_days)
+        normal = max(0, int(base_limit * age_factor))
+
+        if not cfg.API_ID_4_STRICT_MODE:
+            return normal
+
+        # API ID 4 strict mode: 60% of normal limits
+        return max(1, int(normal * 0.6)) if normal > 0 else 0
