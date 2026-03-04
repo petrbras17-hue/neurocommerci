@@ -406,7 +406,7 @@ class AccountPackager:
         result["profile"] = profile
 
         # 2. Применение имени/фамилии/bio
-        channel_link = settings.DARTVPN_CHANNEL_LINK or ""
+        channel_link = settings.PRODUCT_CHANNEL_LINK or ""
         result["applied"] = await self.apply_profile(phone, profile, channel_link)
         await asyncio.sleep(random.uniform(2.0, 5.0))
 

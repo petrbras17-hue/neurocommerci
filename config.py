@@ -3,12 +3,17 @@ NEURO COMMENTING — Центральная конфигурация.
 Все настройки загружаются из .env файла.
 """
 
+from __future__ import annotations
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from pathlib import Path
+import logging
 
 
 BASE_DIR = Path(__file__).parent
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -45,10 +50,16 @@ class Settings(BaseSettings):
     MAX_DELAY_BETWEEN_COMMENTS_SEC: int = Field(default=600)
     COMMENT_COOLDOWN_AFTER_ERROR_SEC: int = Field(default=1800)
 
-    # --- DartVPN Promotion ---
-    DARTVPN_BOT_LINK: str = Field(default="https://t.me/DartVPNBot?start=fly")
-    DARTVPN_CHANNEL_LINK: str = Field(default="")
-    DARTVPN_AVATAR_PATH: str = Field(default="data/avatars/dartvpn_banner.jpg")
+    # --- Product Promotion (generic — configure for any product) ---
+    PRODUCT_NAME: str = Field(default="DartVPN")
+    PRODUCT_BOT_USERNAME: str = Field(default="DartVPNBot")  # without @
+    PRODUCT_BOT_LINK: str = Field(default="https://t.me/DartVPNBot?start=fly")
+    PRODUCT_CHANNEL_LINK: str = Field(default="")
+    PRODUCT_AVATAR_PATH: str = Field(default="data/avatars/dartvpn_banner.jpg")
+    PRODUCT_SHORT_DESC: str = Field(default="VPN с оплатой за гигабайты")
+    PRODUCT_FEATURES: str = Field(default="оплата по ГБ, карта Мир, работает в Telegram")
+    PRODUCT_CATEGORY: str = Field(default="VPN")  # VPN / AI / Bot / Service
+    PRODUCT_CHANNEL_PREFIX: str = Field(default="dartvpn")
     SCENARIO_B_RATIO: float = Field(default=0.3)
 
     # --- Warm-up (14-дневный прогрев новых аккаунтов) ---
@@ -74,27 +85,54 @@ class Settings(BaseSettings):
         "extra": "ignore",
     }
 
+    _dirs_created: bool = False
+
+    def _ensure_dirs(self) -> None:
+        """Create data directories once on first access."""
+        if Settings._dirs_created:
+            return
+        (BASE_DIR / self.SESSIONS_DIR).mkdir(parents=True, exist_ok=True)
+        (BASE_DIR / self.PROFILE_AVATARS_DIR).mkdir(parents=True, exist_ok=True)
+        (BASE_DIR / self.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Settings._dirs_created = True
+
     @property
     def sessions_path(self) -> Path:
-        path = BASE_DIR / self.SESSIONS_DIR
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        self._ensure_dirs()
+        return BASE_DIR / self.SESSIONS_DIR
 
     @property
     def profile_avatars_path(self) -> Path:
-        path = BASE_DIR / self.PROFILE_AVATARS_DIR
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        self._ensure_dirs()
+        return BASE_DIR / self.PROFILE_AVATARS_DIR
 
     @property
     def db_url(self) -> str:
-        db_path = BASE_DIR / self.DB_PATH
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        return f"sqlite+aiosqlite:///{db_path}"
+        self._ensure_dirs()
+        return f"sqlite+aiosqlite:///{BASE_DIR / self.DB_PATH}"
 
     @property
     def proxy_list_path(self) -> Path:
         return BASE_DIR / self.PROXY_LIST_FILE
+
+    @property
+    def product_bot_mention(self) -> str:
+        """@BotUsername style mention."""
+        return f"@{self.PRODUCT_BOT_USERNAME}"
+
+    @staticmethod
+    def _parse_bot_username_from_link(link: str) -> str | None:
+        """Extract bot username from t.me link. Returns None if can't parse."""
+        # https://t.me/BotName?start=fly -> BotName
+        # https://t.me/BotName -> BotName
+        if "t.me/" not in link:
+            return None
+        try:
+            after_tme = link.split("t.me/")[1]
+            username = after_tme.split("?")[0].split("/")[0].strip()
+            return username if username else None
+        except (IndexError, AttributeError):
+            return None
 
     def validate_critical(self) -> list[str]:
         """Проверить критичные настройки при старте. Возвращает список предупреждений."""
@@ -107,6 +145,16 @@ class Settings(BaseSettings):
             warnings.append("ADMIN_BOT_TOKEN не задан — бот не запустится")
         if not self.GEMINI_API_KEY:
             warnings.append("GEMINI_API_KEY не задан — AI генерация отключена, используются фоллбэки")
+        # Product config consistency: username must match the link
+        if self.PRODUCT_BOT_LINK and self.PRODUCT_BOT_USERNAME:
+            parsed = self._parse_bot_username_from_link(self.PRODUCT_BOT_LINK)
+            if parsed and parsed != self.PRODUCT_BOT_USERNAME:
+                msg = (
+                    f"PRODUCT_BOT_USERNAME ({self.PRODUCT_BOT_USERNAME}) "
+                    f"не совпадает с username из PRODUCT_BOT_LINK ({parsed})"
+                )
+                warnings.append(msg)
+                logger.warning(msg)
         return warnings
 
 

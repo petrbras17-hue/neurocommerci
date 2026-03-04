@@ -31,18 +31,19 @@ from channels.monitor import ChannelMonitor
 from channels.analyzer import PostAnalyzer
 from comments.generator import CommentGenerator
 from comments.poster import CommentPoster
-from config import settings
+from config import settings, Settings, BASE_DIR
+from PIL import Image as PILImage
 from core.account_manager import AccountManager
 from core.proxy_manager import ProxyManager
 from core.rate_limiter import RateLimiter
 from core.scheduler import TaskScheduler
 from core.session_manager import SessionManager
 from storage.google_sheets import GoogleSheetsStorage
-from storage.models import Account, Comment, Post, Channel as DbChannel
+from storage.models import Account, Comment, Post, Channel as DbChannel, User
 from storage.sqlite_db import async_session
 from utils.logger import log
 from utils.channel_subscriber import ChannelSubscriber
-from utils.channel_setup import ChannelSetup
+from utils.channel_setup import ChannelSetup, prepare_square_avatar
 from utils.account_packager import AccountPackager
 from utils.auto_responder import AutoResponder
 from core.engine import CommentingEngine
@@ -51,19 +52,33 @@ from utils.notifier import notifier
 router = Router()
 
 
-class AdminCheckMiddleware(BaseMiddleware):
-    """Middleware: блокирует callback_query от не-админов."""
+class UserContextMiddleware(BaseMiddleware):
+    """Middleware: загружает/создаёт User и передаёт в data['db_user']."""
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
-        if isinstance(event, CallbackQuery):
-            user_id = event.from_user.id if event.from_user else 0
-            if not is_admin(user_id):
-                await event.answer("⛔ Доступ запрещён.", show_alert=True)
+        from_user = None
+        if isinstance(event, (Message, CallbackQuery)):
+            from_user = event.from_user
+
+        if from_user:
+            db_user = await get_or_create_user(
+                telegram_id=from_user.id,
+                username=from_user.username,
+                first_name=from_user.first_name,
+            )
+            if not db_user.is_active:
+                if isinstance(event, CallbackQuery):
+                    await event.answer("⛔ Ваш аккаунт деактивирован.", show_alert=True)
+                elif isinstance(event, Message):
+                    await event.answer("⛔ Ваш аккаунт деактивирован.")
                 return
+            data["db_user"] = db_user
+
         return await handler(event, data)
 
 
-router.callback_query.middleware(AdminCheckMiddleware())
+router.message.middleware(UserContextMiddleware())
+router.callback_query.middleware(UserContextMiddleware())
 
 proxy_mgr = ProxyManager()
 session_mgr = SessionManager()
@@ -118,8 +133,19 @@ class SettingsStates(StatesGroup):
     waiting_min_delay = State()
     waiting_max_delay = State()
     waiting_scenario_ratio = State()
-    waiting_dartvpn_link = State()
+    waiting_product_link = State()
     waiting_delayed_minutes = State()
+
+
+class AvatarStates(StatesGroup):
+    waiting_photo = State()
+
+
+class OnboardingStates(StatesGroup):
+    waiting_product_name = State()
+    waiting_product_link = State()
+    waiting_proxy_file = State()
+    waiting_session_files = State()
 
 
 # ============================================================
@@ -221,7 +247,7 @@ def settings_kb() -> InlineKeyboardMarkup:
     """Меню настроек."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏱ Лимиты и задержки", callback_data="set_limits")],
-        [InlineKeyboardButton(text="🔗 Ссылка DartVPN", callback_data="set_dartvpn")],
+        [InlineKeyboardButton(text="🔗 Продукт и ссылка", callback_data="set_product")],
         [InlineKeyboardButton(text="🤖 Модель AI", callback_data="set_ai")],
         [InlineKeyboardButton(text="📊 Google Sheets", callback_data="set_sheets")],
         [InlineKeyboardButton(text="🔄 Сценарий A/B баланс", callback_data="set_scenarios")],
@@ -230,21 +256,75 @@ def settings_kb() -> InlineKeyboardMarkup:
 
 
 # ============================================================
-# Проверка доступа
+# Управление пользователями
 # ============================================================
 
+async def get_or_create_user(telegram_id: int, username: str = None, first_name: str = None) -> User:
+    """Получить или создать пользователя. Первый пользователь становится admin."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == telegram_id)
+        )
+        user = result.scalar_one_or_none()
+
+        if user:
+            # Обновить username/first_name если изменились
+            changed = False
+            if username and user.username != username:
+                user.username = username
+                changed = True
+            if first_name and user.first_name != first_name:
+                user.first_name = first_name
+                changed = True
+            # Throttle last_active_at: update only if > 5 min since last write
+            now = utcnow()
+            if not user.last_active_at or (now - user.last_active_at).total_seconds() > 300:
+                user.last_active_at = now
+                changed = True
+            if changed:
+                await session.commit()
+            return user
+
+        # Новый пользователь
+        # Первый пользователь или ADMIN_TELEGRAM_ID → admin
+        user_is_admin = (telegram_id == settings.ADMIN_TELEGRAM_ID) or (settings.ADMIN_TELEGRAM_ID == 0)
+
+        if user_is_admin and settings.ADMIN_TELEGRAM_ID == 0:
+            settings.ADMIN_TELEGRAM_ID = telegram_id
+            _update_env("ADMIN_TELEGRAM_ID", str(telegram_id))
+
+        user = User(
+            telegram_id=telegram_id,
+            username=username,
+            first_name=first_name,
+            is_active=True,
+            is_admin=user_is_admin,
+            product_name=settings.PRODUCT_NAME if user_is_admin else "",
+            product_bot_link=settings.PRODUCT_BOT_LINK if user_is_admin else "",
+            product_bot_username=settings.PRODUCT_BOT_USERNAME if user_is_admin else "",
+            product_avatar_path=settings.PRODUCT_AVATAR_PATH if user_is_admin else "",
+            product_short_desc=settings.PRODUCT_SHORT_DESC if user_is_admin else "",
+            product_features=settings.PRODUCT_FEATURES if user_is_admin else "",
+            product_category=settings.PRODUCT_CATEGORY if user_is_admin else "VPN",
+            product_channel_prefix=settings.PRODUCT_CHANNEL_PREFIX if user_is_admin else "",
+            scenario_b_ratio=settings.SCENARIO_B_RATIO,
+            max_daily_comments=settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY,
+            min_delay=settings.MIN_DELAY_BETWEEN_COMMENTS_SEC,
+            max_delay=settings.MAX_DELAY_BETWEEN_COMMENTS_SEC,
+            max_accounts=50 if user_is_admin else 3,
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        log.info(f"Создан пользователь: {telegram_id} (admin={user_is_admin})")
+        return user
+
+
 def is_admin(user_id: int) -> bool:
-    """Проверить что пользователь — администратор."""
+    """Legacy: проверить что пользователь — администратор (deprecated, use db_user)."""
     if settings.ADMIN_TELEGRAM_ID == 0:
-        return False  # Если ID не задан — запретить доступ (безопасность)
+        return True  # Первый запуск — разрешить
     return user_id == settings.ADMIN_TELEGRAM_ID
-
-
-def _set_admin_id(user_id: int):
-    """Закрепить admin ID при первом запуске (записать в .env и settings)."""
-    settings.ADMIN_TELEGRAM_ID = user_id
-    _update_env("ADMIN_TELEGRAM_ID", str(user_id))
-    log.info(f"Admin ID закреплён: {user_id}")
 
 
 def parse_keywords(text: str) -> list[str]:
@@ -368,25 +448,138 @@ async def sync_to_sheets_snapshot():
 # ============================================================
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
-    # Авто-регистрация админа при первом запуске
-    if settings.ADMIN_TELEGRAM_ID == 0:
-        _set_admin_id(message.from_user.id)
-        log.info(f"Первый запуск! Admin ID закреплён: {message.from_user.id}")
+async def cmd_start(message: Message, db_user: User = None):
+    if not db_user:
+        # Fallback: middleware should have set this
+        db_user = await get_or_create_user(
+            message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name,
+        )
 
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Доступ запрещён.")
+    # Check if new user needs onboarding (no product configured)
+    if not db_user.product_name and not db_user.is_admin:
+        await message.answer(
+            "🚀 <b>NEURO COMMENTING</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Добро пожаловать! Автоматический комментинг в Telegram.\n\n"
+            "Настройте систему за 5 шагов:\n\n"
+            "1. Настройте свой продукт\n"
+            "2. Загрузите прокси\n"
+            "3. Добавьте аккаунты (.session файлы)\n"
+            "4. Выберите каналы для комментирования\n"
+            "5. Запустите движок!\n\n"
+            "Начнём с настройки продукта 👇",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🎯 Настроить продукт", callback_data="onboard_product")],
+                [InlineKeyboardButton(text="⏭ Пропустить (настрою позже)", callback_data="onboard_skip")],
+            ]),
+        )
         return
+
+    product_name = db_user.product_name or settings.PRODUCT_NAME
+    product_link = db_user.product_bot_link or settings.PRODUCT_BOT_LINK
 
     await message.answer(
         "🚀 <b>NEURO COMMENTING</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Система автокомментирования в Telegram\n"
-        "для продвижения <b>DartVPN</b>\n\n"
-        f"👤 Админ: <code>{message.from_user.id}</code>\n"
+        f"Система автокомментирования в Telegram\n"
+        f"для продвижения <b>{escape(product_name)}</b>\n\n"
+        f"👤 ID: <code>{message.from_user.id}</code>"
+        f"{' (admin)' if db_user.is_admin else ''}\n"
         f"🤖 AI: <code>{settings.GEMINI_MODEL}</code>\n"
-        f"🔗 Бот: {settings.DARTVPN_BOT_LINK}\n\n"
+        f"🔗 Бот: {escape(product_link)}\n\n"
+        "<b>📖 Быстрый старт:</b>\n"
+        "1. ⚙️ Настройки → Продукт (имя, ссылка)\n"
+        "2. 🌐 Прокси → Загрузить\n"
+        "3. 👤 Аккаунты → Добавить + Упаковка\n"
+        "4. 📢 Каналы → Переходники\n"
+        "5. 🔍 Парсер → Найти каналы\n"
+        "6. 💬 Комментинг → Запустить\n\n"
         "Выберите раздел в меню ниже 👇",
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_menu_kb(),
+    )
+
+
+# ============================================================
+# Онбординг новых пользователей
+# ============================================================
+
+@router.callback_query(F.data == "onboard_product")
+async def cb_onboard_product(callback: CallbackQuery, state: FSMContext, db_user: User = None):
+    await callback.answer()
+    await state.set_state(OnboardingStates.waiting_product_name)
+    await callback.message.answer(
+        "🎯 <b>Шаг 1: Название продукта</b>\n\n"
+        "Введите название вашего продукта/сервиса/бота.\n"
+        "Например: <code>DartVPN</code>, <code>AIBot</code>, <code>MyCourse</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(OnboardingStates.waiting_product_name, F.text)
+async def process_onboard_product_name(message: Message, state: FSMContext, db_user: User = None):
+    if not db_user:
+        return
+    product_name = message.text.strip()[:100]
+    await state.update_data(product_name=product_name)
+    await state.set_state(OnboardingStates.waiting_product_link)
+    await message.answer(
+        f"Продукт: <b>{escape(product_name)}</b>\n\n"
+        "🔗 <b>Шаг 2: Ссылка на бот/сервис</b>\n\n"
+        "Введите ссылку на ваш Telegram-бот или сервис.\n"
+        "Например: <code>https://t.me/DartVPNBot?start=fly</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(OnboardingStates.waiting_product_link, F.text)
+async def process_onboard_product_link(message: Message, state: FSMContext, db_user: User = None):
+    if not db_user:
+        return
+    product_link = message.text.strip()[:300]
+    data = await state.get_data()
+    product_name = data.get("product_name", "")
+
+    # Extract bot username from link
+    bot_username = Settings._parse_bot_username_from_link(product_link) or ""
+
+    # Save to user record
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.id == db_user.id)
+        )
+        user = result.scalar_one()
+        user.product_name = product_name
+        user.product_bot_link = product_link
+        user.product_bot_username = bot_username
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        "Продукт настроен!\n\n"
+        f"Название: <b>{escape(product_name)}</b>\n"
+        f"Ссылка: {escape(product_link)}\n"
+        f"Username: @{escape(bot_username)}\n\n"
+        "Теперь можете:\n"
+        "• 🌐 Загрузить прокси\n"
+        "• 👤 Добавить аккаунты (.session)\n"
+        "• 📢 Найти каналы\n\n"
+        "Используйте меню ниже 👇",
+        parse_mode=ParseMode.HTML,
+        reply_markup=main_menu_kb(),
+    )
+
+
+@router.callback_query(F.data == "onboard_skip")
+async def cb_onboard_skip(callback: CallbackQuery, db_user: User = None):
+    await callback.answer("Настроите позже в разделе ⚙️ Настройки")
+    await callback.message.answer(
+        "🚀 <b>NEURO COMMENTING</b>\n\n"
+        "Добро пожаловать! Вы можете настроить всё позже.\n"
+        "Используйте меню ниже 👇",
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu_kb(),
     )
@@ -397,8 +590,8 @@ async def cmd_start(message: Message):
 # ============================================================
 
 @router.message(F.text == "📊 Дашборд")
-async def menu_dashboard(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_dashboard(message: Message, db_user: User = None):
+    if not db_user:
         return
 
     now = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -438,8 +631,8 @@ async def menu_dashboard(message: Message):
 
 
 @router.message(F.text == "👤 Аккаунты")
-async def menu_accounts(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_accounts(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "👤 <b>Управление аккаунтами</b>\n"
@@ -455,8 +648,8 @@ async def menu_accounts(message: Message):
 
 
 @router.message(F.text == "🌐 Прокси")
-async def menu_proxy(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_proxy(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "🌐 <b>Управление прокси</b>\n"
@@ -470,8 +663,8 @@ async def menu_proxy(message: Message):
 
 
 @router.message(F.text == "📢 Каналы")
-async def menu_channels(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_channels(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "📢 <b>База каналов</b>\n"
@@ -486,25 +679,25 @@ async def menu_channels(message: Message):
 
 
 @router.message(F.text == "💬 Комментинг")
-async def menu_commenting(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_commenting(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "💬 <b>Комментинг</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Управление процессом комментирования.\n\n"
         "📌 <b>Сценарий A (70%):</b> Текст без ссылки\n"
-        "   → Аватарка-магнит → Профиль → Канал → DartVPN\n\n"
+        f"   → Аватарка-магнит → Профиль → Канал → {settings.PRODUCT_NAME}\n\n"
         "📌 <b>Сценарий B (30%):</b> Текст со ссылкой\n"
-        f"   → Прямая ссылка на {settings.DARTVPN_BOT_LINK}",
+        f"   → Прямая ссылка на {settings.PRODUCT_BOT_LINK}",
         parse_mode=ParseMode.HTML,
         reply_markup=commenting_kb(),
     )
 
 
 @router.message(F.text == "🔍 Парсер каналов")
-async def menu_parser(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_parser(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "🔍 <b>Парсер каналов</b>\n"
@@ -522,14 +715,14 @@ async def menu_parser(message: Message):
 
 
 @router.message(F.text == "⚙️ Настройки")
-async def menu_settings(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_settings(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "⚙️ <b>Настройки</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🤖 AI модель: <code>{settings.GEMINI_MODEL}</code>\n"
-        f"🔗 DartVPN: {settings.DARTVPN_BOT_LINK}\n"
+        f"🔗 {settings.PRODUCT_NAME}: {settings.PRODUCT_BOT_LINK}\n"
         f"📊 Лимит/день: {settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}\n"
         f"⏱ Задержка: {settings.MIN_DELAY_BETWEEN_COMMENTS_SEC}-{settings.MAX_DELAY_BETWEEN_COMMENTS_SEC} сек\n"
         f"🎯 Сценарий B: {int(settings.SCENARIO_B_RATIO * 100)}%\n"
@@ -554,18 +747,17 @@ def help_kb() -> InlineKeyboardMarkup:
 
 
 @router.message(F.text == "📖 Помощь")
-async def menu_help(message: Message):
-    if not is_admin(message.from_user.id):
+async def menu_help(message: Message, db_user: User = None):
+    if not db_user:
         return
     await message.answer(
         "📖 <b>NEURO COMMENTING — Инструкция</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "Система автоматического комментирования\n"
-        "в Telegram для продвижения DartVPN.\n\n"
-        "Бот мониторит тематические каналы (VPN,\n"
-        "нейросети, блокировки), находит новые посты\n"
-        "и оставляет AI-сгенерированные комментарии\n"
-        "от имени купленных аккаунтов.\n\n"
+        f"в Telegram для продвижения {settings.PRODUCT_NAME}.\n\n"
+        "Бот мониторит тематические каналы, находит\n"
+        "новые посты и оставляет AI-сгенерированные\n"
+        "комментарии от имени купленных аккаунтов.\n\n"
         "<b>Выберите раздел:</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=help_kb(),
@@ -660,7 +852,7 @@ async def cb_help_redirect(callback: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "<b>Что это?</b>\n"
         "Личный канал аккаунта с одним постом\n"
-        "со ссылкой на @DartVPNBot.\n"
+        f"со ссылкой на {settings.product_bot_mention}.\n"
         "Ссылка на канал ставится в bio аккаунта.\n\n"
         "<b>Зачем?</b>\n"
         "Ключевой элемент Сценария A (70%).\n"
@@ -671,11 +863,11 @@ async def cb_help_redirect(callback: CallbackQuery):
         "  ↓ клик на канал в bio\n"
         "📡 <i>Канал-переходник</i>\n"
         "  ↓ закреплённый пост\n"
-        "🤖 <i>@DartVPNBot</i>\n\n"
+        f"🤖 <i>{settings.product_bot_mention}</i>\n\n"
         "<b>Что делает автоматически:</b>\n"
         "1. AI генерирует уникальное название\n"
         "2. Создаётся канал от имени аккаунта\n"
-        "3. Публикуется пост с DartVPN ссылкой\n"
+        f"3. Публикуется пост со ссылкой на {settings.PRODUCT_NAME}\n"
         "4. Пост закрепляется\n"
         "5. Bio обновляется ссылкой на канал\n\n"
         "<b>Как создать:</b>\n"
@@ -703,9 +895,9 @@ async def cb_help_scenarios(callback: CallbackQuery):
         "Конверсия через профиль → канал.\n"
         "Пример: <i>«ну наконец-то 😅»</i>\n\n"
         "<b>Сценарий B — Рекомендация (30%)</b>\n"
-        "Комментарий С @DartVPNBot.\n"
+        f"Комментарий С {settings.product_bot_mention}.\n"
         "Личный опыт, не реклама.\n"
-        "Пример: <i>«перешёл на @DartVPNBot 👍»</i>\n\n"
+        f"Пример: <i>«перешёл на {settings.product_bot_mention} 👍»</i>\n\n"
         "<b>Emoji Swap (60% от B)</b>\n"
         "Сначала эмодзи (👀, 🔥, 💯).\n"
         "Через 60 сек → замена на текст.\n"
@@ -714,7 +906,7 @@ async def cb_help_scenarios(callback: CallbackQuery):
         "Сканирует архив каналов (до 50 постов)\n"
         "и комментирует непрокомментированные.\n\n"
         "<b>Автоответчик ЛС</b>\n"
-        "Авто-ответ на входящие ЛС с DartVPN.\n\n"
+        f"Авто-ответ на входящие ЛС с {settings.PRODUCT_NAME}.\n\n"
         "<b>Правила комментариев:</b>\n"
         "• Максимум 30 слов\n"
         "• Русский разговорный язык\n"
@@ -775,7 +967,7 @@ async def cb_help_ai(callback: CallbackQuery):
         "• Лимиты: дневной лимит, задержки\n"
         "• Сценарий A/B: доля B (10-50%)\n"
         "• Модель AI: вкл/выкл Emoji Swap\n"
-        "• Ссылка DartVPN\n"
+        f"• Продукт и ссылка ({settings.PRODUCT_NAME})\n"
         "• Google Sheets синхронизация\n\n"
         "<b>Отложенный запуск:</b>\n"
         "💬 Комментинг → Отложенный запуск\n"
@@ -866,7 +1058,7 @@ async def cb_help_back(callback: CallbackQuery):
         "📖 <b>NEURO COMMENTING — Инструкция</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         "Система автоматического комментирования\n"
-        "в Telegram для продвижения DartVPN.\n\n"
+        f"в Telegram для продвижения {settings.PRODUCT_NAME}.\n\n"
         "<b>Выберите раздел:</b>",
         parse_mode=ParseMode.HTML,
         reply_markup=help_kb(),
@@ -880,7 +1072,10 @@ async def cb_help_back(callback: CallbackQuery):
 @router.callback_query(F.data == "back_main")
 async def cb_back_main(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -1116,8 +1311,8 @@ async def cb_acc_subscribe_run(callback: CallbackQuery):
 async def cb_acc_redirect_channel(callback: CallbackQuery):
     await callback.answer()
     connected = session_mgr.get_connected_phones()
-    bot_link = settings.DARTVPN_BOT_LINK or "https://t.me/DartVPNBot"
-    current_channel = settings.DARTVPN_CHANNEL_LINK
+    bot_link = settings.PRODUCT_BOT_LINK
+    current_channel = settings.PRODUCT_CHANNEL_LINK
 
     if not connected:
         await callback.message.edit_text(
@@ -1133,12 +1328,12 @@ async def cb_acc_redirect_channel(callback: CallbackQuery):
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Для каждого аккаунта будет создан:\n"
         f"• Личный канал с уникальным названием\n"
-        f"• Пост со ссылкой на DartVPN бот\n"
+        f"• Пост со ссылкой на {settings.PRODUCT_NAME}\n"
         f"• Закреплённый пост в канале\n"
         f"• Bio аккаунта со ссылкой на канал\n\n"
-        f"<b>Цепочка:</b> Аватарка → Профиль → Канал → DartVPN\n\n"
+        f"<b>Цепочка:</b> Аватарка → Профиль → Канал → {settings.PRODUCT_NAME}\n\n"
         f"Аккаунтов: <b>{len(connected)}</b>\n"
-        f"DartVPN: <code>{escape(bot_link)}</code>\n"
+        f"{settings.PRODUCT_NAME}: <code>{escape(bot_link)}</code>\n"
     )
     if current_channel:
         status_text += f"Текущий канал: <code>{escape(current_channel)}</code>\n"
@@ -1148,8 +1343,161 @@ async def cb_acc_redirect_channel(callback: CallbackQuery):
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Создать для всех аккаунтов", callback_data="acc_redirect_run")],
+            [InlineKeyboardButton(text="🖼 Аватарка канала", callback_data="acc_channel_avatar")],
+            [InlineKeyboardButton(text="📌 Закрепить канал в профиле", callback_data="acc_personal_channel")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="back_accounts")],
         ]),
+    )
+
+
+@router.callback_query(F.data == "acc_channel_avatar")
+async def cb_acc_channel_avatar(callback: CallbackQuery, state: FSMContext):
+    """Меню настройки аватарки канала-переходника."""
+    await callback.answer()
+
+    avatar_path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
+    exists = avatar_path.exists()
+    size_kb = avatar_path.stat().st_size // 1024 if exists else 0
+
+    # Проверяем наличие квадратной версии
+    square_path = avatar_path.parent / f"{avatar_path.stem}_square.png" if exists else None
+    has_square = square_path and square_path.exists()
+
+    status = "✅ Загружена" if exists else "❌ Не найдена"
+    square_info = ""
+    if has_square:
+        with PILImage.open(square_path) as sq:
+            square_info = f"\nКвадратная: <code>{sq.size[0]}x{sq.size[1]}</code> ({square_path.stat().st_size // 1024} KB)"
+
+    text = (
+        "🖼 <b>Аватарка канала</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Файл: <code>{avatar_path.name}</code>\n"
+        f"Статус: {status}\n"
+    )
+    if exists:
+        with PILImage.open(avatar_path) as orig:
+            text += f"Размер: <code>{orig.size[0]}x{orig.size[1]}</code> ({size_kb} KB)"
+    text += square_info
+    text += (
+        "\n\n"
+        "📎 <b>Отправьте новое изображение</b> как фото\n"
+        "для замены аватарки канала.\n\n"
+        "Изображение будет автоматически растянуто\n"
+        "до 800x800 для аватарки Telegram."
+    )
+
+    buttons = []
+    if exists and session_mgr.get_connected_phones():
+        buttons.append([InlineKeyboardButton(
+            text="🔄 Обновить аватарки всех каналов",
+            callback_data="acc_update_avatars_all",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="acc_redirect_channel")])
+
+    await callback.message.edit_text(
+        text, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await state.set_state(AvatarStates.waiting_photo)
+
+
+@router.message(AvatarStates.waiting_photo, F.photo)
+async def process_avatar_photo(message: Message, state: FSMContext):
+    """Получить фото от пользователя, сохранить как аватарку канала."""
+    await state.clear()
+
+    # Скачиваем фото максимального размера
+    photo = message.photo[-1]
+    try:
+        file = await message.bot.get_file(photo.file_id)
+        data = await message.bot.download_file(file.file_path)
+    except Exception as exc:
+        await message.answer(f"❌ Не удалось скачать фото: {exc}")
+        return
+
+    # Сохраняем как аватарку продукта
+    avatar_path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
+    avatar_path.parent.mkdir(parents=True, exist_ok=True)
+    avatar_path.write_bytes(data.read())
+
+    # Удаляем старую квадратную версию (чтобы пересоздалась)
+    square_path = avatar_path.parent / f"{avatar_path.stem}_square.png"
+    if square_path.exists():
+        square_path.unlink()
+
+    # Генерируем новую квадратную версию
+    sq = prepare_square_avatar(avatar_path)
+
+    with PILImage.open(avatar_path) as orig:
+        ow, oh = orig.size
+    with PILImage.open(sq) as sqimg:
+        sw, sh = sqimg.size
+
+    buttons = []
+    if session_mgr.get_connected_phones():
+        buttons.append([InlineKeyboardButton(
+            text="🔄 Обновить аватарки всех каналов",
+            callback_data="acc_update_avatars_all",
+        )])
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="acc_redirect_channel")])
+
+    await message.answer(
+        "✅ <b>Аватарка сохранена!</b>\n\n"
+        f"Оригинал: <code>{ow}x{oh}</code>\n"
+        f"Квадратная: <code>{sw}x{sh}</code> ({sq.stat().st_size // 1024} KB)\n\n"
+        "Нажмите «Обновить аватарки» чтобы применить\n"
+        "ко всем каналам-переходникам.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.message(AvatarStates.waiting_photo)
+async def process_avatar_not_photo(message: Message, state: FSMContext):
+    """Пользователь прислал не фото."""
+    await state.clear()
+    await message.answer(
+        "❌ Отправьте <b>изображение как фото</b> (не файл).\n"
+        "Или нажмите «Назад» для отмены.",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.callback_query(F.data == "acc_update_avatars_all")
+async def cb_update_avatars_all(callback: CallbackQuery, db_user: User = None):
+    """Обновить аватарки на всех каналах-переходниках."""
+    await callback.answer("Обновление аватарок запущено...")
+
+    avatar_path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
+    if not avatar_path.exists():
+        await callback.message.edit_text(
+            "❌ Аватарка не найдена. Сначала загрузите изображение.",
+            reply_markup=accounts_kb(),
+        )
+        return
+
+    uid = db_user.id if db_user else None
+    connected = session_mgr.get_connected_phones(user_id=uid)
+    await callback.message.edit_text(
+        f"⏳ <b>Обновляю аватарки каналов...</b>\n\n"
+        f"Аккаунтов: {len(connected)}\n"
+        f"<i>Это займёт {len(connected) * 5}-{len(connected) * 10} секунд.</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    result = await channel_setup.update_all_avatars(
+        avatar_path, user_id=uid,
+    )
+
+    await callback.message.edit_text(
+        "🖼 <b>Аватарки обновлены</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ Успешно: <b>{result['success']}</b>\n"
+        f"❌ Ошибок: <b>{result['failed']}</b>\n"
+        f"Всего: <b>{result['total']}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=accounts_kb(),
     )
 
 
@@ -1185,6 +1533,72 @@ async def cb_acc_redirect_run(callback: CallbackQuery):
                 f"❌ <code>{r['phone']}</code>\n"
                 f"   Ошибка: {escape(r.get('error', 'unknown'))}"
             )
+
+    lines.append(
+        f"\n<b>Итого:</b> ✅ {result['success']} / ❌ {result['failed']} из {result['total']}"
+    )
+
+    await callback.message.edit_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=accounts_kb(),
+    )
+
+
+@router.callback_query(F.data == "acc_personal_channel")
+async def cb_acc_personal_channel(callback: CallbackQuery):
+    """Показать информацию о закреплении канала-переходника в профиле."""
+    await callback.answer()
+    connected = session_mgr.get_connected_phones()
+
+    if not connected:
+        await callback.message.edit_text(
+            "📌 <b>Персональный канал</b>\n\n"
+            "<i>Сначала подключите аккаунты!</i>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=accounts_kb(),
+        )
+        return
+
+    await callback.message.edit_text(
+        f"📌 <b>Персональный канал</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Канал-переходник будет закреплён как виджет\n"
+        f"в шапке профиля (как на скриншоте).\n"
+        f"Это заменяет текстовую ссылку в bio.\n\n"
+        f"Аккаунтов: <b>{len(connected)}</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📌 Закрепить для всех аккаунтов", callback_data="acc_personal_channel_run")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_accounts")],
+        ]),
+    )
+
+
+@router.callback_query(F.data == "acc_personal_channel_run")
+async def cb_acc_personal_channel_run(callback: CallbackQuery):
+    """Закрепить канал-переходник как виджет в профиле для всех аккаунтов."""
+    await callback.answer("Устанавливаю каналы в профили...")
+    connected = session_mgr.get_connected_phones()
+
+    await callback.message.edit_text(
+        f"⏳ <b>Закрепляю каналы в профилях...</b>\n\n"
+        f"Аккаунтов: {len(connected)}\n"
+        f"<i>Канал будет отображаться как виджет в шапке профиля.</i>",
+        parse_mode=ParseMode.HTML,
+    )
+
+    result = await channel_setup.set_personal_channel_all()
+
+    lines = [
+        "📌 <b>Персональные каналы установлены</b>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+    ]
+
+    for r in result["results"]:
+        status = "✅" if r["success"] else "❌"
+        lines.append(f"{status} <code>{r['phone']}</code>")
 
     lines.append(
         f"\n<b>Итого:</b> ✅ {result['success']} / ❌ {result['failed']} из {result['total']}"
@@ -1548,8 +1962,8 @@ async def cb_com_delayed(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(SettingsStates.waiting_delayed_minutes, F.text)
-async def process_delayed_minutes(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+async def process_delayed_minutes(message: Message, state: FSMContext, db_user: User = None):
+    if not db_user:
         return
 
     try:
@@ -1737,9 +2151,9 @@ async def cb_com_scenarios(callback: CallbackQuery):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"<b>Сценарий A ({ratio_a}%):</b>\n"
         "Текст без ссылки. Яркая аватарка → профиль →\n"
-        "закреплённый канал → пост со ссылкой на DartVPN\n\n"
+        f"закреплённый канал → пост со ссылкой на {settings.PRODUCT_NAME}\n\n"
         f"<b>Сценарий B ({ratio_b}%):</b>\n"
-        "Текст со ссылкой на @DartVPNBot + рекомендация\n\n"
+        f"Текст со ссылкой на {settings.product_bot_mention} + рекомендация\n\n"
         "Изменить баланс можно в Настройках.",
         parse_mode=ParseMode.HTML,
         reply_markup=commenting_kb(),
@@ -1804,7 +2218,7 @@ async def cb_com_autoresponder(callback: CallbackQuery):
         f"Сообщений получено: <b>{stats['messages_received']}</b>\n"
         f"Уникальных пользователей: <b>{stats['unique_users']}</b>\n\n"
         "Когда пользователь пишет в ЛС аккаунту,\n"
-        "автоответчик отправляет ссылку на DartVPN.",
+        f"автоответчик отправляет ссылку на {settings.PRODUCT_NAME}.",
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
@@ -1882,7 +2296,7 @@ async def cb_engine_start(callback: CallbackQuery):
     await callback.answer("Запускаю движок...")
 
     # Подключить аккаунты (batch)
-    results = await account_mgr.connect_batch(batch_size=15)
+    results = await account_mgr.connect_batch(report_every=15)
     connected = sum(1 for s in results.values() if s == "connected")
 
     if connected == 0:
@@ -1976,7 +2390,7 @@ async def cb_engine_batch_connect(callback: CallbackQuery):
         parse_mode=ParseMode.HTML,
     )
 
-    results = await account_mgr.connect_batch(batch_size=15)
+    results = await account_mgr.connect_batch(report_every=15)
     connected = sum(1 for s in results.values() if s == "connected")
     failed = sum(1 for s in results.values() if s != "connected")
 
@@ -2245,8 +2659,8 @@ async def cmd_cancel(message: Message, state: FSMContext):
 
 
 @router.message(Command("blacklist"))
-async def cmd_blacklist(message: Message):
-    if not is_admin(message.from_user.id):
+async def cmd_blacklist(message: Message, db_user: User = None):
+    if not db_user:
         return
 
     parts = (message.text or "").split()
@@ -2351,8 +2765,14 @@ _ALLOWED_ENV_KEYS = frozenset({
     "MAX_DELAY_BETWEEN_COMMENTS_SEC",
     "COMMENT_COOLDOWN_AFTER_ERROR_SEC",
     "SCENARIO_B_RATIO",
-    "DARTVPN_BOT_LINK",
-    "DARTVPN_CHANNEL_LINK",
+    "PRODUCT_NAME",
+    "PRODUCT_BOT_USERNAME",
+    "PRODUCT_BOT_LINK",
+    "PRODUCT_CHANNEL_LINK",
+    "PRODUCT_SHORT_DESC",
+    "PRODUCT_FEATURES",
+    "PRODUCT_CATEGORY",
+    "PRODUCT_CHANNEL_PREFIX",
     "MONITOR_POLL_INTERVAL_SEC",
     "POST_MAX_AGE_HOURS",
     "LOG_LEVEL",
@@ -2517,21 +2937,26 @@ async def process_set_max_delay(message: Message, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "set_dartvpn")
-async def cb_set_dartvpn(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "set_product")
+async def cb_set_product(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.set_state(SettingsStates.waiting_dartvpn_link)
+    await state.set_state(SettingsStates.waiting_product_link)
     await callback.message.edit_text(
-        "🔗 <b>Ссылка DartVPN</b>\n"
+        "🔗 <b>Настройки продукта</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Текущая: <code>{settings.DARTVPN_BOT_LINK}</code>\n\n"
-        "Отправьте новую ссылку (например https://t.me/DartVPNBot):",
+        f"Имя: <code>{settings.PRODUCT_NAME}</code>\n"
+        f"Бот: <code>{settings.product_bot_mention}</code>\n"
+        f"Ссылка: <code>{settings.PRODUCT_BOT_LINK}</code>\n"
+        f"Категория: <code>{settings.PRODUCT_CATEGORY}</code>\n"
+        f"Описание: <code>{settings.PRODUCT_SHORT_DESC}</code>\n\n"
+        "Отправьте новую ссылку на бот (https://t.me/...):\n"
+        "<i>Или используйте .env для настройки всех параметров</i>",
         parse_mode=ParseMode.HTML,
     )
 
 
-@router.message(SettingsStates.waiting_dartvpn_link, F.text)
-async def process_set_dartvpn(message: Message, state: FSMContext):
+@router.message(SettingsStates.waiting_product_link, F.text)
+async def process_set_product(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2542,10 +2967,18 @@ async def process_set_dartvpn(message: Message, state: FSMContext):
         return
 
     await state.clear()
-    settings.DARTVPN_BOT_LINK = link
-    _update_env("DARTVPN_BOT_LINK", link)
+    settings.PRODUCT_BOT_LINK = link
+    _update_env("PRODUCT_BOT_LINK", link)
+
+    # Auto-derive bot username from link
+    parsed_username = Settings._parse_bot_username_from_link(link)
+    if parsed_username:
+        settings.PRODUCT_BOT_USERNAME = parsed_username
+        _update_env("PRODUCT_BOT_USERNAME", parsed_username)
+
+    username_info = f"\nUsername: <code>@{parsed_username}</code>" if parsed_username else ""
     await message.answer(
-        f"✅ Ссылка DartVPN обновлена: <code>{escape(link)}</code>",
+        f"✅ Ссылка продукта обновлена: <code>{escape(link)}</code>{username_info}",
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu_kb(),
     )
@@ -2688,9 +3121,9 @@ async def cb_back_settings(callback: CallbackQuery, state: FSMContext):
 # ============================================================
 
 @router.message(F.document)
-async def handle_document(message: Message):
+async def handle_document(message: Message, db_user: User = None):
     """Обработка загруженных файлов (.session, .txt)."""
-    if not is_admin(message.from_user.id):
+    if not db_user:
         return
 
     doc = message.document

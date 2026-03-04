@@ -3,69 +3,131 @@
 
 Для каждого аккаунта:
 1. Создаёт приватный Telegram-канал
-2. Ставит аватарку DartVPN
-3. Публикует пост со скрытыми ссылками на @DartVPNBot (parse_mode='html')
+2. Ставит аватарку продукта
+3. Публикует пост со скрытыми ссылками (parse_mode='html')
 4. Закрепляет пост в канале
 5. Обновляет bio аккаунта — добавляет ссылку на канал-переходник
 
-Это ключевой элемент Сценария A: аватарка → профиль → канал → пост → DartVPN.
+Это ключевой элемент Сценария A: аватарка → профиль → канал → пост → продукт.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypedDict
+
+from PIL import Image
 
 from google import genai
 from google.genai import types
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError
-from telethon.tl.functions.channels import CreateChannelRequest, EditPhotoRequest
+from telethon.tl.functions.channels import CreateChannelRequest, EditPhotoRequest, UpdateUsernameRequest as ChannelUpdateUsernameRequest
 from telethon.tl.functions.messages import (
     ExportChatInviteRequest,
     UpdatePinnedMessageRequest,
 )
-from telethon.tl.functions.account import UpdateProfileRequest
+from telethon.tl.functions.account import UpdateProfileRequest, UpdatePersonalChannelRequest
 from telethon.tl.types import InputChatUploadedPhoto
+from sqlalchemy import select, update
 
 from config import settings, BASE_DIR
 from core.session_manager import SessionManager
 from core.account_manager import AccountManager
+from storage.sqlite_db import async_session
+from storage.models import Account
+from utils.cache import SettingsCache
 from utils.logger import log
 
 
 # ────────────────────────────────────────────────────────────
-# Ссылка DartVPN (единая для всех постов и комментариев)
+# TypedDict — типизированные словари для результатов операций
 # ────────────────────────────────────────────────────────────
-def _get_dartvpn_link() -> str:
-    return settings.DARTVPN_BOT_LINK
+
+class ChannelResult(TypedDict):
+    """Результат создания канала-переходника (create_redirect_channel)."""
+    phone: str
+    success: bool
+    channel_title: str
+    channel_link: str
+    error: Optional[str]
 
 
+class PersonalChannelResult(TypedDict):
+    """Результат установки персонального канала для одного аккаунта."""
+    phone: str
+    success: bool
+
+
+class BatchResult(TypedDict):
+    """Общий результат пакетной операции (setup_all_accounts, set_personal_channel_all)."""
+    total: int
+    success: int
+    failed: int
+    results: list
+
+
+# ────────────────────────────────────────────────────────────
+# Ссылка на продукт (единая для всех постов и комментариев)
+# ────────────────────────────────────────────────────────────
 def _link(text: str) -> str:
-    """Обернуть текст в скрытую HTML-ссылку на DartVPN."""
-    return f'<a href="{_get_dartvpn_link()}">{text}</a>'
+    """Обернуть текст в скрытую HTML-ссылку на продукт."""
+    return f'<a href="{settings.PRODUCT_BOT_LINK}">{text}</a>'
 
 
 # ────────────────────────────────────────────────────────────
 # AI-промпт для генерации контента
 # ────────────────────────────────────────────────────────────
 
-CHANNEL_NAME_PROMPT = """Сгенерируй название и описание для Telegram-канала.
+_CHANNEL_THEMES: dict[str, list[str]] = {
+    "VPN": [
+        "Цифровая безопасность и VPN",
+        "Свободный интернет",
+        "Обход блокировок и интернет-свобода",
+    ],
+    "AI": [
+        "Нейросети и AI-инструменты",
+        "Искусственный интеллект для всех",
+        "Технологии будущего",
+    ],
+    "Bot": [
+        "Полезные Telegram-боты",
+        "Автоматизация и инструменты",
+        "Лайфхаки и технологии",
+    ],
+    "Service": [
+        "Полезные сервисы и инструменты",
+        "Технологии и лайфхаки",
+        "Цифровые инструменты",
+    ],
+}
+
+_COMMON_THEMES = [
+    "Полезные сервисы и приложения",
+    "IT-лайфхаки и технологии",
+]
+_COMMON_THEMES_BLOCK = "\n".join(f"- {t}" for t in _COMMON_THEMES)
+
+
+def get_channel_name_prompt(style: str) -> str:
+    """Промпт для генерации названия канала с актуальными settings."""
+    themes = _CHANNEL_THEMES.get(settings.PRODUCT_CATEGORY, _CHANNEL_THEMES["Service"])
+    themes_block = "\n".join(f"- {t}" for t in themes)
+    return f"""Сгенерируй название и описание для Telegram-канала.
 Канал должен выглядеть как личный канал обычного пользователя, который делится полезной информацией.
 
 Стиль: {style}
 
 Тематики на выбор (выбери одну):
-- Цифровая безопасность и VPN
-- Полезные сервисы и приложения
-- IT-лайфхаки и технологии
-- Обход блокировок и интернет-свобода
-- Нейросети и полезные инструменты
+{themes_block}
+{_COMMON_THEMES_BLOCK}
 
 Требования:
-1. Название — 2-4 слова, привлекательное, НЕ содержит "VPN" или "DartVPN"
+1. Название — 2-4 слова, привлекательное, НЕ содержит "{settings.PRODUCT_NAME}"
 2. Описание — 1-2 предложения, до 100 символов, интригующее
 
 Ответь СТРОГО в формате:
@@ -75,225 +137,136 @@ CHANNEL_DESC: ...
 
 
 # ────────────────────────────────────────────────────────────
-# 10 уникальных шаблонов постов для каналов-переходников
-# Каждый пост содержит 2 скрытые HTML-ссылки (синий текст → бот)
+# Посты для каналов-переходников
+# Загружаются из data/product_posts.json (кастомные)
+# или генерируются из настроек продукта (generic)
 # ────────────────────────────────────────────────────────────
 
-FALLBACK_CHANNELS = [
-    {
-        "name": "Полезности | Интернет",
-        "desc": "Советы, лайфхаки и сервисы для свободного интернета",
-        "post": (
-            f'🎯 {_link("DART VPN")} — интернет, как будто блокировок не существует!\n'
-            '\n'
-            'ꗃ VPN прямо в Telegram, созданный для тех, кто устал от сервисов, которые «ещё вчера работали».\n'
-            '\n'
-            'Почему выбирают DartVPN:\n'
-            '🌐 Полный доступ ко всем ресурсам и YouTube в 4K\n'
-            '☎️ Мессенджеры без обрывов — Telegram, WhatsApp, Discord\n'
-            '⚡️ Скорость от 200 Мбит/с по Wi-Fi и мобильной сети\n'
-            '🧠 Smart Connect — автовыбор самого быстрого сервера\n'
-            '✅ Запускается за пару простых шагов\n'
-            '🛡 Стабильно работает больше года, без привязки карты\n'
-            '🎁 5 дней бесплатно + скидка 50% на следующий месяц\n'
-            '\n'
+def _build_fallback_channels() -> list[dict]:
+    """Построить список постов для каналов-переходников."""
+
+    # 1. Кастомные посты из JSON (приоритет)
+    custom_path = BASE_DIR / "data" / "product_posts.json"
+    if custom_path.exists():
+        try:
+            data = json.loads(custom_path.read_text(encoding="utf-8"))
+            link = settings.PRODUCT_BOT_LINK
+
+            # Формат 1: {"post_template": "...", "channels": [...]}
+            if isinstance(data, dict) and "post_template" in data and "channels" in data:
+                post = data["post_template"].replace("{LINK}", link)
+                channels = [
+                    {"name": ch["name"], "desc": ch["desc"], "post": post}
+                    for ch in data["channels"]
+                ]
+                log.info(f"Загружено {len(channels)} кастомных постов из product_posts.json")
+                return channels
+
+            # Формат 2 (legacy): [{name, desc, post}, ...]
+            if isinstance(data, list) and data:
+                for item in data:
+                    if "post" in item:
+                        item["post"] = item["post"].replace("{LINK}", link)
+                log.info(f"Загружено {len(data)} кастомных постов из product_posts.json")
+                return data
+        except Exception as exc:
+            log.warning(f"Ошибка чтения product_posts.json: {exc}")
+
+    # 2. Генерация из настроек продукта (blockquote + emoji-per-line формат)
+    name = settings.PRODUCT_NAME
+    features = settings.PRODUCT_FEATURES
+    desc = settings.PRODUCT_SHORT_DESC
+
+    # Разбить фичи в список буллетов с эмодзи
+    feature_emojis = ["🌐", "☎️", "⚡️", "🧠", "🌍", "✅", "🛡", "📱", "🔐", "💡"]
+    feature_list = [f.strip() for f in features.split(",") if f.strip()]
+    feature_bullets = "\n".join(
+        f"{feature_emojis[i % len(feature_emojis)]} {f}" for i, f in enumerate(feature_list)
+    )
+
+    channel_names = [
+        ("Полезности | Интернет", "Советы, лайфхаки и полезные сервисы"),
+        ("Digital лайфхаки", "Технологии и сервисы"),
+        ("Свободный интернет", "Лайфхаки и инструменты"),
+        ("Tech советы", "Лучшие digital-решения"),
+        ("Интернет без границ", "Полезные инструменты"),
+        ("Цифровая свобода", "Безопасность и приватность"),
+        ("Онлайн лайфхаки", "Полезные сервисы"),
+        ("Нейро советы", "AI и digital-инструменты"),
+        ("Полезные находки", "Лучшие сервисы"),
+        ("IT для всех", "Обзоры и рекомендации"),
+    ]
+
+    channels = []
+    for ch_name, ch_desc in channel_names:
+        post = (
+            f'🎯 {_link(name.upper())} — {desc}\n'
+            f'\n'
+            f'<blockquote>Удобный сервис прямо в Telegram.\n'
+            f'\n'
+            f'{feature_bullets}\n'
+            f'\n'
+            f'🎁 Попробуйте бесплатно</blockquote>\n'
+            f'\n'
             f'👇 Попробуйте бесплатно прямо сейчас\n'
+            f'\n'
+            f'{_link("ПОПРОБОВАТЬ")}\n'
+            f'{_link("ПОПРОБОВАТЬ")}\n'
             f'{_link("ПОПРОБОВАТЬ")}'
-        ),
-    },
-    {
-        "name": "Digital лайфхаки",
-        "desc": "Технологии • Сервисы • Безопасность",
-        "post": (
-            f'🚀 {_link("DART VPN")} — летай без ограничений!\n'
-            '\n'
-            'Удобный и быстрый VPN прямо в Telegram-боте. Никаких приложений — всё в одном месте.\n'
-            '\n'
-            'Что получаешь:\n'
-            '⚡️ Скорость от 200 Мбит/с — YouTube, стримы, игры\n'
-            '🌐 Полный доступ к заблокированным сайтам и сервисам\n'
-            '🧠 Технология Smart Connect — сервер подбирается автоматически\n'
-            '☎️ Звонки и видео в мессенджерах без лагов\n'
-            '🛡 Надёжная защита данных — работает стабильно больше года\n'
-            '✅ Простая настройка — разберётся каждый за минуту\n'
-            '🎁 Бесплатный пробный период 5 дней\n'
-            '\n'
-            f'👇 Подключайся бесплатно\n'
-            f'{_link("ПОДКЛЮЧИТЬСЯ")}'
-        ),
-    },
-    {
-        "name": "Свободный интернет",
-        "desc": "Обходим блокировки вместе — лайфхаки и инструменты",
-        "post": (
-            f'🔐 {_link("DART VPN")} — свобода в интернете начинается здесь\n'
-            '\n'
-            'VPN нового поколения, который работает прямо через Telegram. Забудь про сложные приложения.\n'
-            '\n'
-            'Преимущества:\n'
-            '🌐 Доступ ко всем сайтам — YouTube, Instagram, Netflix в 4K\n'
-            '⚡️ Молниеносная скорость — от 200 Мбит/с\n'
-            '☎️ Стабильные звонки в WhatsApp и Discord без обрывов\n'
-            '✅ Не нужно ничего скачивать — работает в Telegram\n'
-            '🧠 Умный выбор сервера при каждом подключении\n'
-            '🛡 Защита данных и анонимность, без привязки карты\n'
-            '🎁 5 дней бесплатно + бонус 50% на первый месяц\n'
-            '\n'
-            f'👇 Начни пользоваться бесплатно\n'
-            f'{_link("НАЧАТЬ")}'
-        ),
-    },
-    {
-        "name": "Tech советы",
-        "desc": "Лучшие инструменты и digital-решения каждый день",
-        "post": (
-            f'💡 {_link("DART VPN")} — забудь про блокировки раз и навсегда\n'
-            '\n'
-            'ꗃ Быстрый и надёжный VPN, который живёт прямо в Telegram. Без лишних приложений и настроек.\n'
-            '\n'
-            'Почему это лучший выбор:\n'
-            '🧠 Smart Connect — система сама выбирает быстрый сервер\n'
-            '⚡️ Скорость от 200 Мбит/с — стримы и видео без буферизации\n'
-            '🌐 Открывает доступ к любым заблокированным ресурсам\n'
-            '☎️ Мессенджеры работают на максимум — без обрывов и задержек\n'
-            '✅ Настройка за 2 минуты — справится любой\n'
-            '🛡 Больше года стабильной работы, защита данных\n'
-            '🎁 Бесплатный тест 5 дней + скидка 50%\n'
-            '\n'
-            f'👇 Попробуй бесплатно прямо сейчас\n'
-            f'{_link("ПОПРОБОВАТЬ БЕСПЛАТНО")}'
-        ),
-    },
-    {
-        "name": "Интернет без границ",
-        "desc": "Лайфхаки для свободного интернета без ограничений",
-        "post": (
-            f'🌍 {_link("DART VPN")} — весь интернет в твоём кармане\n'
-            '\n'
-            'Больше никаких «этот контент недоступен в вашем регионе». VPN работает через Telegram — просто и удобно.\n'
-            '\n'
-            'Что внутри:\n'
-            '🌐 YouTube в 4K, Instagram, Netflix — всё без ограничений\n'
-            '⚡️ 200+ Мбит/с — быстрее многих домашних провайдеров\n'
-            '🧠 Автоматический выбор лучшего сервера\n'
-            '☎️ Видеозвонки без лагов в любом мессенджере\n'
-            '🛡 Год стабильной работы — никаких сбоев\n'
-            '✅ Всё управление через бота в Telegram\n'
-            '🎁 5 дней бесплатного доступа + 50% на месяц\n'
-            '\n'
-            f'👇 Открой свободный интернет\n'
-            f'{_link("ОТКРЫТЬ ДОСТУП")}'
-        ),
-    },
-    {
-        "name": "Цифровая свобода",
-        "desc": "Безопасность, приватность и свободный доступ к сети",
-        "post": (
-            f'🛡 {_link("DART VPN")} — твоя защита в цифровом мире\n'
-            '\n'
-            'Надёжный VPN-сервис, который работает как Telegram-бот. Подключение за секунды, без лишних программ.\n'
-            '\n'
-            'Главные фишки:\n'
-            '🛡 Защита данных на уровне — больше года без утечек\n'
-            '🌐 Полный доступ ко всему контенту без блокировок\n'
-            '⚡️ Скорость до 200 Мбит/с — стримы, игры, загрузки\n'
-            '🧠 Технология Smart Connect для стабильного соединения\n'
-            '☎️ Звонки и видео без задержек — WhatsApp, Telegram, Discord\n'
-            '✅ Ничего не нужно скачивать — всё в Telegram\n'
-            '🎁 Пробный период 5 дней совершенно бесплатно\n'
-            '\n'
-            f'👇 Защити свой интернет уже сейчас\n'
-            f'{_link("ЗАЩИТИТЬ")}'
-        ),
-    },
-    {
-        "name": "Онлайн лайфхаки",
-        "desc": "Полезные сервисы и инструменты для повседневной жизни",
-        "post": (
-            f'✨ {_link("DART VPN")} — интернет без ограничений, прямо в Telegram\n'
-            '\n'
-            'Зачем платить за дорогие приложения, если VPN может быть простым и удобным? Всё через бота.\n'
-            '\n'
-            'Что получаешь:\n'
-            '⚡️ Скорость от 200 Мбит/с — никаких тормозов\n'
-            '🌐 Любые сайты и сервисы — YouTube, Instagram, Netflix\n'
-            '🧠 Умное подключение — лучший сервер автоматически\n'
-            '☎️ Стабильная связь во всех мессенджерах\n'
-            '🛡 Безопасно и надёжно — без привязки банковской карты\n'
-            '✅ Подключение за минуту — никаких инструкций\n'
-            '🎁 5 дней бесплатно + бонус 50% скидка\n'
-            '\n'
-            f'👇 Попробуй — это бесплатно\n'
-            f'{_link("ПОПРОБОВАТЬ")}'
-        ),
-    },
-    {
-        "name": "Нейро советы",
-        "desc": "AI, технологии и полезные digital-инструменты",
-        "post": (
-            f'🔥 {_link("DART VPN")} — быстро, надёжно, без подписок\n'
-            '\n'
-            'ꗃ Современный VPN в формате Telegram-бота. Подключился — и забыл про блокировки навсегда.\n'
-            '\n'
-            'Возможности:\n'
-            '🌐 Разблокировка всех сайтов — от YouTube до Netflix\n'
-            '⚡️ 200 Мбит/с — смотри видео в 4K без задержек\n'
-            '☎️ Видеозвонки без обрывов в Telegram, WhatsApp, Discord\n'
-            '🧠 Smart Connect подбирает оптимальный сервер\n'
-            '✅ Не нужно устанавливать приложения\n'
-            '🛡 Проверенный сервис — стабильная работа больше года\n'
-            '🎁 Бесплатный тест на 5 дней + скидка новым пользователям\n'
-            '\n'
-            f'👇 Подключайся бесплатно\n'
-            f'{_link("ПОДКЛЮЧИТЬСЯ БЕСПЛАТНО")}'
-        ),
-    },
-    {
-        "name": "Полезные находки",
-        "desc": "Делюсь лучшими сервисами и инструментами",
-        "post": (
-            f'📱 {_link("DART VPN")} — VPN, который просто работает\n'
-            '\n'
-            'Никаких сложных настроек. Открыл бота в Telegram — подключился — пользуешься. Всё.\n'
-            '\n'
-            'За что ценят DartVPN:\n'
-            '✅ Простота — всё через Telegram-бота\n'
-            '⚡️ Скорость от 200 Мбит/с — стримы и 4K без буфера\n'
-            '🌐 Доступ к любым заблокированным ресурсам\n'
-            '🧠 Автоматический выбор быстрого сервера\n'
-            '☎️ Мессенджеры и звонки на максимальной скорости\n'
-            '🛡 Без привязки карты, данные под защитой\n'
-            '🎁 5 дней бесплатно + 50% скидка на первый месяц\n'
-            '\n'
-            f'👇 Начни пользоваться сейчас\n'
-            f'{_link("НАЧАТЬ БЕСПЛАТНО")}'
-        ),
-    },
-    {
-        "name": "IT для всех",
-        "desc": "Технологии простым языком — обзоры и рекомендации",
-        "post": (
-            f'⚡ {_link("DART VPN")} — доступ ко всему за пару кликов\n'
-            '\n'
-            'VPN нового формата: работает прямо в Telegram как бот. Не нужно ничего устанавливать.\n'
-            '\n'
-            'Почему стоит попробовать:\n'
-            '🌐 Все сайты доступны — YouTube, Instagram, TikTok, Netflix\n'
-            '⚡️ 200+ Мбит/с — как будто блокировок нет\n'
-            '🧠 Smart Connect — система сама выберет лучший сервер\n'
-            '☎️ Звонки и видео работают стабильно\n'
-            '✅ Настройка за 2 минуты через бота\n'
-            '🛡 Больше года работы, проверено тысячами пользователей\n'
-            '🎁 Пробный доступ 5 дней бесплатно\n'
-            '\n'
-            f'👇 Получи бесплатный доступ\n'
-            f'{_link("ПОЛУЧИТЬ ДОСТУП")}'
-        ),
-    },
-]
+        )
+        channels.append({"name": ch_name, "desc": ch_desc, "post": post})
+
+    return channels
+
+
+_fallback_channels_settings_cache = SettingsCache(
+    key_fn=lambda: (
+        f"{settings.PRODUCT_NAME}|{settings.PRODUCT_FEATURES}"
+        f"|{settings.PRODUCT_BOT_LINK}|{settings.PRODUCT_SHORT_DESC}"
+    ),
+    build_fn=_build_fallback_channels,
+)
+
+
+def get_fallback_channels() -> list[dict]:
+    """
+    Посты для каналов-переходников с актуальными настройками продукта.
+    Кэширует результат; сбрасывает кэш при изменении product settings.
+    """
+    return _fallback_channels_settings_cache.get()
+
 
 STYLES_FOR_CHANNELS = ["expert", "casual", "business", "student", "tech",
                        "lifestyle", "blogger", "minimalist", "geek", "friendly"]
+
+
+# ────────────────────────────────────────────────────────────
+# Подготовка квадратной аватарки для канала
+# ────────────────────────────────────────────────────────────
+# Telegram отображает аватарки каналов как круги.
+# Баннер просто растягивается до квадрата size×size.
+# Небольшое вертикальное растяжение незаметно в круговой аватарке,
+# зато нет ни паддингов, ни обрезки текста.
+
+def prepare_square_avatar(banner_path: Path, size: int = 800) -> Path:
+    """
+    Конвертировать баннер в квадратную аватарку для Telegram-канала.
+
+    Растягивает баннер до size×size. Небольшое вертикальное растяжение
+    (для 16:9 → 1:1) незаметно в круговой аватарке Telegram.
+    """
+    square_path = banner_path.parent / f"{banner_path.stem}_square.png"
+
+    # Кэш: не пересоздаём если уже есть и свежее оригинала
+    if square_path.exists() and square_path.stat().st_mtime >= banner_path.stat().st_mtime:
+        return square_path
+
+    with Image.open(banner_path) as img:
+        rgb_img = img.convert("RGB")
+        resized = rgb_img.resize((size, size), Image.LANCZOS)
+        resized.save(str(square_path), quality=95)
+        log.info(f"Квадратная аватарка создана: {square_path.name} ({size}x{size})")
+        return square_path
 
 
 class ChannelSetup:
@@ -321,7 +294,7 @@ class ChannelSetup:
         if not self._ai_client:
             return self._get_fallback()
 
-        prompt = CHANNEL_NAME_PROMPT.format(style=style)
+        prompt = get_channel_name_prompt(style)
 
         try:
             response = await asyncio.to_thread(
@@ -362,14 +335,16 @@ class ChannelSetup:
             result["desc"] = result["desc"][:252] + "..."
 
         # Пост всегда берём из фоллбэков (там правильные скрытые ссылки)
-        fb = random.choice(FALLBACK_CHANNELS)
+        channels = get_fallback_channels()
+        fb = random.choice(channels)
         result["post"] = fb["post"]
         return result
 
     @staticmethod
     def _get_fallback() -> dict:
         """Случайный фоллбэк-контент."""
-        fb = random.choice(FALLBACK_CHANNELS)
+        channels = get_fallback_channels()
+        fb = random.choice(channels)
         return {
             "name": fb["name"],
             "desc": fb["desc"],
@@ -378,7 +353,8 @@ class ChannelSetup:
 
     def _get_indexed_fallback(self, index: int) -> dict:
         """Фоллбэк по индексу (для уникальности — каждому аккаунту свой)."""
-        fb = FALLBACK_CHANNELS[index % len(FALLBACK_CHANNELS)]
+        channels = get_fallback_channels()
+        fb = channels[index % len(channels)]
         return {
             "name": fb["name"],
             "desc": fb["desc"],
@@ -386,30 +362,87 @@ class ChannelSetup:
         }
 
     def _get_avatar_path(self) -> Optional[Path]:
-        """Получить путь к аватарке DartVPN."""
-        path = BASE_DIR / settings.DARTVPN_AVATAR_PATH
+        """Получить путь к аватарке продукта."""
+        path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
         if path.exists():
             return path
-        log.warning(f"Аватарка DartVPN не найдена: {path}")
+        log.warning(f"Аватарка продукта не найдена: {path}")
         return None
 
-    async def _set_channel_avatar(self, client: TelegramClient, entity) -> bool:
-        """Установить аватарку канала из файла."""
-        avatar_path = self._get_avatar_path()
-        if not avatar_path:
-            return False
+    async def _set_channel_avatar(
+        self,
+        client: TelegramClient,
+        entity,
+        square_avatar: Optional[Path] = None,
+    ) -> bool:
+        """Установить аватарку канала (квадратную версию баннера).
+
+        Args:
+            square_avatar: предварительно подготовленная квадратная аватарка.
+                           Если None — создаётся из PRODUCT_AVATAR_PATH.
+        """
+        if square_avatar is None:
+            avatar_path = self._get_avatar_path()
+            if not avatar_path:
+                return False
+            square_avatar = prepare_square_avatar(avatar_path)
 
         try:
-            file = await client.upload_file(str(avatar_path))
+            file = await client.upload_file(str(square_avatar))
             await client(EditPhotoRequest(
                 channel=entity,
                 photo=InputChatUploadedPhoto(file=file),
             ))
-            log.info("Аватарка канала установлена")
+            log.info("Аватарка канала установлена (квадратная)")
             return True
         except Exception as exc:
             log.warning(f"Ошибка установки аватарки канала: {exc}")
             return False
+
+    async def _assign_channel_username(
+        self,
+        client: TelegramClient,
+        entity,
+        phone: str,
+    ) -> bool:
+        """
+        Назначить публичный username каналу.
+        Нужен для UpdatePersonalChannelRequest (требует PUBLIC_BROADCAST).
+        """
+        prefix = settings.PRODUCT_CHANNEL_PREFIX
+        base_names = [
+            f"{prefix}_{phone[-4:]}",
+            f"{prefix}_ch_{phone[-4:]}",
+            f"{prefix}_{phone[-6:]}",
+            f"{prefix}_go_{phone[-4:]}",
+        ]
+        suffixes = ["", "_01", "_02", "_rf", "_go", "_24", "_25", "_26"]
+
+        for base in base_names:
+            for suffix in suffixes:
+                candidate = base + suffix
+                if len(candidate) < 5 or len(candidate) > 32:
+                    continue
+                try:
+                    await client(ChannelUpdateUsernameRequest(
+                        channel=entity,
+                        username=candidate,
+                    ))
+                    log.info(f"{phone}: канал получил username @{candidate}")
+                    return True
+                except Exception as exc:
+                    err = str(exc).upper()
+                    if "USERNAME_OCCUPIED" in err or "USERNAME_NOT_MODIFIED" in err:
+                        continue
+                    if "FLOOD" in err:
+                        log.warning(f"{phone}: FloodWait при назначении username канала")
+                        await asyncio.sleep(10)
+                        continue
+                    log.debug(f"{phone}: username @{candidate} не подошёл: {exc}")
+                    continue
+
+        log.warning(f"{phone}: не удалось назначить username каналу")
+        return False
 
     async def create_redirect_channel(
         self,
@@ -417,12 +450,12 @@ class ChannelSetup:
         content: Optional[dict] = None,
         style: str = "casual",
         index: int = 0,
-    ) -> dict:
+    ) -> ChannelResult:
         """
         Создать канал-переходник для одного аккаунта.
 
         1. Создаёт канал
-        2. Ставит аватарку DartVPN
+        2. Ставит аватарку продукта
         3. Публикует HTML-пост со скрытыми ссылками
         4. Закрепляет пост
         5. Обновляет bio аккаунта (добавляет ссылку на канал)
@@ -463,7 +496,11 @@ class ChannelSetup:
 
             entity = await client.get_entity(channel_id)
 
-            # ─── Шаг 2: Ставим аватарку DartVPN ───
+            # ─── Шаг 1.5: Назначаем публичный username (нужен для персонального канала) ───
+            await self._assign_channel_username(client, entity, phone)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+
+            # ─── Шаг 2: Ставим аватарку продукта ───
             await self._set_channel_avatar(client, entity)
             await asyncio.sleep(random.uniform(0.5, 1.5))
 
@@ -493,8 +530,13 @@ class ChannelSetup:
             # ─── Шаг 5: Получаем ссылку на канал ───
             channel_link = await self._get_channel_link(client, entity, channel)
 
-            # ─── Шаг 6: Обновляем bio аккаунта ───
-            await self._update_bio_with_channel(client, phone, channel_link)
+            # ─── Шаг 6: Закрепляем канал в профиле как виджет ───
+            personal_set = await self.set_personal_channel(phone, entity)
+
+            # ─── Шаг 7: Обновляем bio (без ссылки на канал, если виджет установлен) ───
+            if not personal_set:
+                # Фоллбэк: если персональный канал не удалось — ставим ссылку в bio
+                await self._update_bio_with_channel(client, phone, channel_link)
 
             if channel_link:
                 # Сохранить ссылку в БД (per-account, а не global)
@@ -546,9 +588,6 @@ class ChannelSetup:
     async def _save_channel_link(self, phone: str, channel_link: str):
         """Сохранить ссылку на канал-переходник в БД (per-account)."""
         try:
-            from sqlalchemy import update
-            from storage.sqlite_db import async_session
-            from storage.models import Account
             async with async_session() as session:
                 await session.execute(
                     update(Account).where(Account.phone == phone).values(channel_link=channel_link)
@@ -595,45 +634,48 @@ class ChannelSetup:
         except Exception as exc:
             log.warning(f"{phone}: ошибка обновления bio: {exc}")
 
-    async def setup_all_accounts(
+    async def _run_for_all_connected(
         self,
-        progress_callback=None,
-    ) -> dict:
+        per_account_fn: Callable,
+        delay_range: tuple[float, float],
+        progress_callback: Optional[Callable] = None,
+        user_id: int = None,
+    ) -> BatchResult:
         """
-        Создать канал-переходник для каждого подключённого аккаунта.
-        Каждый аккаунт получает уникальный шаблон (по индексу).
+        Общий хелпер: выполнить async-функцию для каждого подключённого аккаунта.
+
+        Args:
+            per_account_fn: async (phone, index) -> dict с ключом "success".
+                            Возвращённый dict пробрасывается в results as-is.
+            delay_range: (min, max) антибан-задержка между аккаунтами (секунды).
+            progress_callback: optional async (phone, index, total) -> None.
+            user_id: фильтр по пользователю.
+
+        Returns:
+            BatchResult: {"total", "success", "failed", "results"}.
         """
-        connected = self.session_mgr.get_connected_phones()
+        connected = self.session_mgr.get_connected_phones(user_id=user_id)
         if not connected:
             return {"total": 0, "success": 0, "failed": 0, "results": []}
 
-        results = []
+        results: list[dict] = []
         success_count = 0
 
         for i, phone in enumerate(connected):
-            style = STYLES_FOR_CHANNELS[i % len(STYLES_FOR_CHANNELS)]
-
             if progress_callback:
-                await progress_callback(
-                    phone,
-                    f"⏳ [{i + 1}/{len(connected)}] Создаю канал для {phone}...",
-                )
+                await progress_callback(phone, i, len(connected))
 
-            result = await self.create_redirect_channel(phone, style=style, index=i)
+            result = await per_account_fn(phone, i)
             results.append(result)
 
-            if result["success"]:
+            if result.get("success"):
                 success_count += 1
 
             # Антибан пауза между аккаунтами
             if i < len(connected) - 1:
-                delay = random.uniform(15.0, 30.0)
+                delay = random.uniform(*delay_range)
                 log.debug(f"Пауза {delay:.0f}с перед следующим аккаунтом")
                 await asyncio.sleep(delay)
-
-        log.info(
-            f"Каналы-переходники: {success_count}/{len(connected)} создано успешно"
-        )
 
         return {
             "total": len(connected),
@@ -641,6 +683,200 @@ class ChannelSetup:
             "failed": len(connected) - success_count,
             "results": results,
         }
+
+    async def setup_all_accounts(
+        self,
+        progress_callback=None,
+        user_id: int = None,
+    ) -> BatchResult:
+        """
+        Создать канал-переходник для каждого подключённого аккаунта.
+        Каждый аккаунт получает уникальный шаблон (по индексу).
+        """
+
+        async def _per_account(phone: str, index: int) -> ChannelResult:
+            style = STYLES_FOR_CHANNELS[index % len(STYLES_FOR_CHANNELS)]
+            return await self.create_redirect_channel(phone, style=style, index=index)
+
+        async def _progress(phone: str, i: int, total: int) -> None:
+            await progress_callback(
+                phone,
+                f"⏳ [{i + 1}/{total}] Создаю канал для {phone}...",
+            )
+
+        result = await self._run_for_all_connected(
+            per_account_fn=_per_account,
+            delay_range=(15.0, 30.0),
+            progress_callback=_progress if progress_callback else None,
+            user_id=user_id,
+        )
+
+        log.info(
+            f"Каналы-переходники: {result['success']}/{result['total']} создано успешно"
+        )
+
+        return result
+
+    async def set_personal_channel(self, phone: str, channel_entity=None) -> bool:
+        """
+        Установить канал-переходник как персональный канал в профиле.
+        Канал отображается как виджет/карточка в профиле (не текстовая ссылка в bio).
+        """
+        client = self.session_mgr.get_client(phone)
+        if not client or not client.is_connected():
+            log.warning(f"{phone}: не подключён для установки персонального канала")
+            return False
+
+        try:
+            # Если entity не передан — ищем канал из БД
+            if channel_entity is None:
+                channel_entity = await self._find_account_channel(client, phone)
+                if channel_entity is None:
+                    log.warning(f"{phone}: канал-переходник не найден")
+                    return False
+
+            # Получить InputChannel
+            input_channel = await client.get_input_entity(channel_entity)
+
+            try:
+                await client(UpdatePersonalChannelRequest(channel=input_channel))
+            except Exception as e:
+                if "PUBLIC_BROADCAST_EXPECTED" in str(e):
+                    # Канал приватный — нужно назначить username
+                    log.info(f"{phone}: канал приватный, назначаю username...")
+                    if await self._assign_channel_username(client, channel_entity, phone):
+                        # Перечитать entity с обновлённым username
+                        input_channel = await client.get_input_entity(channel_entity)
+                        await client(UpdatePersonalChannelRequest(channel=input_channel))
+                    else:
+                        raise
+                else:
+                    raise
+
+            log.info(f"{phone}: персональный канал установлен в профиле")
+            return True
+
+        except Exception as exc:
+            log.error(f"{phone}: ошибка установки персонального канала: {exc}")
+            return False
+
+    async def _find_account_channel(self, client: TelegramClient, phone: str):
+        """Найти канал-переходник аккаунта по channel_link из БД."""
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(Account.channel_link).where(Account.phone == phone)
+                )
+                row = result.scalar_one_or_none()
+
+            if not row:
+                log.debug(f"{phone}: channel_link не найден в БД")
+                return None
+
+            entity = await client.get_entity(row)
+            return entity
+
+        except Exception as exc:
+            log.warning(f"{phone}: ошибка поиска канала: {exc}")
+            return None
+
+    async def set_personal_channel_all(self, progress_callback=None, user_id: int = None) -> BatchResult:
+        """Установить персональный канал для всех подключённых аккаунтов."""
+        # Предзагрузка channel_links до цикла (1 запрос вместо N)
+        connected = self.session_mgr.get_connected_phones(user_id=user_id)
+        channel_links = await self._batch_load_channel_links(connected) if connected else {}
+
+        async def _per_account(phone: str, _index: int) -> PersonalChannelResult:
+            # Предрезолвим entity из предзагруженной ссылки
+            channel_entity = None
+            link = channel_links.get(phone)
+            if link:
+                client = self.session_mgr.get_client(phone)
+                if client and client.is_connected():
+                    try:
+                        channel_entity = await client.get_entity(link)
+                    except Exception as exc:
+                        log.debug(f"{phone}: не удалось резолвить канал '{link}': {exc}")
+
+            ok = await self.set_personal_channel(phone, channel_entity)
+            return {"phone": phone, "success": ok}
+
+        async def _progress(phone: str, i: int, total: int) -> None:
+            await progress_callback(
+                phone,
+                f"⏳ [{i + 1}/{total}] Устанавливаю канал в профиль {phone}...",
+            )
+
+        return await self._run_for_all_connected(
+            per_account_fn=_per_account,
+            delay_range=(5.0, 15.0),
+            progress_callback=_progress if progress_callback else None,
+            user_id=user_id,
+        )
+
+    async def _batch_load_channel_links(self, phones: list[str]) -> dict[str, str]:
+        """Загрузить channel_link для нескольких аккаунтов одним запросом."""
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    select(Account.phone, Account.channel_link).where(
+                        Account.phone.in_(phones)
+                    )
+                )
+                return {row.phone: row.channel_link for row in result if row.channel_link}
+        except Exception as exc:
+            log.warning(f"Ошибка batch-загрузки channel_links: {exc}")
+            return {}
+
+    async def update_all_avatars(
+        self,
+        avatar_path: Path,
+        progress_callback: Optional[Callable] = None,
+        user_id: int = None,
+    ) -> BatchResult:
+        """
+        Обновить аватарки на всех каналах-переходниках.
+
+        Использует channel_link из БД (вместо GetDialogsRequest)
+        и _set_channel_avatar() для установки.
+        """
+        square_path = prepare_square_avatar(avatar_path)
+        connected = self.session_mgr.get_connected_phones(user_id=user_id)
+        channel_links = await self._batch_load_channel_links(connected) if connected else {}
+
+        async def _per_account(phone: str, _index: int) -> dict:
+            client = self.session_mgr.get_client(phone)
+            if not client or not client.is_connected():
+                return {"phone": phone, "success": False}
+
+            link = channel_links.get(phone)
+            if not link:
+                log.debug(f"{phone}: channel_link не найден, пропускаю")
+                return {"phone": phone, "success": False}
+
+            try:
+                entity = await client.get_entity(link)
+            except Exception as exc:
+                log.warning(f"{phone}: не удалось найти канал '{link}': {exc}")
+                return {"phone": phone, "success": False}
+
+            ok = await self._set_channel_avatar(client, entity, square_avatar=square_path)
+            if ok:
+                log.info(f"{phone}: аватарка канала обновлена")
+            return {"phone": phone, "success": ok}
+
+        async def _progress(phone: str, i: int, total: int) -> None:
+            await progress_callback(
+                phone,
+                f"⏳ [{i + 1}/{total}] Обновляю аватарку для {phone}...",
+            )
+
+        return await self._run_for_all_connected(
+            per_account_fn=_per_account,
+            delay_range=(2.0, 5.0),
+            progress_callback=_progress if progress_callback else None,
+            user_id=user_id,
+        )
 
     async def delete_redirect_channel(self, phone: str, channel_id: int) -> bool:
         """Удалить канал-переходник."""

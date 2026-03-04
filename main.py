@@ -1,6 +1,6 @@
 """
 NEURO COMMENTING — Точка входа.
-Система автоматического комментирования в Telegram для продвижения DartVPN.
+Система автоматического комментирования в Telegram.
 
 Запуск:
     python main.py          — Telegram-бот (основной режим)
@@ -78,7 +78,7 @@ def main():
         print("  ━━━━━━━━━━━━━━━━━━")
         print("  Запуск Telegram-бота...")
         print(f"  AI: {settings.GEMINI_MODEL}")
-        print(f"  DartVPN: {settings.DARTVPN_BOT_LINK}")
+        print(f"  Product: {settings.PRODUCT_NAME} ({settings.PRODUCT_BOT_LINK})")
         print()
         print("  Ctrl+C для graceful shutdown")
         print("  --cli для терминального интерфейса")

@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/py-compile-check.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "osascript -e 'display notification \"Claude Code ждёт ответа\" with title \"NEURO COMMENTING\"'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'CRITICAL REMINDERS after compaction:\n- NEVER call send_code_request on purchased sessions\n- NEVER connect multiple accounts from same IP (1 IP = 1 account)\n- NEVER change profile immediately after connecting\n- SetTypingRequest BEFORE every send_message\n- Active hours: 8:00-23:00 MSK only\n- 14-day warmup: readonly(0-2) → reactions(3-4) → light/3(5-7) → moderate/8(8-14) → full/35(15+)\n- Claude = orchestrator (analyze posts, review comments), Gemini = executor (generate text)\n- User language: Russian. Main interface: Telegram bot (not CLI)'"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {}
+}

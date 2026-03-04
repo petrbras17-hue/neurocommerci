@@ -127,14 +127,14 @@ class ChannelMonitor:
     def is_running(self) -> bool:
         return self._running
 
-    async def check_channels_once(self) -> int:
+    async def check_channels_once(self, user_id: int = None) -> int:
         """Проверить все каналы один раз. Возвращает кол-во новых постов."""
-        channels = await self.channel_db.get_all_active()
+        channels = await self.channel_db.get_all_active(user_id=user_id)
         if not channels:
             log.debug("Нет активных каналов для мониторинга")
             return 0
 
-        client = await self._get_working_client()
+        client = await self._get_working_client(user_id=user_id)
         if not client:
             log.warning("Нет подключённого клиента для мониторинга")
             return 0
@@ -287,16 +287,16 @@ class ChannelMonitor:
                 )
                 await session.commit()
 
-    async def _get_working_client(self) -> Optional[TelegramClient]:
+    async def _get_working_client(self, user_id: int = None) -> Optional[TelegramClient]:
         """Получить любой подключённый Telethon клиент."""
-        connected = self.session_mgr.get_connected_phones()
+        connected = self.session_mgr.get_connected_phones(user_id=user_id)
         for phone in connected:
             client = self.session_mgr.get_client(phone)
             if client and client.is_connected():
                 return client
 
         # Попробовать подключить аккаунт
-        accounts = await self.account_mgr.load_accounts()
+        accounts = await self.account_mgr.load_accounts(user_id=user_id)
         for account in accounts:
             proxy = None
             if self.proxy_mgr:
@@ -308,16 +308,16 @@ class ChannelMonitor:
 
         return None
 
-    async def scan_old_posts(self, max_posts_per_channel: int = 50) -> int:
+    async def scan_old_posts(self, max_posts_per_channel: int = 50, user_id: int = None) -> int:
         """
         Режим 'старые посты': сканирует непрокомментированные посты.
         Возвращает количество добавленных постов в очередь.
         """
-        channels = await self.channel_db.get_all_active()
+        channels = await self.channel_db.get_all_active(user_id=user_id)
         if not channels:
             return 0
 
-        client = await self._get_working_client()
+        client = await self._get_working_client(user_id=user_id)
         if not client:
             log.warning("Нет клиента для сканирования старых постов")
             return 0

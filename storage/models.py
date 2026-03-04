@@ -16,6 +16,38 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Пользователь SaaS-платформы."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_id = Column(BigInteger, unique=True, nullable=False)
+    username = Column(String(100), nullable=True)
+    first_name = Column(String(100), nullable=True)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    # Per-user product settings
+    product_name = Column(String(100), default="")
+    product_bot_link = Column(String(300), default="")
+    product_bot_username = Column(String(100), default="")
+    product_avatar_path = Column(String(300), default="")
+    product_short_desc = Column(String(300), default="")
+    product_features = Column(String(500), default="")
+    product_category = Column(String(20), default="VPN")
+    product_channel_prefix = Column(String(50), default="")
+    scenario_b_ratio = Column(Float, default=0.3)
+    max_daily_comments = Column(Integer, default=35)
+    min_delay = Column(Integer, default=120)
+    max_delay = Column(Integer, default=600)
+    max_accounts = Column(Integer, default=3)
+    created_at = Column(DateTime, default=utcnow)
+    last_active_at = Column(DateTime, default=utcnow)
+
+    accounts = relationship("Account", back_populates="user")
+    channels = relationship("Channel", back_populates="user")
+    proxies = relationship("Proxy", back_populates="user")
+
+
 class Account(Base):
     """Telegram аккаунт для комментирования."""
     __tablename__ = "accounts"
@@ -23,6 +55,7 @@ class Account(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     phone = Column(String(20), unique=True, nullable=False)
     session_file = Column(String(255), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     proxy_id = Column(Integer, ForeignKey("proxies.id"), nullable=True)
     status = Column(String(20), default="active")  # active, cooldown, banned, flood_wait
     cooldown_until = Column(DateTime, nullable=True)
@@ -34,6 +67,7 @@ class Account(Base):
     created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
 
+    user = relationship("User", back_populates="accounts")
     proxy = relationship("Proxy", back_populates="accounts")
     comments = relationship("Comment", back_populates="account")
 
@@ -43,6 +77,7 @@ class Proxy(Base):
     __tablename__ = "proxies"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     proxy_type = Column(String(10), default="socks5")  # socks5, http
     host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False)
@@ -52,6 +87,7 @@ class Proxy(Base):
     last_checked = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
+    user = relationship("User", back_populates="proxies")
     accounts = relationship("Account", back_populates="proxy")
 
     @property
@@ -65,6 +101,7 @@ class Channel(Base):
     __tablename__ = "channels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     telegram_id = Column(BigInteger, unique=True, nullable=False)
     username = Column(String(255), nullable=True)
     title = Column(String(500), nullable=False)
@@ -78,6 +115,7 @@ class Channel(Base):
     last_checked_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
+    user = relationship("User", back_populates="channels")
     posts = relationship("Post", back_populates="channel")
 
 

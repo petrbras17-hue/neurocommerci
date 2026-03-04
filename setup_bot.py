@@ -20,17 +20,17 @@ API = f"https://api.telegram.org/bot{TOKEN}"
 BOT_NAME = "NEURO COMMENTING"
 
 BOT_SHORT_DESCRIPTION = (
-    "Система автокомментирования в Telegram для продвижения DartVPN. "
+    f"Система автокомментирования в Telegram для продвижения {settings.PRODUCT_NAME}. "
     "AI-генерация, 10 стилей, антибан."
 )
 
 BOT_DESCRIPTION = (
-    "🚀 NEURO COMMENTING — система автоматического комментирования "
-    "в Telegram-каналах для продвижения DartVPN.\n\n"
+    f"🚀 NEURO COMMENTING — система автоматического комментирования "
+    f"в Telegram-каналах для продвижения {settings.PRODUCT_NAME}.\n\n"
     "Возможности:\n"
     "  🤖 AI-генерация комментариев (Google Gemini)\n"
     "  👩 Упаковка профилей: женские имена, аватарки, username\n"
-    "  📺 Каналы-переходники с закреплённым постом DartVPN\n"
+    f"  📺 Каналы-переходники с закреплённым постом {settings.PRODUCT_NAME}\n"
     "  🔍 Парсинг и мониторинг каналов по тематикам\n"
     "  📊 Статистика и аналитика в реальном времени\n"
     "  🛡 Антибан: прогрев, задержки, пассивные действия\n\n"
@@ -121,17 +121,17 @@ def send_welcome_post():
 
     print(f"  [3] Отправляю приветственный пост админу ({admin_id})...")
 
-    # Сначала отправляю баннер DartVPN как фото
-    banner_path = BASE_DIR / settings.DARTVPN_AVATAR_PATH
+    # Сначала отправляю баннер продукта как фото
+    banner_path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
     post_text = (
         "<b>🚀 NEURO COMMENTING</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Система автоматического комментирования в Telegram\n"
-        "для продвижения <b>DartVPN</b>.\n\n"
+        f"для продвижения <b>{settings.PRODUCT_NAME}</b>.\n\n"
         "📋 <b>Что умеет:</b>\n"
         "  🤖 AI-комментарии (Google Gemini)\n"
         "  👩 Женские профили + аватарки\n"
-        "  📺 Каналы-переходники с рекламой DartVPN\n"
+        f"  📺 Каналы-переходники с рекламой {settings.PRODUCT_NAME}\n"
         "  🔍 Парсинг каналов по тематикам\n"
         "  📊 Статистика в реальном времени\n"
         "  🛡 Антибан: прогрев, задержки, ротация\n\n"
@@ -141,7 +141,7 @@ def send_welcome_post():
         "  3. Аккаунты → Каналы-переходники\n"
         "  4. Каналы → Парсинг → Мониторинг\n"
         "  5. Комментирование → Запуск\n\n"
-        f'🎯 <a href="{settings.DARTVPN_BOT_LINK}">DartVPN — летай без ограничений</a>'
+        f'🎯 <a href="{settings.PRODUCT_BOT_LINK}">{settings.PRODUCT_NAME} — летай без ограничений</a>'
     )
 
     if banner_path.exists():
@@ -185,10 +185,10 @@ def main():
     if avatar_path and avatar_path.exists():
         set_bot_avatar_from_file(avatar_path)
     else:
-        # Фоллбэк — DartVPN баннер
-        banner = BASE_DIR / settings.DARTVPN_AVATAR_PATH
+        # Фоллбэк — баннер продукта
+        banner = BASE_DIR / settings.PRODUCT_AVATAR_PATH
         if banner.exists():
-            print("      Используем DartVPN баннер как фоллбэк...")
+            print(f"      Используем {settings.PRODUCT_NAME} баннер как фоллбэк...")
             set_bot_avatar_from_file(banner)
 
     # 3. Приветственный пост
@@ -196,7 +196,6 @@ def main():
 
     print()
     print("  ✅ Настройка бота завершена!")
-    print(f"  🔗 https://t.me/dartvpn_neurocom_bot")
     print()
 
 

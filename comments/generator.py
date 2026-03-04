@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from collections import deque
 from typing import Optional
 
 from google import genai
@@ -14,14 +15,14 @@ from google.genai import types
 
 from config import settings
 from comments.templates import (
-    SYSTEM_PROMPT,
     SCENARIO_A_PROMPT,
-    SCENARIO_B_PROMPT,
     PERSONA_STYLES,
     FALLBACK_COMMENTS_A,
-    FALLBACK_COMMENTS_B,
+    get_system_prompt,
+    get_scenario_b_prompt,
+    get_fallback_comments_b,
 )
-from comments.scenarios import ScenarioSelector
+from comments.scenarios import Scenario, ScenarioSelector
 from utils.logger import log
 
 
@@ -32,7 +33,7 @@ class CommentGenerator:
         self.scenario_selector = ScenarioSelector()
         self._client: Optional[genai.Client] = None
         self._initialized = False
-        self._recent_comments: list[str] = []  # Дедупликация
+        self._recent_comments: deque[str] = deque(maxlen=100)  # Дедупликация
 
     def _init_client(self):
         """Инициализация Gemini клиента (ленивая)."""
@@ -51,7 +52,7 @@ class CommentGenerator:
     async def generate(
         self,
         post_text: str,
-        scenario: Optional[str] = None,
+        scenario: Optional[Scenario] = None,
         persona_style: str = "casual",
     ) -> dict:
         """
@@ -95,19 +96,21 @@ class CommentGenerator:
     async def _generate_ai(
         self,
         post_text: str,
-        scenario: str,
+        scenario: Scenario,
         style_description: str,
     ) -> Optional[str]:
         """Генерация через Gemini API."""
-        template = SCENARIO_A_PROMPT if scenario == "A" else SCENARIO_B_PROMPT
-
         # Обрезаем пост если слишком длинный
         truncated_post = post_text[:1500] if len(post_text) > 1500 else post_text
 
-        prompt = template.format(
-            post_text=truncated_post,
-            persona_style=style_description,
-        )
+        if scenario == Scenario.A:
+            prompt = SCENARIO_A_PROMPT.format(
+                post_text=truncated_post,
+                persona_style=style_description,
+            )
+        else:
+            # Сценарий B: промпт строится динамически с актуальным bot mention
+            prompt = get_scenario_b_prompt(truncated_post, style_description)
 
         try:
             response = await asyncio.wait_for(
@@ -116,7 +119,7 @@ class CommentGenerator:
                     model=settings.GEMINI_MODEL,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
+                        system_instruction=get_system_prompt(),
                         temperature=0.9,
                         top_p=0.95,
                         max_output_tokens=300,
@@ -142,8 +145,6 @@ class CommentGenerator:
                 return None
 
             self._recent_comments.append(text.lower())
-            if len(self._recent_comments) > 100:
-                self._recent_comments = self._recent_comments[-100:]
 
             return text
 
@@ -188,15 +189,18 @@ class CommentGenerator:
         if word_count > 35:  # Даём небольшой запас
             return False
 
-        # Для сценария A не должно быть ссылок на DartVPN
-        if scenario == "A":
-            lower = text.lower()
-            if "@dartvpnbot" in lower or "dartvpn" in lower or "dart vpn" in lower:
+        # Для сценария A не должно быть ссылок на продукт
+        bot_user_lower = settings.PRODUCT_BOT_USERNAME.lower()
+        product_lower = settings.PRODUCT_NAME.lower()
+        lower = text.lower()
+
+        if scenario == Scenario.A:
+            if f"@{bot_user_lower}" in lower or product_lower in lower:
                 return False
 
         # Для сценария B должна быть ссылка
-        if scenario == "B":
-            if "@dartvpnbot" not in text.lower():
+        if scenario == Scenario.B:
+            if f"@{bot_user_lower}" not in lower:
                 return False
 
         # Запрещённые паттерны
@@ -204,7 +208,6 @@ class CommentGenerator:
             "как бот", "я бот", "сгенерирован", "artificial",
             "нейросет", "prompt", "промпт", "gpt",
         ]
-        lower = text.lower()
         for f in forbidden:
             if f in lower:
                 return False
@@ -235,7 +238,7 @@ class CommentGenerator:
     @staticmethod
     def get_fallback(scenario: str) -> str:
         """Случайный фоллбэк-комментарий."""
-        pool = FALLBACK_COMMENTS_A if scenario == "A" else FALLBACK_COMMENTS_B
+        pool = FALLBACK_COMMENTS_A if scenario == Scenario.A else get_fallback_comments_b()
         return random.choice(pool)
 
     def get_stats(self) -> dict:

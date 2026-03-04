@@ -18,14 +18,15 @@ from storage.sqlite_db import async_session
 class ChannelDB:
     """Работа с каналами в SQLite."""
 
-    async def add_channel(self, channel_info: Any) -> Channel:
+    async def add_channel(self, channel_info: Any, user_id: int = None) -> Channel:
         """Добавить канал в БД или обновить существующий по telegram_id."""
         payload = self._to_payload(channel_info)
 
         async with async_session() as session:
-            result = await session.execute(
-                select(Channel).where(Channel.telegram_id == payload["telegram_id"])
-            )
+            query = select(Channel).where(Channel.telegram_id == payload["telegram_id"])
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
             existing = result.scalar_one_or_none()
 
             if existing:
@@ -47,6 +48,7 @@ class ChannelDB:
                     topic=payload["topic"],
                     comments_enabled=payload["comments_enabled"],
                     discussion_group_id=payload["discussion_group_id"],
+                    user_id=user_id,
                     is_active=True,
                     is_blacklisted=False,
                     last_checked_at=utcnow(),
@@ -57,26 +59,32 @@ class ChannelDB:
             await session.refresh(channel)
             return channel
 
-    async def get_all_active(self) -> list[Channel]:
+    async def get_all_active(self, user_id: int = None) -> list[Channel]:
         """Получить активные каналы (не в чёрном списке)."""
         async with async_session() as session:
-            result = await session.execute(
+            query = (
                 select(Channel)
                 .where(Channel.is_active.is_(True), Channel.is_blacklisted.is_(False))
                 .order_by(Channel.subscribers.desc())
             )
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
             return list(result.scalars().all())
 
-    async def get_all(self) -> list[Channel]:
+    async def get_all(self, user_id: int = None) -> list[Channel]:
         """Получить все каналы."""
         async with async_session() as session:
-            result = await session.execute(select(Channel).order_by(Channel.created_at.desc()))
+            query = select(Channel).order_by(Channel.created_at.desc())
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
             return list(result.scalars().all())
 
-    async def get_by_topic(self, topic: str) -> list[Channel]:
+    async def get_by_topic(self, topic: str, user_id: int = None) -> list[Channel]:
         """Получить активные каналы по тематике."""
         async with async_session() as session:
-            result = await session.execute(
+            query = (
                 select(Channel)
                 .where(
                     Channel.is_active.is_(True),
@@ -85,6 +93,9 @@ class ChannelDB:
                 )
                 .order_by(Channel.subscribers.desc())
             )
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
             return list(result.scalars().all())
 
     async def blacklist_channel(self, channel_id: int):
@@ -117,29 +128,36 @@ class ChannelDB:
             )
             await session.commit()
 
-    async def get_stats(self) -> dict:
+    async def get_stats(self, user_id: int = None) -> dict:
         """Сводная статистика каналов."""
         async with async_session() as session:
-            total = await session.scalar(select(func.count(Channel.id)))
+            base_filter = []
+            if user_id is not None:
+                base_filter.append(Channel.user_id == user_id)
+
+            total = await session.scalar(
+                select(func.count(Channel.id)).where(*base_filter)
+            )
+            active_filters = [Channel.is_active.is_(True), Channel.is_blacklisted.is_(False)] + base_filter
             active = await session.scalar(
-                select(func.count(Channel.id)).where(
-                    Channel.is_active.is_(True),
-                    Channel.is_blacklisted.is_(False),
-                )
+                select(func.count(Channel.id)).where(*active_filters)
             )
+            comments_filters = [Channel.comments_enabled.is_(True)] + base_filter
             with_comments = await session.scalar(
-                select(func.count(Channel.id)).where(Channel.comments_enabled.is_(True))
+                select(func.count(Channel.id)).where(*comments_filters)
             )
+            bl_filters = [Channel.is_blacklisted.is_(True)] + base_filter
             blacklisted = await session.scalar(
-                select(func.count(Channel.id)).where(Channel.is_blacklisted.is_(True))
+                select(func.count(Channel.id)).where(*bl_filters)
             )
 
-            rows = await session.execute(
+            topic_query = (
                 select(Channel.topic, func.count(Channel.id))
-                .where(Channel.topic.is_not(None))
+                .where(Channel.topic.is_not(None), *base_filter)
                 .group_by(Channel.topic)
                 .order_by(func.count(Channel.id).desc())
             )
+            rows = await session.execute(topic_query)
             by_topic = {topic: count for topic, count in rows.all() if topic}
 
         return {
@@ -150,9 +168,9 @@ class ChannelDB:
             "by_topic": by_topic,
         }
 
-    async def export_to_txt(self, filepath: str = "data/channels_export.txt") -> int:
+    async def export_to_txt(self, filepath: str = "data/channels_export.txt", user_id: int = None) -> int:
         """Экспорт активных каналов в TXT файл. Возвращает количество."""
-        channels = await self.get_all_active()
+        channels = await self.get_all_active(user_id=user_id)
         lines = []
         for ch in channels:
             username = f"@{ch.username}" if ch.username else str(ch.telegram_id)
@@ -167,9 +185,9 @@ class ChannelDB:
 
         return len(lines)
 
-    async def get_usernames(self) -> list[str]:
+    async def get_usernames(self, user_id: int = None) -> list[str]:
         """Получить список username для поиска похожих каналов."""
-        channels = await self.get_all_active()
+        channels = await self.get_all_active(user_id=user_id)
         return [ch.username for ch in channels if ch.username]
 
     @staticmethod

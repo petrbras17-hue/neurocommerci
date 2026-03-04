@@ -130,7 +130,7 @@ async def main():
         else:
             # 6. Создание каналов-переходников
             print(f"\n  [4/5] Создание каналов-переходников ({len(connected)} акк.)...")
-            print("  Канал + DartVPN аватарка + пост + закреп + bio\n")
+            print(f"  Канал + {settings.PRODUCT_NAME} аватарка + пост + закреп + bio\n")
 
             ch_setup = ChannelSetup(session_mgr, account_mgr)
             ch_results = await ch_setup.setup_all_accounts()

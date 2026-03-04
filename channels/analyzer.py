@@ -9,7 +9,18 @@ import re
 from datetime import datetime
 from typing import Optional
 
+from config import settings
 from utils.logger import log
+
+
+# Бонусные темы по категории продукта: если пост совпадает с этими темами,
+# он получает +0.15 к скору (особо релевантен для продвижения)
+_CATEGORY_BONUS_TOPICS: dict[str, list[str]] = {
+    "VPN": ["vpn"],
+    "AI": ["ai"],
+    "Bot": ["ai", "tech"],
+    "Service": ["services", "tech"],
+}
 
 
 # Ключевые слова по тематикам (для быстрого скоринга без AI)
@@ -106,8 +117,9 @@ class PostAnalyzer:
         if channel_topic and channel_topic.lower() in matched_topics:
             score = min(1.0, score + 0.15)
 
-        # VPN-тема — особо релевантна для DartVPN
-        if "vpn" in matched_topics:
+        # Бонус за темы, релевантные продвигаемому продукту
+        bonus_topics = _CATEGORY_BONUS_TOPICS.get(settings.PRODUCT_CATEGORY, [])
+        if any(t in matched_topics for t in bonus_topics):
             score = min(1.0, score + 0.15)
 
         # Слишком короткий текст — менее полезен

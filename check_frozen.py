@@ -1,22 +1,15 @@
 """
 Проверка: разморожен ли аккаунт.
+Безопасный метод: help.getAppConfig (read-only, без write-операций).
 Запуск: python check_frozen.py
 """
 
 import asyncio
 import json
-from pathlib import Path
-from telethon import TelegramClient
-from telethon.tl.functions.account import UpdateProfileRequest
-from telethon.errors import FrozenMethodInvalidError
+from telethon.tl.functions.help import GetAppConfigRequest
 
 from config import settings
-
-
-def load_proxy():
-    lines = Path("data/proxies.txt").read_text().strip().split("\n")
-    parts = lines[0].strip().split(":")
-    return (3, parts[0], int(parts[1]), True, parts[2], parts[3])
+from utils.standalone_helpers import load_proxy_for_phone, build_client
 
 
 async def check():
@@ -28,26 +21,19 @@ async def check():
         print("  Нет .session файлов")
         return
 
-    proxy = load_proxy()
+    for i, phone in enumerate(phones):
+        # Антибан: 5с задержка между аккаунтами
+        if i > 0:
+            print("  Антибан задержка 5с...")
+            await asyncio.sleep(5)
 
-    for phone in phones:
+        # 1 IP = 1 аккаунт: уникальный прокси для каждого
+        proxy = load_proxy_for_phone(phone)
+
         json_path = sessions_dir / f"{phone}.json"
         data = json.loads(json_path.read_text()) if json_path.exists() else {}
 
-        client = TelegramClient(
-            str(sessions_dir / phone),
-            api_id=data.get("app_id") or settings.TELEGRAM_API_ID,
-            api_hash=data.get("app_hash") or settings.TELEGRAM_API_HASH,
-            proxy=proxy,
-            device_model=data.get("device", "Samsung Galaxy S23"),
-            system_version=data.get("sdk", "SDK 29"),
-            app_version=data.get("app_version", "12.4.3"),
-            lang_code=data.get("lang_pack", "ru"),
-            system_lang_code=data.get("system_lang_pack", "ru-ru"),
-            timeout=30,
-            connection_retries=5,
-            retry_delay=5,
-        )
+        client = build_client(phone, data, proxy)
 
         try:
             await client.connect()
@@ -58,21 +44,24 @@ async def check():
 
             me = await client.get_me()
             name = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            print(f"  +{phone} ({name}) — прокси: {proxy[1]}:{proxy[2]}")
 
-            # Тест: попробовать обновить профиль (без изменения данных)
+            # Безопасная проверка через help.getAppConfig (READ-ONLY)
             try:
-                await client(UpdateProfileRequest(
-                    first_name=me.first_name or "",
-                    last_name=me.last_name or "",
-                ))
-                print(f"  ✅ +{phone} — РАЗМОРОЖЕН! ({name})")
-            except FrozenMethodInvalidError:
-                print(f"  ❄️  +{phone} — ещё заморожен ({name})")
-            except Exception as e:
-                if "FROZEN" in str(e).upper():
+                result = await client(GetAppConfigRequest(hash=0))
+                # getAppConfig возвращает JSONValue; проверяем freeze-поля
+                # Если аккаунт заморожен, Telegram добавляет freeze_since_date
+                config_text = str(result)
+                if "freeze" in config_text.lower():
                     print(f"  ❄️  +{phone} — ещё заморожен ({name})")
                 else:
-                    print(f"  ⚠️  +{phone} — ошибка: {e}")
+                    print(f"  ✅ +{phone} — РАЗМОРОЖЕН! ({name})")
+            except Exception as e:
+                err_str = str(e).upper()
+                if "FROZEN" in err_str:
+                    print(f"  ❄️  +{phone} — ещё заморожен ({name})")
+                else:
+                    print(f"  ⚠️  +{phone} — ошибка getAppConfig: {e}")
 
             await client.disconnect()
 

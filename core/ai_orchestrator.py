@@ -16,6 +16,7 @@ import re
 from typing import Optional
 
 from config import settings
+from comments.scenarios import Scenario
 from utils.logger import log
 
 
@@ -134,7 +135,7 @@ class AIOrchestrator:
         """
         truncated = post_text[:1500] if len(post_text) > 1500 else post_text
 
-        prompt = f"""Ты — стратег системы комментирования для продвижения DartVPN в Telegram.
+        prompt = f"""Ты — стратег системы комментирования для продвижения {settings.PRODUCT_NAME} в Telegram.
 
 Пост из канала "{channel_title}" (тема: {channel_topic}):
 ---
@@ -145,7 +146,7 @@ class AIOrchestrator:
 {{"should_comment": true, "score": 0.7, "scenario": "A", "persona_style": "casual", "angle": "описание подхода", "reason": "почему"}}
 
 Правила:
-- scenario "B" (с @DartVPNBot) ТОЛЬКО если пост про VPN/блокировки/интернет-доступ
+- scenario "B" (с {settings.product_bot_mention}) ТОЛЬКО если пост по теме {settings.PRODUCT_CATEGORY}
 - scenario "A" (без ссылки) для остальных тем (AI, tech, крипто и т.д.)
 - score 0.0-1.0, комментировать если > 0.4
 - persona_style: "casual"/"formal"/"slang"/"tech"/"skeptic"
@@ -172,7 +173,7 @@ class AIOrchestrator:
         self,
         comment: str,
         post_text: str,
-        scenario: str,
+        scenario: Scenario,
     ) -> Optional[dict]:
         """
         Claude проверяет комментарий перед отправкой.
@@ -187,7 +188,7 @@ class AIOrchestrator:
         Или None если Claude недоступен.
         """
         truncated_post = post_text[:500] if len(post_text) > 500 else post_text
-        scenario_desc = "Без ссылки (обычный комментарий)" if scenario == "A" else "С упоминанием @DartVPNBot"
+        scenario_desc = "Без ссылки (обычный комментарий)" if scenario == Scenario.A else f"С упоминанием {settings.product_bot_mention}"
 
         prompt = f"""Оцени комментарий для Telegram-канала.
 
@@ -206,7 +207,7 @@ class AIOrchestrator:
 - Естественность (не похоже на бота? не шаблонно?)
 - Релевантность посту (по теме?)
 - Длина до 30 слов
-- Для сценария B: есть ли @DartVPNBot? не выглядит ли как реклама?
+- Для сценария B: есть ли {settings.product_bot_mention}? не выглядит ли как реклама?
 - improved: если approved=false, предложи исправленную версию (или null)"""
 
         raw = await self._call_claude(prompt, max_tokens=300)

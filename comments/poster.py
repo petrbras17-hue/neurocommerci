@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select, update
+from utils.cache import SettingsCache
 from telethon import TelegramClient
 from telethon.errors import (
     FloodWaitError,
@@ -34,6 +35,7 @@ from config import settings
 from channels.analyzer import PostAnalyzer
 from channels.monitor import ChannelMonitor
 from comments.generator import CommentGenerator
+from comments.scenarios import Scenario
 from core.account_manager import AccountManager
 from core.ai_orchestrator import AIOrchestrator
 from core.session_manager import SessionManager
@@ -53,27 +55,59 @@ SWAP_EMOJIS = ["👀", "🔥", "💯", "👍", "😄", "✨", "🤔", "📌", "�
 # Задержка перед заменой эмодзи на текст (секунды)
 EMOJI_SWAP_DELAY_SEC = 60
 
-# Скрытая ссылка: @DartVPNBot → синий кликабельный текст в Telegram
-HIDDEN_LINK_WORDS = [
-    "один VPN-бот",
-    "один сервис",
-    "один VPN",
-    "один бот в тг",
-    "один ВПН",
-    "этот сервис",
-    "этим ботом",
-]
+# Скрытая ссылка: @BotUsername → синий кликабельный текст в Telegram
+# Слова-замены по категории продукта
+_HIDDEN_LINK_WORDS = {
+    "VPN": ["один VPN-бот", "один сервис", "один VPN", "один бот в тг", "один ВПН", "этот сервис", "этим ботом"],
+    "AI": ["один AI-бот", "один сервис", "одна нейросеть", "этот бот", "этим сервисом", "один инструмент"],
+    "Bot": ["один бот", "один сервис", "один инструмент", "этот бот", "этим ботом", "одну штуку"],
+    "Service": ["один сервис", "одну штуку", "один инструмент", "этот сервис", "этим ботом", "одну находку"],
+}
+
+
+# ── Кэш product-зависимых значений (пересчитывается при изменении settings) ──
+
+
+class _ProductCacheData:
+    """Все product-зависимые значения в одном объекте."""
+    __slots__ = ("hidden_link_words", "mention_re", "bot_mention_lower")
+
+    def __init__(self):
+        self.hidden_link_words = _HIDDEN_LINK_WORDS.get(
+            settings.PRODUCT_CATEGORY, _HIDDEN_LINK_WORDS["Service"]
+        )
+        self.mention_re = re.compile(
+            re.escape(settings.product_bot_mention), re.IGNORECASE
+        )
+        self.bot_mention_lower = settings.product_bot_mention.lower()
+
+
+_product_cache = SettingsCache(
+    key_fn=lambda: f"{settings.PRODUCT_CATEGORY}|{settings.product_bot_mention}|{settings.PRODUCT_BOT_LINK}",
+    build_fn=_ProductCacheData,
+)
+
+
+# Public API
+def get_active_hidden_link_words() -> list[str]:
+    return _product_cache.get().hidden_link_words
+
+def get_mention_re() -> re.Pattern:
+    return _product_cache.get().mention_re
+
+def get_bot_mention_lower() -> str:
+    return _product_cache.get().bot_mention_lower
 
 
 def _apply_hidden_link(text: str) -> str:
     """
-    Заменить @DartVPNBot на скрытую HTML-ссылку (синий текст в Telegram).
+    Заменить @BotUsername на скрытую HTML-ссылку (синий текст в Telegram).
     Сначала экранируем HTML-символы в тексте, затем вставляем <a href>.
     """
     safe_text = html.escape(text)
-    word = random.choice(HIDDEN_LINK_WORDS)
-    link_html = f'<a href="{settings.DARTVPN_BOT_LINK}">{word}</a>'
-    return re.sub(r"@DartVPNBot", link_html, safe_text, flags=re.IGNORECASE)
+    word = random.choice(get_active_hidden_link_words())
+    link_html = f'<a href="{settings.PRODUCT_BOT_LINK}">{word}</a>'
+    return get_mention_re().sub(link_html, safe_text)
 
 
 class CommentPoster:
@@ -210,7 +244,7 @@ class CommentPoster:
         # Решаем: emoji swap или прямая отправка
         use_swap = (
             self._emoji_swap_enabled
-            and comment_data["scenario"] == "B"
+            and comment_data["scenario"] == Scenario.B
             and random.random() < 0.6  # 60% сценариев B используют swap
         )
 
@@ -256,7 +290,7 @@ class CommentPoster:
         account_phone: str,
         post_data: dict,
         comment_text: str,
-        scenario: str,
+        scenario: Scenario,
     ) -> bool:
         """Отправить комментарий через Telethon (прямая отправка)."""
         # Dry-run: логируем, но не отправляем
@@ -286,7 +320,7 @@ class CommentPoster:
             telegram_post_id = post_data.get("telegram_post_id")
 
             # Сценарий B: скрытая ссылка (синий текст в Telegram)
-            if scenario == "B" and "@dartvpnbot" in comment_text.lower():
+            if scenario == Scenario.B and get_bot_mention_lower() in comment_text.lower():
                 send_text = _apply_hidden_link(comment_text)
                 parse_mode = "html"
             else:
@@ -355,7 +389,7 @@ class CommentPoster:
         account_phone: str,
         post_data: dict,
         comment_text: str,
-        scenario: str,
+        scenario: Scenario,
     ) -> bool:
         """
         Emoji→Link Swap: отправить эмодзи, через 60 сек заменить на текст.
@@ -437,7 +471,7 @@ class CommentPoster:
         new_text: str,
         account_phone: str,
         post_db_id: Optional[int],
-        scenario: str,
+        scenario: Scenario,
     ):
         """Фоновая задача: подождать и заменить эмодзи на текст."""
         try:
@@ -455,7 +489,7 @@ class CommentPoster:
                 return
 
             # Сценарий B: скрытая ссылка (синий текст в Telegram)
-            if scenario == "B" and "@dartvpnbot" in new_text.lower():
+            if scenario == Scenario.B and get_bot_mention_lower() in new_text.lower():
                 send_text = _apply_hidden_link(new_text)
                 parse_mode = "html"
             else:
@@ -485,7 +519,7 @@ class CommentPoster:
         account_phone: str,
         post_db_id: Optional[int],
         text: str,
-        scenario: str,
+        scenario: Scenario,
         status: str,
         error: str = "",
     ):

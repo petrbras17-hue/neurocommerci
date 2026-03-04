@@ -16,7 +16,7 @@ class RateLimiter:
         # phone -> {comments_today, last_comment_time, cooldown_until, day_start}
         self._state: dict[str, dict] = {}
 
-    async def load_from_db(self):
+    async def load_from_db(self, user_id: int = None):
         """Загрузить счётчики comments_today из БД при старте (восстановление после рестарта)."""
         from storage.sqlite_db import async_session
         from storage.models import Account
@@ -24,7 +24,10 @@ class RateLimiter:
 
         try:
             async with async_session() as session:
-                result = await session.execute(select(Account.phone, Account.comments_today))
+                query = select(Account.phone, Account.comments_today)
+                if user_id is not None:
+                    query = query.where(Account.user_id == user_id)
+                result = await session.execute(query)
                 for phone, comments_today in result.all():
                     state = self._get_state(phone)
                     state["comments_today"] = comments_today or 0

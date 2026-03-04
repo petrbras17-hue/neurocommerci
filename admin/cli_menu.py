@@ -29,7 +29,7 @@ BANNER = """
  ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝
       [bold yellow]C O M M E N T I N G[/bold yellow]
 [/bold cyan]
-[dim]Telegram Auto-Commenting System for DartVPN[/dim]
+[dim]Telegram Auto-Commenting System[/dim]
 """
 
 
@@ -73,7 +73,7 @@ async def main():
                 ))
             elif choice == "7":
                 console.print(f"AI: {settings.GEMINI_MODEL}")
-                console.print(f"DartVPN: {settings.DARTVPN_BOT_LINK}")
+                console.print(f"Product: {settings.PRODUCT_NAME} ({settings.PRODUCT_BOT_LINK})")
                 console.print(f"Лимит: {settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY}/день")
                 Prompt.ask("Enter")
             else:

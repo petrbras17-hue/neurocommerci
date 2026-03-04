@@ -34,10 +34,12 @@ class AccountManager:
         self._rotation_index = 0
         self._lock = asyncio.Lock()  # Защита от race condition при выборе аккаунта
 
-    async def load_accounts(self, include_banned: bool = False) -> list[Account]:
-        """Загрузить аккаунты из БД. include_banned=True для сводки."""
+    async def load_accounts(self, include_banned: bool = False, user_id: int = None) -> list[Account]:
+        """Загрузить аккаунты из БД. user_id фильтрует по пользователю."""
         async with async_session() as session:
             query = select(Account)
+            if user_id is not None:
+                query = query.where(Account.user_id == user_id)
             if not include_banned:
                 query = query.where(Account.status != "banned")
             result = await session.execute(query)
@@ -45,12 +47,13 @@ class AccountManager:
             log.info(f"Загружено аккаунтов из БД: {len(accounts)}")
             return list(accounts)
 
-    async def add_account(self, phone: str, session_file: str) -> Account:
+    async def add_account(self, phone: str, session_file: str, user_id: int = None) -> Account:
         """Добавить новый аккаунт в БД."""
         async with async_session() as session:
             account = Account(
                 phone=phone,
                 session_file=session_file,
+                user_id=user_id,
                 status="active",
                 created_at=utcnow(),
             )
@@ -60,9 +63,9 @@ class AccountManager:
             log.info(f"Добавлен аккаунт: {phone}")
             return account
 
-    async def connect_all(self) -> dict[str, str]:
+    async def connect_all(self, user_id: int = None) -> dict[str, str]:
         """Подключить все активные аккаунты. Возвращает {phone: status}."""
-        accounts = await self.load_accounts()
+        accounts = await self.load_accounts(user_id=user_id)
         results = {}
 
         for i, account in enumerate(accounts):
@@ -98,60 +101,72 @@ class AccountManager:
             log.error(f"Ошибка подключения {phone}: {e}")
             return "failed"
 
+    async def _connect_one_with_proxy(self, acc: Account) -> tuple[str, str]:
+        """Assign proxy and connect one account. Returns (phone, status)."""
+        proxy = self.proxy_mgr.assign_to_account(acc.phone)
+        status = await self._connect_one(acc.phone, proxy)
+        return acc.phone, status
+
     async def connect_batch(
         self,
-        batch_size: int = 15,
+        report_every: int = 15,
         progress_callback=None,
+        user_id: int = None,
+        batch_size: int = 5,
     ) -> dict[str, str]:
         """
-        Подключить аккаунты пачками (для масштабирования до 1000).
-        batch_size — сколько подключать одновременно.
+        Подключить аккаунты батчами по batch_size с 5с задержкой между батчами (антибан).
+        batch_size — сколько аккаунтов подключать параллельно в одном батче.
+        report_every — как часто вызывать progress_callback (каждые N аккаунтов).
         progress_callback(done, total, results) — для отчётности в боте.
         """
-        import random as _random
-
-        accounts = await self.load_accounts()
+        accounts = await self.load_accounts(user_id=user_id)
         active = [a for a in accounts if a.status != "banned"]
         results: dict[str, str] = {}
 
-        for i in range(0, len(active), batch_size):
-            batch = active[i : i + batch_size]
-            tasks = []
-            for acc in batch:
-                proxy = self.proxy_mgr.assign_to_account(acc.phone)
-                tasks.append(self._connect_one(acc.phone, proxy))
+        # Разбить на батчи по batch_size
+        batches = [active[i:i + batch_size] for i in range(0, len(active), batch_size)]
 
-            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
+        done = 0
+        for batch_idx, batch in enumerate(batches):
+            # Антибан: 5с задержка между батчами
+            if batch_idx > 0:
+                log.info("Антибан задержка 5с между батчами...")
+                await asyncio.sleep(5)
 
-            for acc, res in zip(batch, batch_results):
-                if isinstance(res, Exception):
-                    results[acc.phone] = str(res)[:50]
+            gather_results = await asyncio.gather(
+                *[self._connect_one_with_proxy(acc) for acc in batch],
+                return_exceptions=True,
+            )
+
+            for acc, item in zip(batch, gather_results):
+                if isinstance(item, Exception):
+                    log.error(f"Ошибка подключения {acc.phone}: {item}")
+                    results[acc.phone] = "error"
                 else:
-                    results[acc.phone] = res
+                    phone, status = item
+                    results[phone] = status
 
-            done = min(i + batch_size, len(active))
+            done += len(batch)
             log.info(f"Batch connect: {done}/{len(active)} аккаунтов обработано")
 
-            if progress_callback:
+            # Отчёт каждые report_every аккаунтов или в конце
+            if progress_callback and (done % report_every == 0 or done == len(active)):
                 try:
                     await progress_callback(done, len(active), results)
                 except Exception:
                     pass
 
-            # Задержка между батчами (5-10с)
-            if i + batch_size < len(active):
-                await asyncio.sleep(_random.uniform(5, 10))
-
         return results
 
-    async def get_next_available(self) -> Optional[Account]:
+    async def get_next_available(self, user_id: int = None) -> Optional[Account]:
         """Получить следующий доступный аккаунт для комментирования (round-robin).
 
         Используем asyncio.Lock для защиты от race condition:
         без него два concurrent вызова могут выбрать один и тот же аккаунт.
         """
         async with self._lock:
-            accounts = await self.load_accounts()
+            accounts = await self.load_accounts(user_id=user_id)
             active = [a for a in accounts if a.status == "active"]
 
             if not active:
@@ -241,9 +256,9 @@ class AccountManager:
             await session.commit()
         log.info("Дневные счётчики сброшены, days_active увеличен")
 
-    async def get_status_summary(self) -> dict:
+    async def get_status_summary(self, user_id: int = None) -> dict:
         """Сводка по всем аккаунтам (включая banned)."""
-        accounts = await self.load_accounts(include_banned=True)
+        accounts = await self.load_accounts(include_banned=True, user_id=user_id)
         summary = {
             "total": len(accounts),
             "active": 0,
@@ -263,7 +278,7 @@ class AccountManager:
 
         return summary
 
-    async def auto_recover(self) -> dict:
+    async def auto_recover(self, user_id: int = None) -> dict:
         """
         Авто-восстановление аккаунтов из flood_wait/cooldown/error.
         Проверяет прошло ли достаточно времени и пытается переподключить.
@@ -275,11 +290,12 @@ class AccountManager:
         reconnected = 0
 
         async with async_session() as session:
-            result = await session.execute(
-                select(Account).where(
-                    Account.status.in_(["flood_wait", "cooldown", "error"])
-                )
+            query = select(Account).where(
+                Account.status.in_(["flood_wait", "cooldown", "error"])
             )
+            if user_id is not None:
+                query = query.where(Account.user_id == user_id)
+            result = await session.execute(query)
             blocked = list(result.scalars().all())
 
         for account in blocked:

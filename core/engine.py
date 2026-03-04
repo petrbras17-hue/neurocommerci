@@ -6,6 +6,8 @@ CommentingEngine — главный оркестратор системы ней
 - Обработка очереди комментариев
 - Прогрев новых аккаунтов (14-дневный цикл)
 - Проверка здоровья аккаунтов
+
+Поддерживает per-user task spawning для multi-tenant SaaS.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ class CommentingEngine:
     """
     Центральный движок: запускает и координирует все подсистемы.
     Управляется через Telegram-бот (start/stop).
+    Поддерживает per-user задачи для multi-tenant режима.
     """
 
     def __init__(
@@ -58,6 +61,8 @@ class CommentingEngine:
 
         self._running = False
         self._tasks: list[asyncio.Task] = []
+        # Per-user tasks for multi-tenant mode
+        self._user_tasks: dict[int, dict[str, asyncio.Task]] = {}
         self._stats = {
             "comments_sent": 0,
             "warmup_actions": 0,
@@ -69,33 +74,97 @@ class CommentingEngine:
     def is_running(self) -> bool:
         return self._running
 
+    def is_running_for_user(self, user_id: int) -> bool:
+        """Check if engine is running for specific user."""
+        tasks = self._user_tasks.get(user_id, {})
+        return any(not t.done() for t in tasks.values())
+
+    def _should_run(self, user_id: int = None) -> bool:
+        """Should loop continue? Works for both global and per-user modes."""
+        return self._running or bool(user_id and self.is_running_for_user(user_id))
+
     async def start(self) -> None:
-        """Запустить все процессы параллельно."""
+        """Запустить все процессы параллельно (legacy global mode)."""
         if self._running:
             log.warning("Движок уже запущен")
             return
 
+        log.info("=== ЗАПУСК ДВИЖКА НЕЙРОКОММЕНТИРОВАНИЯ ===")
+
+        try:
+            # Загрузить счётчики из БД
+            await self.rate_limiter.load_from_db()
+
+            # Запустить мониторинг каналов
+            await self.monitor.start()
+
+            # Запустить параллельные циклы
+            self._tasks = [
+                asyncio.create_task(self._comment_loop(), name="comment_loop"),
+                asyncio.create_task(self._warmup_loop(), name="warmup_loop"),
+                asyncio.create_task(self._health_check_loop(), name="health_check"),
+                asyncio.create_task(self._auto_recover_loop(), name="auto_recover"),
+            ]
+
+            # Флаг только после успешного создания задач
+            self._running = True
+            log.info("=== ДВИЖОК НЕЙРОКОММЕНТИРОВАНИЯ ЗАПУЩЕН ===")
+            await notifier.send("Движок нейрокомментирования запущен")
+
+        except Exception as e:
+            self._running = False
+            self._tasks.clear()
+            log.error(f"Ошибка запуска движка: {e}")
+            await notifier.send(f"ОШИБКА запуска движка: {e}")
+            raise
+
+    async def start_for_user(self, user_id: int) -> None:
+        """Запустить движок для конкретного пользователя."""
+        if self.is_running_for_user(user_id):
+            log.warning(f"Движок для user_id={user_id} уже запущен")
+            return
+
+        log.info(f"=== ЗАПУСК ДВИЖКА ДЛЯ USER {user_id} ===")
+        await self.rate_limiter.load_from_db(user_id=user_id)
+
+        self._user_tasks[user_id] = {
+            "comment": asyncio.create_task(
+                self._comment_loop(user_id=user_id),
+                name=f"comment_loop_u{user_id}",
+            ),
+            "warmup": asyncio.create_task(
+                self._warmup_loop(user_id=user_id),
+                name=f"warmup_loop_u{user_id}",
+            ),
+            "health": asyncio.create_task(
+                self._health_check_loop(user_id=user_id),
+                name=f"health_check_u{user_id}",
+            ),
+            "recover": asyncio.create_task(
+                self._auto_recover_loop(user_id=user_id),
+                name=f"auto_recover_u{user_id}",
+            ),
+        }
+
+        # Set global running flag if any user is running
         self._running = True
-        log.info("=== ДВИЖОК НЕЙРОКОММЕНТИРОВАНИЯ ЗАПУЩЕН ===")
+        log.info(f"=== ДВИЖОК ДЛЯ USER {user_id} ЗАПУЩЕН ===")
 
-        # Загрузить счётчики из БД
-        await self.rate_limiter.load_from_db()
+    async def stop_for_user(self, user_id: int) -> None:
+        """Остановить движок для конкретного пользователя."""
+        tasks = self._user_tasks.pop(user_id, {})
+        for task in tasks.values():
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+        log.info(f"Движок для user_id={user_id} остановлен")
 
-        # Запустить мониторинг каналов
-        await self.monitor.start()
-
-        # Запустить параллельные циклы
-        self._tasks = [
-            asyncio.create_task(self._comment_loop(), name="comment_loop"),
-            asyncio.create_task(self._warmup_loop(), name="warmup_loop"),
-            asyncio.create_task(self._health_check_loop(), name="health_check"),
-            asyncio.create_task(self._auto_recover_loop(), name="auto_recover"),
-        ]
-
-        await notifier.send("Движок нейрокомментирования запущен")
+        # Update global running flag
+        if not self._user_tasks and not self._tasks:
+            self._running = False
 
     async def stop(self) -> None:
-        """Остановить движок gracefully."""
+        """Остановить движок gracefully (все пользователи)."""
         if not self._running:
             return
 
@@ -105,13 +174,16 @@ class CommentingEngine:
         # Остановить мониторинг
         await self.monitor.stop()
 
-        # Остановить все фоновые задачи
+        # Остановить глобальные задачи
         for task in self._tasks:
             task.cancel()
-
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+
+        # Остановить per-user задачи
+        for uid in list(self._user_tasks.keys()):
+            await self.stop_for_user(uid)
 
         # Дождаться завершения pending swap задач
         await self.poster.shutdown()
@@ -123,11 +195,11 @@ class CommentingEngine:
     # Цикл комментирования
     # ─────────────────────────────────────────────
 
-    async def _comment_loop(self) -> None:
+    async def _comment_loop(self, user_id: int = None) -> None:
         """Основной цикл: берём пост из очереди → генерируем коммент → отправляем."""
-        log.info("Comment loop запущен")
+        log.info(f"Comment loop запущен (user_id={user_id})")
 
-        while self._running:
+        while self._should_run(user_id):
             try:
                 # Ночью не комментируем (8:00-23:00 MSK)
                 if not self.antiban.is_active_hours():
@@ -168,29 +240,29 @@ class CommentingEngine:
     # Цикл прогрева (14-дневный)
     # ─────────────────────────────────────────────
 
-    async def _warmup_loop(self) -> None:
+    async def _warmup_loop(self, user_id: int = None) -> None:
         """
         Прогрев новых аккаунтов:
         - readonly: get_me, скролл каналов
         - reactions: реакции, send_read_acknowledge
         - light/moderate: обрабатывается через poster с лимитами rate_limiter
         """
-        log.info("Warmup loop запущен")
+        log.info(f"Warmup loop запущен (user_id={user_id})")
 
-        while self._running:
+        while self._should_run(user_id):
             try:
                 if not self.antiban.is_active_hours():
                     await asyncio.sleep(600)
                     continue
 
-                accounts = await self._get_warmup_accounts()
+                accounts = await self._get_warmup_accounts(user_id=user_id)
 
                 # Загрузить каналы один раз для всех аккаунтов
                 from channels.channel_db import ChannelDB
-                channels = await ChannelDB().get_all_active()
+                channels = await ChannelDB().get_all_active(user_id=user_id)
 
                 for phone, days_active in accounts:
-                    if not self._running:
+                    if not self._should_run(user_id):
                         break
 
                     phase = self.antiban.get_warmup_phase(days_active)
@@ -213,19 +285,20 @@ class CommentingEngine:
                 log.error(f"Ошибка в warmup_loop: {exc}")
                 await asyncio.sleep(300)
 
-    async def _get_warmup_accounts(self) -> list[tuple[str, int]]:
+    async def _get_warmup_accounts(self, user_id: int = None) -> list[tuple[str, int]]:
         """Получить аккаунты в фазе прогрева (days_active < 15)."""
         from storage.models import Account
         from storage.sqlite_db import async_session
 
         try:
             async with async_session() as session:
-                result = await session.execute(
-                    select(Account.phone, Account.days_active).where(
-                        Account.status == "active",
-                        Account.days_active < 15,
-                    )
+                query = select(Account.phone, Account.days_active).where(
+                    Account.status == "active",
+                    Account.days_active < 15,
                 )
+                if user_id is not None:
+                    query = query.where(Account.user_id == user_id)
+                result = await session.execute(query)
                 return [(phone, days or 0) for phone, days in result.all()]
         except Exception as exc:
             log.warning(f"Ошибка загрузки warmup аккаунтов: {exc}")
@@ -291,21 +364,21 @@ class CommentingEngine:
     # Проверка здоровья
     # ─────────────────────────────────────────────
 
-    async def _health_check_loop(self) -> None:
+    async def _health_check_loop(self, user_id: int = None) -> None:
         """Проверка здоровья аккаунтов через @SpamBot (раз в 3 дня)."""
-        log.info("Health check loop запущен")
+        log.info(f"Health check loop запущен (user_id={user_id})")
 
-        while self._running:
+        while self._should_run(user_id):
             try:
                 # Проверка раз в 6 часов
                 await asyncio.sleep(6 * 3600)
 
-                if not self._running:
+                if not self._should_run(user_id):
                     break
 
-                connected = self.session_mgr.get_connected_phones()
+                connected = self.session_mgr.get_connected_phones(user_id=user_id)
                 for phone in connected[:5]:  # Не больше 5 за раз
-                    if not self._running:
+                    if not self._should_run(user_id):
                         break
                     await self._check_account_health(phone)
                     self._stats["health_checks"] += 1
@@ -349,18 +422,18 @@ class CommentingEngine:
     # Авто-восстановление
     # ─────────────────────────────────────────────
 
-    async def _auto_recover_loop(self) -> None:
+    async def _auto_recover_loop(self, user_id: int = None) -> None:
         """Автоматическое восстановление аккаунтов из cooldown/error."""
-        log.info("Auto-recover loop запущен")
+        log.info(f"Auto-recover loop запущен (user_id={user_id})")
 
-        while self._running:
+        while self._should_run(user_id):
             try:
                 await asyncio.sleep(600)  # Каждые 10 мин
 
-                if not self._running:
+                if not self._should_run(user_id):
                     break
 
-                result = await self.account_mgr.auto_recover()
+                result = await self.account_mgr.auto_recover(user_id=user_id)
                 if result["recovered"] > 0:
                     log.info(
                         f"Auto-recover: {result['recovered']} восстановлено, "
@@ -386,4 +459,10 @@ class CommentingEngine:
             "queue_size": self.monitor.queue.size,
             "monitor_running": self.monitor.is_running,
             "pool": self.session_mgr.pool_stats,
+            "active_users": len(self._user_tasks),
         }
+
+    def get_active_user_ids(self) -> list[int]:
+        """Get list of user_ids with active tasks."""
+        return [uid for uid, tasks in self._user_tasks.items()
+                if any(not t.done() for t in tasks.values())]

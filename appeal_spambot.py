@@ -7,22 +7,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import time
-from pathlib import Path
 
-from telethon import TelegramClient
 from telethon.tl.types import (
     KeyboardButtonCallback,
     KeyboardButtonUrl,
     ReplyInlineMarkup,
 )
 
-from config import settings
-
-SESSIONS_DIR = settings.sessions_path
-PROXIES_FILE = Path("data/proxies.txt")
+from utils.standalone_helpers import load_proxy_for_phone, load_account_json, build_client
 
 # Ответы на вопросы SpamBot — в порядке SpamBot'а:
 # 1. Почему заблокировали (описание)
@@ -36,25 +30,8 @@ APPEAL_ANSWERS_ORDERED = [
     "alina.moroz.2024@mail.ru",
     "2024",
     "A friend recommended Telegram to me",
+    "I mainly use Telegram to chat with friends and family, read news channels, and share photos. I also enjoy using group chats to discuss hobbies and interests.",
 ]
-
-
-def load_proxy(index: int = 0):
-    """Загружает прокси по индексу из файла."""
-    lines = PROXIES_FILE.read_text().strip().split("\n")
-    if index >= len(lines):
-        index = 0
-    parts = lines[index].strip().split(":")
-    return (3, parts[0], int(parts[1]), True, parts[2], parts[3])
-
-
-def load_account(phone: str) -> dict:
-    """Загружает JSON аккаунта."""
-    json_path = SESSIONS_DIR / f"{phone}.json"
-    if not json_path.exists():
-        print(f"  Файл {json_path} не найден!")
-        sys.exit(1)
-    return json.loads(json_path.read_text())
 
 
 async def wait_for_response(client, entity, after_date=None, timeout=30):
@@ -97,33 +74,18 @@ async def find_url_button(msg) -> str | None:
 
 
 async def appeal(phone: str):
-    data = load_account(phone)
-    proxy = load_proxy(1)  # Берём второй прокси (первый для другого аккаунта)
+    data = load_account_json(phone)
+    proxy = load_proxy_for_phone(phone)  # 1 IP = 1 аккаунт
 
     # Имя для ответа
     first = data.get("first_name", "")
     last = data.get("last_name", "")
 
-    # Текущее имя в ТГ может отличаться (если было изменено до заморозки)
-
     print(f"\n  === Апелляция @SpamBot для +{phone} ===")
     print(f"  Имя из JSON: {first} {last}")
-    print(f"  Прокси: #{2}")
+    print(f"  Прокси: {proxy[1]}:{proxy[2]}")
 
-    client = TelegramClient(
-        str(SESSIONS_DIR / phone),
-        api_id=data.get("app_id") or settings.TELEGRAM_API_ID,
-        api_hash=data.get("app_hash") or settings.TELEGRAM_API_HASH,
-        proxy=proxy,
-        device_model=data.get("device", "Samsung Galaxy S23"),
-        system_version=data.get("sdk", "SDK 29"),
-        app_version=data.get("app_version", "12.4.3"),
-        lang_code=data.get("lang_pack", "ru"),
-        system_lang_code=data.get("system_lang_pack", "ru-ru"),
-        timeout=30,
-        connection_retries=5,
-        retry_delay=5,
-    )
+    client = build_client(phone, data, proxy)
 
     try:
         print("\n  1. Подключение...")
