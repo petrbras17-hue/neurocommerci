@@ -49,7 +49,7 @@ async def web_client() -> AsyncClient:
         yield client
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
 async def _clean_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ops_api.settings, "ADMIN_BOT_TOKEN", "telegram-test-token")
     monkeypatch.setattr(ops_api.settings, "JWT_ACCESS_SECRET", "web-auth-access-secret-1234567890")

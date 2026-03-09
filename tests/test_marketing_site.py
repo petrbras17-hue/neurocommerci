@@ -19,7 +19,7 @@ async def marketing_client() -> AsyncClient:
         yield test_client
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
 async def _clean_leads() -> None:
     await init_db()
     async with async_session() as session:

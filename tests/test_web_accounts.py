@@ -86,7 +86,7 @@ async def web_accounts_client() -> AsyncClient:
         yield client
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True, loop_scope="session")
 async def _clean_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(ops_api.settings, "ADMIN_BOT_TOKEN", "telegram-test-token")
     monkeypatch.setattr(ops_api.settings, "SESSIONS_DIR", str(tmp_path / "sessions"))
