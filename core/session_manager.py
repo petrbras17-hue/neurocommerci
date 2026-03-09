@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Менеджер Telethon сессий.
 Создание клиентов с прокси, управление подключениями.
@@ -13,9 +15,16 @@ from typing import Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, AuthKeyUnregisteredError
 
-from config import settings, BASE_DIR
+from config import settings
 from core.proxy_manager import ProxyConfig
+from core.policy_engine import policy_engine
+from core.account_capabilities import (
+    probe_account_capabilities,
+    persist_probe_result,
+)
 from utils.logger import log
+from utils.proxy_bindings import get_live_proxy_config
+from utils.session_topology import canonical_session_dir, canonical_session_paths, session_stem
 
 # Дефолтные параметры устройства (если JSON отсутствует)
 DEFAULT_DEVICE = {
@@ -26,10 +35,6 @@ DEFAULT_DEVICE = {
     "system_lang_pack": "ru",
 }
 
-# Максимум одновременных подключений (для 1000 аккаунтов нельзя держать все)
-MAX_CONCURRENT_CONNECTIONS = 50
-
-
 class SessionManager:
     """Фабрика Telethon клиентов с LRU pool и per-account device fingerprint."""
 
@@ -39,17 +44,24 @@ class SessionManager:
         self._last_used: dict[str, float] = {}  # phone -> timestamp последнего использования
         self._phone_user: dict[str, int] = {}  # phone -> user_id (for per-user isolation)
         self._known_user_dirs: set[int] = set()  # user_ids whose dirs already exist
+        self._session_owner: dict[str, str] = {}  # session_name -> phone
 
-    def _get_sessions_dir(self, user_id: int = None) -> Path:
-        """Get sessions directory, optionally per-user."""
-        base = settings.sessions_path
-        if user_id is not None:
-            user_dir = base / str(user_id)
-            if user_id not in self._known_user_dirs:
-                user_dir.mkdir(parents=True, exist_ok=True)
-                self._known_user_dirs.add(user_id)
-            return user_dir
-        return base
+    def _remember_user_id(self, phone: str, user_id: int | None) -> int | None:
+        if user_id is None:
+            return self._phone_user.get(phone)
+        resolved = int(user_id)
+        self._phone_user[phone] = resolved
+        return resolved
+
+    def get_known_user_id(self, phone: str) -> int | None:
+        return self._phone_user.get(phone)
+
+    def get_session_paths(self, phone: str, user_id: int | None = None) -> tuple[Path, Path]:
+        """Return canonical runtime session/json paths for the account."""
+        if user_id is None:
+            raise ValueError("user_id_required_for_runtime_session_path")
+        stem = session_stem(phone)
+        return canonical_session_paths(settings.sessions_path, int(user_id), stem)
 
     def _load_device_params(self, session_name: str, user_id: int = None) -> dict:
         """Загрузить параметры устройства из JSON-файла поставщика."""
@@ -57,12 +69,7 @@ class SessionManager:
         if cache_key in self._device_cache:
             return self._device_cache[cache_key]
 
-        sessions_dir = self._get_sessions_dir(user_id)
-        json_path = sessions_dir / f"{session_name}.json"
-
-        # Fallback to flat directory for backward compatibility
-        if not json_path.exists() and user_id is not None:
-            json_path = settings.sessions_path / f"{session_name}.json"
+        _, json_path = self.get_session_paths(session_name, user_id=user_id)
 
         if json_path.exists():
             try:
@@ -94,14 +101,12 @@ class SessionManager:
         user_id: int = None,
     ) -> TelegramClient:
         """Создать Telethon клиент с device fingerprint из JSON метаданных."""
-        sessions_dir = self._get_sessions_dir(user_id)
-        session_path = str(sessions_dir / session_name)
-
-        # Fallback: if session file doesn't exist in user dir, check flat dir
-        if user_id is not None and not (sessions_dir / f"{session_name}.session").exists():
-            flat_path = settings.sessions_path / f"{session_name}.session"
-            if flat_path.exists():
-                session_path = str(settings.sessions_path / session_name)
+        session_file_path, _ = self.get_session_paths(session_name, user_id=user_id)
+        if not session_file_path.exists():
+            raise FileNotFoundError(
+                f"Session file not found for {session_name} (user_id={user_id}): {session_file_path}"
+            )
+        session_path = str(session_file_path.with_suffix(""))
 
         proxy_tuple = proxy.to_telethon_proxy() if proxy else None
 
@@ -109,8 +114,12 @@ class SessionManager:
         device = self._load_device_params(session_name, user_id)
 
         # Использовать api_id/api_hash из JSON если есть (важно для купленных аккаунтов!)
-        api_id = device.get("app_id") or settings.TELEGRAM_API_ID
-        api_hash = device.get("app_hash") or settings.TELEGRAM_API_HASH
+        api_id = device.get("app_id")
+        api_hash = device.get("app_hash")
+        if api_id in (None, "") or not str(api_hash or "").strip():
+            raise ValueError(
+                f"Account {session_name} requires app_id/app_hash from its own JSON metadata"
+            )
 
         if api_id == 4:
             log.warning(
@@ -138,26 +147,47 @@ class SessionManager:
 
     async def _evict_lru(self):
         """Отключить наименее используемый клиент если превышен лимит."""
-        if len(self._clients) < MAX_CONCURRENT_CONNECTIONS:
+        max_concurrent = max(1, settings.MAX_CONNECTED_CLIENTS_PER_WORKER)
+        if len(self._clients) < max_concurrent:
             return
         if not self._last_used:
             return
         oldest_phone = min(self._last_used, key=self._last_used.get)
-        log.debug(f"LRU eviction: отключаем {oldest_phone} (лимит {MAX_CONCURRENT_CONNECTIONS})")
+        log.debug(f"LRU eviction: отключаем {oldest_phone} (лимит {max_concurrent})")
         await self.disconnect_client(oldest_phone)
 
     def _touch(self, phone: str):
         """Обновить timestamp последнего использования."""
         self._last_used[phone] = time.time()
 
-    async def connect_client(
+    async def _resolve_live_proxy(
+        self,
+        phone: str,
+        *,
+        user_id: int | None,
+        proxy: Optional[ProxyConfig],
+    ) -> tuple[Optional[ProxyConfig], dict]:
+        try:
+            live_proxy, proxy_report = await get_live_proxy_config(phone, user_id=user_id)
+        except Exception as exc:
+            live_proxy = None
+            proxy_report = {"ok": False, "reason": f"proxy_preflight_error:{exc.__class__.__name__}"}
+        if live_proxy is not None:
+            return live_proxy, proxy_report
+        return proxy, proxy_report
+
+    async def _connect_managed_client(
         self,
         phone: str,
         proxy: Optional[ProxyConfig] = None,
         user_id: int = None,
+        *,
+        run_connect_probe: bool,
     ) -> Optional[TelegramClient]:
-        """Подключить клиент и проверить авторизацию."""
-        # АНТИБАН: запрет подключения нескольких аккаунтов с одного IP (без прокси)
+        user_id = self._remember_user_id(phone, user_id)
+        if user_id is None:
+            log.warning(f"{phone}: connect blocked, user_id is required for canonical session runtime")
+            return None
         if proxy is None and len(self.get_connected_phones()) > 0:
             log.warning(
                 "АНТИБАН: подключение без прокси запрещено при наличии других аккаунтов"
@@ -169,7 +199,6 @@ class SessionManager:
             if client.is_connected():
                 self._touch(phone)
                 return client
-            # Старый клиент отключён — освободить ресурсы перед созданием нового
             try:
                 await client.disconnect()
             except Exception:
@@ -177,11 +206,29 @@ class SessionManager:
             del self._clients[phone]
             self._last_used.pop(phone, None)
 
-        # LRU eviction: освободить место если нужно
         await self._evict_lru()
 
-        # Имя сессии = номер телефона (без +)
-        session_name = phone.lstrip("+").replace(" ", "")
+        proxy, proxy_report = await self._resolve_live_proxy(phone, user_id=user_id, proxy=proxy)
+        if proxy is None and settings.STRICT_PROXY_PER_ACCOUNT:
+            log.warning(
+                f"{phone}: connect blocked, no live unique proxy "
+                f"({proxy_report.get('reason') or 'unknown'})"
+            )
+            return None
+
+        session_name = session_stem(phone)
+        current_owner = self._session_owner.get(session_name)
+        if current_owner and current_owner != phone:
+            await policy_engine.check(
+                "session_duplicate_detected",
+                {"duplicate": True, "session_name": session_name, "owner": current_owner, "phone": phone},
+                phone=phone,
+            )
+            log.warning(
+                f"Сессия {session_name} уже занята аккаунтом {current_owner}; "
+                f"подключение {phone} отклонено"
+            )
+            return None
         client = self.create_client(session_name, proxy, user_id=user_id)
 
         try:
@@ -193,10 +240,37 @@ class SessionManager:
 
             me = await client.get_me()
             log.info(f"Подключен аккаунт: {me.first_name} ({phone})")
+
+            if run_connect_probe and settings.FROZEN_PROBE_ON_CONNECT:
+                probe = await probe_account_capabilities(client, run_search_probe=True)
+                reason = str(probe.get("reason", "ok"))
+                mark_restricted = reason in {"frozen", "restricted"}
+                await persist_probe_result(
+                    phone,
+                    probe,
+                    mark_restricted_on_failure=mark_restricted,
+                    restriction_reason=reason if mark_restricted else None,
+                )
+                if mark_restricted:
+                    await policy_engine.check(
+                        "frozen_probe_failed",
+                        {
+                            "phone": phone,
+                            "reason": reason,
+                            "capabilities": probe,
+                            "source": "connect_client",
+                        },
+                        phone=phone,
+                    )
+                    log.warning(
+                        f"{phone}: capability probe blocked account on connect (reason={reason})"
+                    )
+                    await client.disconnect()
+                    return None
+
             self._clients[phone] = client
+            self._session_owner[session_name] = phone
             self._touch(phone)
-            if user_id is not None:
-                self._phone_user[phone] = user_id
             return client
 
         except FloodWaitError as e:
@@ -227,11 +301,80 @@ class SessionManager:
                 pass
             return None
 
+    async def connect_client(
+        self,
+        phone: str,
+        proxy: Optional[ProxyConfig] = None,
+        user_id: int = None,
+    ) -> Optional[TelegramClient]:
+        """Подключить клиент и проверить авторизацию."""
+        return await self._connect_managed_client(
+            phone,
+            proxy=proxy,
+            user_id=user_id,
+            run_connect_probe=True,
+        )
+
+    async def connect_client_for_action(
+        self,
+        phone: str,
+        proxy: Optional[ProxyConfig] = None,
+        user_id: int = None,
+    ) -> Optional[TelegramClient]:
+        """Подключить клиент для ручного apply-шага без hidden capability/search probe."""
+        return await self._connect_managed_client(
+            phone,
+            proxy=proxy,
+            user_id=user_id,
+            run_connect_probe=False,
+        )
+
+    async def probe_authorization(
+        self,
+        phone: str,
+        proxy: Optional[ProxyConfig] = None,
+        user_id: int = None,
+    ) -> tuple[bool, str]:
+        """Проверить авторизацию сессии без side effects policy/runtime.
+
+        Используется в админ-проверках: не трогает lifecycle, не пишет policy events,
+        не удерживает постоянное соединение в пуле.
+        """
+        user_id = self._remember_user_id(phone, user_id)
+        if user_id is None:
+            return False, "user_id_required"
+        proxy, proxy_report = await self._resolve_live_proxy(phone, user_id=user_id, proxy=proxy)
+        if proxy is None and settings.STRICT_PROXY_PER_ACCOUNT:
+            return False, str(proxy_report.get("reason") or "proxy_unavailable")
+
+        session_name = session_stem(phone)
+        client = self.create_client(session_name, proxy, user_id=user_id)
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                return False, "unauthorized"
+            return True, "authorized"
+        except FloodWaitError as exc:
+            return False, f"flood_wait_{exc.seconds}s"
+        except AuthKeyUnregisteredError:
+            return False, "auth_key_unregistered"
+        except Exception as exc:
+            return False, f"error:{exc.__class__.__name__}"
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
     async def disconnect_client(self, phone: str):
         """Отключить клиент."""
         client = self._clients.pop(phone, None)
         self._last_used.pop(phone, None)
         self._phone_user.pop(phone, None)
+        session_name = session_stem(phone)
+        owner = self._session_owner.get(session_name)
+        if owner == phone:
+            self._session_owner.pop(session_name, None)
         if client:
             try:
                 await client.disconnect()
@@ -261,24 +404,20 @@ class SessionManager:
 
     def get_device_info(self, phone: str, user_id: int = None) -> dict:
         """Получить device params для аккаунта (для отображения в боте)."""
-        session_name = phone.lstrip("+").replace(" ", "")
+        session_name = session_stem(phone)
         return self._load_device_params(session_name, user_id)
 
     def list_session_files(self, user_id: int = None) -> list[str]:
         """Список .session файлов в директории сессий."""
         sessions_dir = self._get_sessions_dir(user_id)
-        result = [f.stem for f in sessions_dir.glob("*.session")]
-        # Also include flat directory files for backward compatibility
-        if user_id is not None:
-            flat_sessions = [f.stem for f in settings.sessions_path.glob("*.session")]
-            result = list(set(result + flat_sessions))
-        return result
+        return [f.stem for f in sessions_dir.glob("*.session")]
 
     @property
     def pool_stats(self) -> dict:
         """Статистика пула соединений."""
+        max_concurrent = max(1, settings.MAX_CONNECTED_CLIENTS_PER_WORKER)
         return {
             "connected": len(self._clients),
-            "max_concurrent": MAX_CONCURRENT_CONNECTIONS,
+            "max_concurrent": max_concurrent,
             "cached_devices": len(self._device_cache),
         }

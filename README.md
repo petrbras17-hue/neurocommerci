@@ -58,6 +58,70 @@ Optional env/config for Sprint 2 lead delivery:
 - `GOOGLE_SHEETS_CREDENTIALS_FILE`
 - `CHANNELS_SPREADSHEET_ID` (used as the default spreadsheet for lead mirroring)
 
+## Sprint 3 web workspace shell
+
+Sprint 3 adds a Vite + React workspace shell on top of the existing FastAPI app.
+
+Public/protected surfaces:
+
+- `/app`
+- `/app/login`
+- `/app/dashboard`
+- `/app/accounts`
+- `/app/campaigns`
+- `/app/parser`
+- `/app/analytics`
+- `/app/billing`
+- `/app/settings`
+
+Backend auth endpoints:
+
+- `POST /auth/telegram/verify`
+- `POST /auth/complete-profile`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+- `GET /auth/me`
+- `GET /v1/me/workspace`
+- `GET /v1/me/team`
+
+Web onboarding/account endpoints:
+
+- `POST /v1/web/accounts/upload`
+- `GET /v1/web/accounts`
+- `GET /v1/web/proxies/available`
+- `POST /v1/web/accounts/{id}/bind-proxy`
+- `POST /v1/web/accounts/{id}/audit`
+- `GET /v1/web/accounts/{id}/audit`
+
+Sprint 3 defaults:
+
+- Telegram-first auth via the main bot login widget
+- Russian-only UI
+- pair upload only: `.session + .json`
+- account/proxy data is tenant/workspace scoped for the web surface
+
+Telegram Login Widget note:
+
+- before production use, configure BotFather:
+  - `/setdomain`
+  - `176-124-221-253.sslip.io`
+- local `127.0.0.1` development falls back to a helpful widget notice instead of rendering the widget iframe
+
+Frontend local development:
+
+1. install frontend deps:
+   - `cd frontend && npm install`
+2. run Vite dev server:
+   - `npm run dev`
+3. in another shell run FastAPI:
+   - `python ops_api.py`
+
+Frontend production build:
+
+- `cd frontend && npm run build`
+
+The built assets are emitted to `frontend/dist` and served by FastAPI/nginx through `/app`.
+
 ## Database safety requirements
 
 - The application DB user must not be a PostgreSQL superuser.
@@ -87,6 +151,7 @@ If your local `pg_data` volume was created before the Sprint 1 RLS change, recre
 - Unit/integration tests: `pytest tests/test_tenant_foundation.py`
 - Marketing pages + lead capture: `pytest tests/test_marketing_site.py`
 - Lead funnel side effects: `pytest tests/test_lead_funnel.py`
+- Sprint 3 auth + onboarding APIs: `pytest tests/test_web_auth.py tests/test_web_accounts.py`
 - Existing smoke checks: `bash scripts/ci_smoke.sh`
 
 ## Auth modes

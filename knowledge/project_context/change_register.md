@@ -23,6 +23,7 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-08 | Sprint 1 | `sprint/1-tenant-foundation` | `ecfa4fb` | RLS correctness | Tenant lookup moved inside active transaction before RLS reads. | Green | Not yet | Deploy Sprint 1 to VPS. |
 | 2026-03-09 | Sprint 1 | `sprint/1-tenant-foundation` | `2c3c516` | VPS baseline | Added healthcheck script, converted VPS to git checkout, fixed Postgres role, applied Alembic, verified tests on VPS. | Green | Green | Start Sprint 2: public landing + lead capture. |
 | 2026-03-09 | Sprint 2 | `sprint/1-tenant-foundation` | `working-tree` | Premium lead funnel | Upgraded the marketing site to a premium SaaS landing, added Google Sheets + Telegram lead delivery, and added an internal lead summary endpoint. | Green | Not deployed | Commit Sprint 2 v2 and roll it out to VPS. |
+| 2026-03-10 | Sprint 3 | `sprint/1-tenant-foundation` | `working-tree` | Telegram-first workspace shell | Added Telegram-first auth, refresh-token cookies, React/Vite workspace shell, and tenant-scoped web onboarding for accounts/proxies. | Green | Not deployed | Commit Sprint 3 and deploy after BotFather `/setdomain` is confirmed. |
 
 ## Update Rules
 

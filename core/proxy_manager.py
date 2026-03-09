@@ -268,6 +268,13 @@ class ProxyManager:
                 return proxy
 
         # Если все заняты — переиспользовать
+        if settings.STRICT_PROXY_PER_ACCOUNT:
+            log.warning(
+                f"STRICT_PROXY_PER_ACCOUNT=true: уникального прокси для {phone} нет, "
+                "подключение заблокировано."
+            )
+            return None
+
         proxy = self.proxies[len(self._assignments) % len(self.proxies)]
         self._assignments[phone] = proxy
         log.info(f"Прокси {proxy.host}:{proxy.port} переназначен аккаунту {phone}")

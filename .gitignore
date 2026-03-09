@@ -16,6 +16,11 @@ build/
 venv/
 .venv/
 env/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # IDE
 .idea/
@@ -52,3 +57,7 @@ data/avatars/*
 
 # Proxy list
 data/proxies.txt
+
+# Migration artifacts / backups
+artifacts/
+ops/runtime/

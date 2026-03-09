@@ -26,7 +26,13 @@ class AuthUser(Base):
     __tablename__ = "auth_users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id = Column(BigInteger, unique=True, nullable=True)
+    telegram_username = Column(String(255), nullable=True)
+    first_name = Column(String(255), nullable=True)
+    last_name = Column(String(255), nullable=True)
     email = Column(String(255), unique=True, nullable=True)
+    company = Column(String(255), nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
 
@@ -46,12 +52,14 @@ class Workspace(Base):
     __tablename__ = "workspaces"
     __table_args__ = (
         Index("ix_workspaces_tenant_id", "tenant_id"),
+        Index("ix_workspaces_runtime_user_id", "runtime_user_id"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     name = Column(String(255), nullable=False)
     settings = Column(JSONType, nullable=True)
+    runtime_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
 
@@ -85,6 +93,28 @@ class UsageEvent(Base):
     event_type = Column(String(120), nullable=False)
     meta = Column(JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+
+
+class RefreshToken(Base):
+    """Хранилище refresh token ротации для web auth."""
+    __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index("ix_refresh_tokens_user_id", "user_id"),
+        Index("ix_refresh_tokens_tenant_id", "tenant_id"),
+        Index("ix_refresh_tokens_expires_at", "expires_at"),
+        UniqueConstraint("token_hash", name="uq_refresh_tokens_token_hash"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    token_hash = Column(String(255), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    user_agent = Column(String(500), nullable=True)
+    ip_address = Column(String(128), nullable=True)
 
 
 class Lead(Base):
@@ -141,11 +171,17 @@ class User(Base):
 class Account(Base):
     """Telegram аккаунт для комментирования."""
     __tablename__ = "accounts"
+    __table_args__ = (
+        Index("ix_accounts_tenant_id", "tenant_id"),
+        Index("ix_accounts_workspace_id", "workspace_id"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     phone = Column(String(20), unique=True, nullable=False)
     session_file = Column(String(255), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
     proxy_id = Column(Integer, ForeignKey("proxies.id"), nullable=True)
     status = Column(String(20), default="active")  # active, cooldown, banned, flood_wait
     cooldown_until = Column(DateTime, nullable=True)
@@ -301,9 +337,15 @@ class ContentTemplate(Base):
 class Proxy(Base):
     """Прокси-сервер."""
     __tablename__ = "proxies"
+    __table_args__ = (
+        Index("ix_proxies_tenant_id", "tenant_id"),
+        Index("ix_proxies_workspace_id", "workspace_id"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
     proxy_type = Column(String(10), default="socks5")  # socks5, http
     host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False)

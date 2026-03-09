@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # --- Admin Bot (опционально) ---
     ADMIN_BOT_TOKEN: str = Field(default="")
+    ADMIN_BOT_USERNAME: str = Field(default="dartvpn_neurocom_bot")
     ADMIN_TELEGRAM_ID: int = Field(default=0)
 
     # --- Google Gemini API (исполнитель — генерация текста) ---
@@ -109,6 +110,8 @@ class Settings(BaseSettings):
     OPS_API_HOST: str = Field(default="0.0.0.0")
     OPS_API_PORT: int = Field(default=8081)
     OPS_API_TOKEN: str = Field(default="")
+    WEBAPP_DEV_ORIGIN: str = Field(default="http://localhost:5173")
+    WEBAPP_SESSION_COOKIE_NAME: str = Field(default="nc_refresh_token")
     JWT_ACCESS_SECRET: str = Field(default="")
     JWT_REFRESH_SECRET: str = Field(default="")
     JWT_ALGORITHM: str = Field(default="HS256")

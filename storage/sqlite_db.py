@@ -343,8 +343,19 @@ def _migrate_existing_db(connection):
 
     # Add columns to existing tables if missing.
     migrations = [
+        ("auth_users", "telegram_user_id", "BIGINT", "BIGINT"),
+        ("auth_users", "telegram_username", "VARCHAR(255)", "VARCHAR(255)"),
+        ("auth_users", "first_name", "VARCHAR(255)", "VARCHAR(255)"),
+        ("auth_users", "last_name", "VARCHAR(255)", "VARCHAR(255)"),
+        ("auth_users", "company", "VARCHAR(255)", "VARCHAR(255)"),
+        ("auth_users", "last_login_at", "DATETIME", "TIMESTAMP"),
+        ("workspaces", "runtime_user_id", "INTEGER", "INTEGER"),
         ("accounts", "user_id", "INTEGER DEFAULT 1", "INTEGER DEFAULT 1"),
+        ("accounts", "tenant_id", "INTEGER", "INTEGER"),
+        ("accounts", "workspace_id", "INTEGER", "INTEGER"),
         ("proxies", "user_id", "INTEGER DEFAULT 1", "INTEGER DEFAULT 1"),
+        ("proxies", "tenant_id", "INTEGER", "INTEGER"),
+        ("proxies", "workspace_id", "INTEGER", "INTEGER"),
         ("proxies", "health_status", "VARCHAR(20) DEFAULT 'unknown'", "VARCHAR(20) DEFAULT 'unknown'"),
         ("proxies", "consecutive_failures", "INTEGER DEFAULT 0", "INTEGER DEFAULT 0"),
         ("proxies", "last_error", "VARCHAR(255)", "VARCHAR(255)"),

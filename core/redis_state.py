@@ -114,14 +114,62 @@ class RedisState:
         """Release distributed lock."""
         await self._redis.delete(f"lock:{key}")
 
+    async def acquire_owner_lock(self, key: str, owner: str, ttl: int = 30) -> bool:
+        """Acquire a distributed lock owned by a specific instance."""
+        return await self._redis.set(f"lock:{key}", owner, nx=True, ex=ttl) is not None
+
+    async def get_lock_owner(self, key: str) -> str | None:
+        """Return current lock owner, if any."""
+        owner = await self._redis.get(f"lock:{key}")
+        return str(owner) if owner else None
+
+    async def renew_owner_lock(self, key: str, owner: str, ttl: int = 30) -> bool:
+        """Renew lock TTL only if the caller still owns the lock."""
+        result = await self._redis.eval(
+            """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('expire', KEYS[1], tonumber(ARGV[2]))
+            end
+            return 0
+            """,
+            1,
+            f"lock:{key}",
+            owner,
+            ttl,
+        )
+        return bool(result)
+
+    async def release_owner_lock(self, key: str, owner: str) -> bool:
+        """Release lock only if the caller still owns it."""
+        result = await self._redis.eval(
+            """
+            if redis.call('get', KEYS[1]) == ARGV[1] then
+                return redis.call('del', KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            f"lock:{key}",
+            owner,
+        )
+        return bool(result)
+
     # --- Worker Heartbeat ---
 
-    async def worker_heartbeat(self, worker_id: str, account_count: int):
+    async def worker_heartbeat(
+        self,
+        worker_id: str,
+        account_count: int,
+        metrics: Optional[dict] = None,
+    ):
         """Report worker is alive."""
-        await self._redis.hset("workers", worker_id, json.dumps({
+        payload = {
             "accounts": account_count,
             "last_seen": time.time(),
-        }))
+        }
+        if metrics:
+            payload["metrics"] = metrics
+        await self._redis.hset("workers", worker_id, json.dumps(payload))
         await self._redis.expire("workers", 600)
 
     async def get_active_workers(self) -> dict:
@@ -134,6 +182,82 @@ class RedisState:
             if now - info["last_seen"] < 600:  # 10 min timeout
                 result[worker_id] = info
         return result
+
+    async def count_claims(self) -> int:
+        """Count claimed accounts across all workers."""
+        count = 0
+        async for _key in self._redis.scan_iter(match="worker_claim:*"):
+            count += 1
+        return count
+
+    async def claims_by_worker(self) -> dict[str, int]:
+        """Count claimed accounts grouped by worker id."""
+        result: dict[str, int] = {}
+        async for key in self._redis.scan_iter(match="worker_claim:*"):
+            worker_id = await self._redis.get(key)
+            if not worker_id:
+                continue
+            result[worker_id] = result.get(worker_id, 0) + 1
+        return result
+
+    async def claims_map(self) -> dict[str, str]:
+        """Return {phone: worker_id} map for current claims."""
+        result: dict[str, str] = {}
+        async for key in self._redis.scan_iter(match="worker_claim:*"):
+            worker_id = await self._redis.get(key)
+            if not worker_id:
+                continue
+            phone = str(key).split("worker_claim:", 1)[-1]
+            result[phone] = worker_id
+        return result
+
+    async def clear_all_claims(self) -> int:
+        """Delete all worker_claim:* keys and return removed count."""
+        keys: list[str] = []
+        async for key in self._redis.scan_iter(match="worker_claim:*"):
+            keys.append(str(key))
+        if not keys:
+            return 0
+        removed = await self._redis.delete(*keys)
+        return int(removed or 0)
+
+    async def clear_worker_heartbeats(self) -> int:
+        """Delete worker heartbeat hash and return removed-key count."""
+        removed = await self._redis.delete("workers")
+        return int(removed or 0)
+
+    async def clear_hash(self, hash_name: str) -> int:
+        removed = await self._redis.delete(hash_name)
+        return int(removed or 0)
+
+    async def delete_pattern(self, pattern: str) -> int:
+        keys: list[str] = []
+        async for key in self._redis.scan_iter(match=pattern):
+            keys.append(str(key))
+        if not keys:
+            return 0
+        removed = await self._redis.delete(*keys)
+        return int(removed or 0)
+
+    # --- Runtime flags ---
+
+    async def set_runtime_flag(self, name: str, value: str):
+        await self._redis.set(f"runtime_flag:{name}", value)
+
+    async def get_runtime_flag(self, name: str, default: str = "") -> str:
+        value = await self._redis.get(f"runtime_flag:{name}")
+        return str(value) if value is not None else default
+
+    # --- Generic JSON hashes ---
+
+    async def set_json_hash_value(self, hash_name: str, key: str, payload: dict):
+        await self._redis.hset(hash_name, key, json.dumps(payload, ensure_ascii=False))
+
+    async def get_json_hash_value(self, hash_name: str, key: str) -> dict | None:
+        raw = await self._redis.hget(hash_name, key)
+        if not raw:
+            return None
+        return json.loads(raw)
 
 
 # Global instance
