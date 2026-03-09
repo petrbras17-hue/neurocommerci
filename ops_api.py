@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import traceback
 from typing import Any, AsyncIterator, Optional
 
 import jwt
@@ -541,6 +542,10 @@ async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request)
                     user_agent=request.headers.get("user-agent"),
                     ip_address=request.client.host if request.client else None,
                 )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
+        if bundle.refresh_token:
+            _set_refresh_cookie(response, request, bundle.refresh_token)
+        return response
     except Exception:
         log.exception(
             "telegram verify failed (id=%s username=%s auth_date=%s ip=%s ua=%s)",
@@ -550,11 +555,11 @@ async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request)
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
+        print(
+            "telegram verify failed:\n" + traceback.format_exc(),
+            flush=True,
+        )
         raise
-    response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
-    if bundle.refresh_token:
-        _set_refresh_cookie(response, request, bundle.refresh_token)
-    return response
 
 
 @app.post("/auth/complete-profile")
@@ -570,6 +575,10 @@ async def auth_complete_profile(payload: CompleteProfilePayload, request: Reques
                     user_agent=request.headers.get("user-agent"),
                     ip_address=request.client.host if request.client else None,
                 )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
+        if bundle.refresh_token:
+            _set_refresh_cookie(response, request, bundle.refresh_token)
+        return response
     except Exception:
         log.exception(
             "complete profile failed (email=%s company=%s ip=%s ua=%s)",
@@ -578,11 +587,11 @@ async def auth_complete_profile(payload: CompleteProfilePayload, request: Reques
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
+        print(
+            "complete profile failed:\n" + traceback.format_exc(),
+            flush=True,
+        )
         raise
-    response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
-    if bundle.refresh_token:
-        _set_refresh_cookie(response, request, bundle.refresh_token)
-    return response
 
 
 @app.post("/auth/refresh")
@@ -955,6 +964,7 @@ async def web_onboarding_exception_handler(_: Request, exc: WebOnboardingError) 
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     log.exception("unexpected ops_api exception: %s", exc)
+    print("unexpected ops_api exception:\n" + traceback.format_exc(), flush=True)
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "internal_error"})
 
 
