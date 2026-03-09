@@ -1,7 +1,7 @@
 services:
   ops_api:
     build: .
-    command: python ops_api.py
+    command: python -m uvicorn ops_api:app --host 0.0.0.0 --port 8081
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
