@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
@@ -41,6 +42,7 @@ from storage.models import Account, Lead, TeamMember, Tenant, Workspace
 from storage.sqlite_db import apply_session_rls_context, async_session, dispose_engine, init_db
 from utils.helpers import utcnow
 
+log = logging.getLogger("uvicorn.error")
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
@@ -530,14 +532,25 @@ async def telegram_widget_config(request: Request) -> dict[str, Any]:
 
 @app.post("/auth/telegram/verify")
 async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request) -> JSONResponse:
-    async with async_session() as session:
-        async with session.begin():
-            bundle = await verify_telegram_login(
-                session,
-                payload.model_dump(exclude_none=True),
-                user_agent=request.headers.get("user-agent"),
-                ip_address=request.client.host if request.client else None,
-            )
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                bundle = await verify_telegram_login(
+                    session,
+                    payload.model_dump(exclude_none=True),
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None,
+                )
+    except Exception:
+        log.exception(
+            "telegram verify failed (id=%s username=%s auth_date=%s ip=%s ua=%s)",
+            payload.id,
+            payload.username,
+            payload.auth_date,
+            request.client.host if request.client else None,
+            request.headers.get("user-agent"),
+        )
+        raise
     response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
     if bundle.refresh_token:
         _set_refresh_cookie(response, request, bundle.refresh_token)
@@ -546,16 +559,26 @@ async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request)
 
 @app.post("/auth/complete-profile")
 async def auth_complete_profile(payload: CompleteProfilePayload, request: Request) -> JSONResponse:
-    async with async_session() as session:
-        async with session.begin():
-            bundle = await complete_profile(
-                session,
-                payload.setup_token,
-                email=payload.email,
-                company=payload.company,
-                user_agent=request.headers.get("user-agent"),
-                ip_address=request.client.host if request.client else None,
-            )
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                bundle = await complete_profile(
+                    session,
+                    payload.setup_token,
+                    email=payload.email,
+                    company=payload.company,
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None,
+                )
+    except Exception:
+        log.exception(
+            "complete profile failed (email=%s company=%s ip=%s ua=%s)",
+            payload.email,
+            payload.company,
+            request.client.host if request.client else None,
+            request.headers.get("user-agent"),
+        )
+        raise
     response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
     if bundle.refresh_token:
         _set_refresh_cookie(response, request, bundle.refresh_token)
@@ -919,12 +942,20 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 
 @app.exception_handler(TelegramAuthError)
 async def telegram_auth_exception_handler(_: Request, exc: TelegramAuthError) -> JSONResponse:
+    log.warning("telegram auth rejected: %s", exc)
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
 
 @app.exception_handler(WebOnboardingError)
 async def web_onboarding_exception_handler(_: Request, exc: WebOnboardingError) -> JSONResponse:
+    log.warning("web onboarding rejected: %s", exc)
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def unexpected_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+    log.exception("unexpected ops_api exception: %s", exc)
+    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "internal_error"})
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
@@ -19,6 +20,7 @@ from utils.helpers import utcnow
 
 
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 3600
+log = logging.getLogger("uvicorn.error")
 
 
 class TelegramAuthError(RuntimeError):
@@ -41,6 +43,25 @@ def _slugify(raw: str, fallback: str) -> str:
     normalized = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(raw or ""))
     normalized = "-".join(part for part in normalized.split("-") if part)
     return normalized[:80] or fallback
+
+
+def _clean_optional_text(value: Any, max_length: int) -> str | None:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+async def _ensure_unique_tenant_slug(session: AsyncSession, preferred: str, fallback: str) -> str:
+    base_slug = _slugify(preferred, fallback=fallback)
+    candidate = base_slug
+    suffix = 2
+    while True:
+        existing = await session.execute(select(Tenant.id).where(Tenant.slug == candidate).limit(1))
+        if existing.scalar_one_or_none() is None:
+            return candidate
+        candidate = f"{base_slug[:110]}-{suffix}"
+        suffix += 1
 
 
 def _refresh_token_hash(token: str) -> str:
@@ -98,10 +119,10 @@ def verify_telegram_widget_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "telegram_user_id": telegram_user_id,
-        "telegram_username": str(payload.get("username") or "").strip() or None,
-        "first_name": str(payload.get("first_name") or "").strip() or None,
-        "last_name": str(payload.get("last_name") or "").strip() or None,
-        "photo_url": str(payload.get("photo_url") or "").strip() or None,
+        "telegram_username": _clean_optional_text(payload.get("username"), 255),
+        "first_name": _clean_optional_text(payload.get("first_name"), 255),
+        "last_name": _clean_optional_text(payload.get("last_name"), 255),
+        "photo_url": _clean_optional_text(payload.get("photo_url"), 1024),
         "auth_date": auth_date,
     }
 
@@ -183,18 +204,20 @@ def _ip_string(raw_ip: str | None) -> str | None:
 
 async def _ensure_runtime_user(session: AsyncSession, telegram_identity: dict[str, Any]) -> User:
     telegram_user_id = int(telegram_identity["telegram_user_id"])
+    username = _clean_optional_text(telegram_identity.get("telegram_username"), 100)
+    first_name = _clean_optional_text(telegram_identity.get("first_name"), 100)
     existing = await session.execute(select(User).where(User.telegram_id == telegram_user_id))
     runtime_user = existing.scalar_one_or_none()
     if runtime_user is not None:
-        runtime_user.username = telegram_identity.get("telegram_username") or runtime_user.username
-        runtime_user.first_name = telegram_identity.get("first_name") or runtime_user.first_name
+        runtime_user.username = username or runtime_user.username
+        runtime_user.first_name = first_name or runtime_user.first_name
         runtime_user.is_active = True
         return runtime_user
 
     runtime_user = User(
         telegram_id=telegram_user_id,
-        username=telegram_identity.get("telegram_username"),
-        first_name=telegram_identity.get("first_name"),
+        username=username,
+        first_name=first_name,
         is_active=True,
         is_admin=False,
     )
@@ -225,10 +248,19 @@ async def _bootstrap_membership(
         return tenant, workspace, membership
 
     runtime_user = await _ensure_runtime_user(session, telegram_identity)
-    fallback_name = telegram_identity.get("first_name") or telegram_identity.get("telegram_username") or f"Tenant {auth_user.id}"
+    fallback_name = (
+        _clean_optional_text(telegram_identity.get("first_name"), 255)
+        or _clean_optional_text(telegram_identity.get("telegram_username"), 255)
+        or f"Tenant {auth_user.id}"
+    )
+    tenant_slug = await _ensure_unique_tenant_slug(
+        session,
+        preferred=fallback_name,
+        fallback=f"tg-{telegram_identity['telegram_user_id']}",
+    )
     tenant = Tenant(
-        name=fallback_name,
-        slug=_slugify(fallback_name, fallback=f"tg-{telegram_identity['telegram_user_id']}"),
+        name=fallback_name[:255],
+        slug=tenant_slug,
         status="active",
     )
     session.add(tenant)
@@ -358,17 +390,23 @@ async def verify_telegram_login(
     if auth_user is None:
         auth_user = AuthUser(
             telegram_user_id=int(telegram_identity["telegram_user_id"]),
-            telegram_username=telegram_identity.get("telegram_username"),
-            first_name=telegram_identity.get("first_name"),
-            last_name=telegram_identity.get("last_name"),
+            telegram_username=_clean_optional_text(telegram_identity.get("telegram_username"), 255),
+            first_name=_clean_optional_text(telegram_identity.get("first_name"), 255),
+            last_name=_clean_optional_text(telegram_identity.get("last_name"), 255),
             last_login_at=utcnow(),
         )
         session.add(auth_user)
         await session.flush()
     else:
-        auth_user.telegram_username = telegram_identity.get("telegram_username") or auth_user.telegram_username
-        auth_user.first_name = telegram_identity.get("first_name") or auth_user.first_name
-        auth_user.last_name = telegram_identity.get("last_name") or auth_user.last_name
+        auth_user.telegram_username = _clean_optional_text(
+            telegram_identity.get("telegram_username"), 255
+        ) or auth_user.telegram_username
+        auth_user.first_name = _clean_optional_text(
+            telegram_identity.get("first_name"), 255
+        ) or auth_user.first_name
+        auth_user.last_name = _clean_optional_text(
+            telegram_identity.get("last_name"), 255
+        ) or auth_user.last_name
         auth_user.last_login_at = utcnow()
 
     tenant, workspace, membership = await _bootstrap_membership(
@@ -475,9 +513,9 @@ async def complete_profile(
     auth_user.company = str(company or "").strip()
     auth_user.last_login_at = utcnow()
     if not tenant.name or tenant.name.startswith("Tenant ") or tenant.name == (auth_user.first_name or ""):
-        tenant.name = auth_user.company
+        tenant.name = str(auth_user.company or "").strip()[:255] or tenant.name
     if workspace.name == "Основное пространство":
-        workspace.name = f"{auth_user.company} — workspace"
+        workspace.name = f"{str(auth_user.company or '').strip()[:220]} — workspace"
 
     access_token = make_access_token(
         user_id=auth_user.id,
