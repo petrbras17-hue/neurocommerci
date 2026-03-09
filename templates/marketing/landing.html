@@ -9,8 +9,8 @@
   <meta property="og:description" content="{{ page.description }}">
   <meta property="og:type" content="website">
   <meta property="og:image" content="{{ og_image }}">
-  <meta property="og:url" content="{{ request.url }}">
-  <link rel="stylesheet" href="{{ url_for('static', path='marketing.css') }}">
+  <meta property="og:url" content="{{ base_url }}{{ request.url.path }}">
+  <link rel="stylesheet" href="{{ static_css_url }}">
 </head>
 <body>
   <div class="site-backdrop"></div>

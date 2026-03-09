@@ -325,8 +325,9 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def _page_context(request: Request, page: dict[str, object]) -> dict[str, object]:
-    base_url = str(request.base_url).rstrip("/")
-    og_image = f"{base_url}{request.url_for('static', path='og-default.svg')}"
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").strip()
+    forwarded_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).strip()
+    base_url = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
     return {
         "request": request,
         "page": page,
@@ -336,7 +337,9 @@ def _page_context(request: Request, page: dict[str, object]) -> dict[str, object
         "pricing": PRICING,
         "faq": FAQ,
         "success_message": "Вы в списке — мы напишем вам в ближайшие 48 часов",
-        "og_image": og_image,
+        "base_url": base_url,
+        "og_image": f"{base_url}/static/og-default.svg",
+        "static_css_url": f"{base_url}/static/marketing.css",
     }
 
 
