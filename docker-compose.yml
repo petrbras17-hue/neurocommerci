@@ -1,18 +1,20 @@
-version: "3.9"
-
 services:
-  bot:
+  ops_api:
     build: .
-    command: python main.py
+    command: python ops_api.py
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
-      - WORKER_ID=bot
     volumes:
-      - sessions_data:/app/data/sessions
-      - backups_data:/app/data/session_backups
-      - avatars_data:/app/data/avatars
+      - ./data:/app/data
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
@@ -20,23 +22,126 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  bot:
+    build: .
+    command: python main.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - OPS_API_URL=http://ops_api:8081
+      - WORKER_ID=bot
+      - ENABLE_EMOJI_SWAP=${ENABLE_EMOJI_SWAP:-false}
+    volumes:
+      - ./data:/app/data
+      # Persist admin panel runtime settings updates to host .env file.
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "bot"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      ops_api:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   worker:
+    profiles: ["dynamic"]
     build: .
     command: python worker.py
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
+      # Set via .env (0 keeps disabled-claim mode, >0 enables distributed workers).
+      - MAX_ACCOUNTS_PER_WORKER=${MAX_ACCOUNTS_PER_WORKER:-0}
+      - MAX_CONNECTED_CLIENTS_PER_WORKER=${MAX_CONNECTED_CLIENTS_PER_WORKER:-50}
+      - WORKER_CONNECT_BATCH_SIZE=${WORKER_CONNECT_BATCH_SIZE:-5}
+      - WORKER_DEQUEUE_TIMEOUT_SEC=${WORKER_DEQUEUE_TIMEOUT_SEC:-5}
+      - STRICT_PROXY_PER_ACCOUNT=${STRICT_PROXY_PER_ACCOUNT:-true}
+      - PINNED_PHONE_REQUIRED=${PINNED_PHONE_REQUIRED:-true}
+      # WORKER_ID intentionally omitted to allow unique per-container id when scaling.
     volumes:
-      - sessions_data:/app/data/sessions
-      - avatars_data:/app/data/avatars
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    deploy:
-      replicas: 3
+    restart: unless-stopped
+
+  worker_a:
+    build: .
+    command: python worker.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - MAX_ACCOUNTS_PER_WORKER=1
+      - MAX_CONNECTED_CLIENTS_PER_WORKER=${MAX_CONNECTED_CLIENTS_PER_WORKER:-50}
+      - WORKER_CONNECT_BATCH_SIZE=${WORKER_CONNECT_BATCH_SIZE:-5}
+      - WORKER_DEQUEUE_TIMEOUT_SEC=${WORKER_DEQUEUE_TIMEOUT_SEC:-5}
+      - STRICT_PROXY_PER_ACCOUNT=${STRICT_PROXY_PER_ACCOUNT:-true}
+      - PINNED_PHONE_REQUIRED=${PINNED_PHONE_REQUIRED:-true}
+      - PROXY_LIST_FILE=${WORKER_A_PROXY_LIST_FILE:-data/proxies.txt}
+      - WORKER_ID=worker-A
+      - PINNED_PHONE=${WORKER_A_PINNED_PHONE:-}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker_b:
+    build: .
+    command: python worker.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - MAX_ACCOUNTS_PER_WORKER=1
+      - MAX_CONNECTED_CLIENTS_PER_WORKER=${MAX_CONNECTED_CLIENTS_PER_WORKER:-50}
+      - WORKER_CONNECT_BATCH_SIZE=${WORKER_CONNECT_BATCH_SIZE:-5}
+      - WORKER_DEQUEUE_TIMEOUT_SEC=${WORKER_DEQUEUE_TIMEOUT_SEC:-5}
+      - STRICT_PROXY_PER_ACCOUNT=${STRICT_PROXY_PER_ACCOUNT:-true}
+      - PINNED_PHONE_REQUIRED=${PINNED_PHONE_REQUIRED:-true}
+      - PROXY_LIST_FILE=${WORKER_B_PROXY_LIST_FILE:-data/proxies.txt}
+      - WORKER_ID=worker-B
+      - PINNED_PHONE=${WORKER_B_PINNED_PHONE:-}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "worker"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   packager:
@@ -48,8 +153,85 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - WORKER_ID=packager
     volumes:
-      - sessions_data:/app/data/sessions
-      - avatars_data:/app/data/avatars
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "packager"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  recovery:
+    build: .
+    command: python recovery_worker.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_ID=recovery
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "recovery"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  parser:
+    build: .
+    command: python parser_service.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_ID=parser
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "parser"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: python scheduler_service.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+      - WORKER_ID=scheduler
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "--role", "scheduler"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       db:
         condition: service_healthy
@@ -72,11 +254,15 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: neurocomment
-      POSTGRES_USER: nc
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-neuropass}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
+      APP_DB_NAME: neurocomment
+      APP_DB_USER: nc
+      APP_DB_PASSWORD: ${DB_PASSWORD:-neuropass}
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nc -d neurocomment"]
       interval: 5s
@@ -85,8 +271,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  sessions_data:
-  backups_data:
-  avatars_data:
   redis_data:
   pg_data:

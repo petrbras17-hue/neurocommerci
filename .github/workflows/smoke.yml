@@ -1,0 +1,97 @@
+name: Smoke
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run smoke checks
+        run: |
+          chmod +x scripts/ci_smoke.sh
+          ./scripts/ci_smoke.sh
+
+  tenant-foundation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://nc:neuropass@localhost:5432/neurocomment
+      REDIS_URL: redis://localhost:6379/0
+      OPS_API_TOKEN: test-internal-token
+      JWT_ACCESS_SECRET: test-access-secret
+      JWT_REFRESH_SECRET: test-refresh-secret
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TTL_MINUTES: "30"
+      JWT_REFRESH_TTL_DAYS: "30"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Prepare application role and database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nc') THEN
+              CREATE ROLE nc LOGIN PASSWORD 'neuropass' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+            ELSE
+              ALTER ROLE nc WITH LOGIN PASSWORD 'neuropass' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+            END IF;
+          END
+          $$;
+          DROP DATABASE IF EXISTS neurocomment;
+          CREATE DATABASE neurocomment OWNER nc;
+          SQL
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Run tenant foundation tests
+        run: pytest tests/test_tenant_foundation.py
