@@ -49,6 +49,11 @@ def _enable_rls(table: str) -> None:
 
 
 def upgrade() -> None:
+    bootstrap_guard = "current_setting('app.bootstrap', true) = '1'"
+    auth_user_scope = "id = current_setting('app.user_id', true)::integer"
+    tenant_scope = "id = current_setting('app.tenant_id', true)::integer"
+    tenant_fk_scope = "tenant_id = current_setting('app.tenant_id', true)::integer"
+
     op.create_table(
         "auth_users",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
@@ -102,26 +107,26 @@ def upgrade() -> None:
     _create_policy_if_missing(
         "auth_users_isolation",
         "auth_users",
-        "id = current_setting('app.user_id', true)::integer",
-        "id = current_setting('app.user_id', true)::integer",
+        f"({bootstrap_guard}) OR ({auth_user_scope})",
+        f"({bootstrap_guard}) OR ({auth_user_scope})",
     )
     _create_policy_if_missing(
         "tenants_isolation",
         "tenants",
-        "id = current_setting('app.tenant_id', true)::integer",
-        "id = current_setting('app.tenant_id', true)::integer",
+        f"({bootstrap_guard}) OR ({tenant_scope})",
+        f"({bootstrap_guard}) OR ({tenant_scope})",
     )
     _create_policy_if_missing(
         "workspaces_isolation",
         "workspaces",
-        "tenant_id = current_setting('app.tenant_id', true)::integer",
-        "tenant_id = current_setting('app.tenant_id', true)::integer",
+        f"({bootstrap_guard}) OR ({tenant_fk_scope})",
+        f"({bootstrap_guard}) OR ({tenant_fk_scope})",
     )
     _create_policy_if_missing(
         "team_members_isolation",
         "team_members",
-        "tenant_id = current_setting('app.tenant_id', true)::integer",
-        "tenant_id = current_setting('app.tenant_id', true)::integer",
+        f"({bootstrap_guard}) OR ({tenant_fk_scope})",
+        f"({bootstrap_guard}) OR ({tenant_fk_scope})",
     )
     _create_policy_if_missing(
         "usage_events_isolation",

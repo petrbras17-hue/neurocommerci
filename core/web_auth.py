@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from storage.models import Account, AuthUser, Proxy, RefreshToken, TeamMember, Tenant, User, Workspace
+from storage.sqlite_db import apply_session_rls_context
 from utils.helpers import utcnow
 
 
@@ -348,6 +349,7 @@ async def verify_telegram_login(
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> WebAuthBundle:
+    await apply_session_rls_context(session, bootstrap=True)
     telegram_identity = verify_telegram_widget_payload(payload)
     auth_result = await session.execute(
         select(AuthUser).where(AuthUser.telegram_user_id == int(telegram_identity["telegram_user_id"]))
@@ -439,6 +441,11 @@ async def complete_profile(
     ip_address: str | None = None,
 ) -> WebAuthBundle:
     payload = decode_setup_token(setup_token)
+    await apply_session_rls_context(
+        session,
+        tenant_id=int(payload["tenant_id"]),
+        user_id=int(payload["sub"]),
+    )
     auth_user = await session.get(AuthUser, int(payload["sub"]))
     if auth_user is None:
         raise TelegramAuthError("auth_user_not_found")
@@ -508,6 +515,11 @@ async def refresh_web_session(
     ip_address: str | None = None,
 ) -> WebAuthBundle:
     payload = decode_refresh_token(refresh_token)
+    await apply_session_rls_context(
+        session,
+        tenant_id=int(payload["tenant_id"]),
+        user_id=int(payload["sub"]),
+    )
     token_hash = _refresh_token_hash(refresh_token)
     token_row_result = await session.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)

@@ -75,16 +75,27 @@ def _run_postgres_migrations() -> None:
         raise
 
 
-async def apply_session_rls_context(session: AsyncSession, tenant_id: int, user_id: int | None = None) -> None:
+async def apply_session_rls_context(
+    session: AsyncSession,
+    tenant_id: int | None = None,
+    user_id: int | None = None,
+    *,
+    bootstrap: bool = False,
+) -> None:
     """Bind PostgreSQL RLS settings with SET LOCAL semantics inside an active transaction."""
     if not _is_postgres:
         return
     if not session.in_transaction():
         raise RuntimeError("tenant_rls_context_requires_active_transaction")
     await session.execute(
-        text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-        {"tenant_id": str(int(tenant_id))},
+        text("SELECT set_config('app.bootstrap', :bootstrap, true)"),
+        {"bootstrap": "1" if bootstrap else "0"},
     )
+    if tenant_id is not None:
+        await session.execute(
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(int(tenant_id))},
+        )
     if user_id is not None:
         await session.execute(
             text("SELECT set_config('app.user_id', :user_id, true)"),
