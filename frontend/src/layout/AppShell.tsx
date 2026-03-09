@@ -2,13 +2,16 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth";
 
 const NAV_ITEMS = [
-  { to: "/dashboard", label: "Dashboard" },
-  { to: "/accounts", label: "Accounts" },
-  { to: "/campaigns", label: "Campaigns" },
-  { to: "/parser", label: "Parser" },
-  { to: "/analytics", label: "Analytics" },
-  { to: "/billing", label: "Billing" },
-  { to: "/settings", label: "Settings" }
+  { to: "/dashboard", label: "Обзор" },
+  { to: "/accounts", label: "Аккаунты" },
+  { to: "/assistant", label: "ИИ-ассистент" },
+  { to: "/context", label: "Контекст бизнеса" },
+  { to: "/creative", label: "Черновики и креатив" },
+  { to: "/campaigns", label: "Кампании" },
+  { to: "/parser", label: "Парсер" },
+  { to: "/analytics", label: "Аналитика" },
+  { to: "/billing", label: "Биллинг" },
+  { to: "/settings", label: "Настройки" }
 ];
 
 export function AppShell() {
@@ -23,7 +26,7 @@ export function AppShell() {
           <div className="brand-mark">NC</div>
           <div>
             <strong>NEURO COMMENTING</strong>
-            <div className="muted">Telegram Growth OS</div>
+            <div className="muted">Telegram AI Growth OS</div>
           </div>
         </div>
         <nav className="nav-list">
@@ -41,7 +44,7 @@ export function AppShell() {
       <div className="shell-main">
         <header className="topbar">
           <div>
-            <div className="topbar-label">Workspace</div>
+            <div className="topbar-label">Пространство</div>
             <div className="topbar-title">{workspaceName}</div>
           </div>
           <div className="topbar-actions">

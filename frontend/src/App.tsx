@@ -5,6 +5,9 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProfileCompletionPage } from "./pages/ProfileCompletionPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AccountsPage } from "./pages/AccountsPage";
+import { AssistantPage } from "./pages/AssistantPage";
+import { ContextPage } from "./pages/ContextPage";
+import { CreativePage } from "./pages/CreativePage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 
 function ProtectedRoute() {
@@ -31,25 +34,28 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/accounts" element={<AccountsPage />} />
+          <Route path="/assistant" element={<AssistantPage />} />
+          <Route path="/context" element={<ContextPage />} />
+          <Route path="/creative" element={<CreativePage />} />
           <Route
             path="/campaigns"
-            element={<PlaceholderPage title="Campaigns" description="Campaign entities и approval flows придут в Sprint 5." />}
+            element={<PlaceholderPage title="Кампании" description="Сущности кампаний и approval flows придут в следующем спринте роста." />}
           />
           <Route
             path="/parser"
-            element={<PlaceholderPage title="Parser" description="Parser dashboard и saved searches будут развиты в Sprint 5." />}
+            element={<PlaceholderPage title="Парсер" description="Parser dashboard, discovery и сохранённые поиски будут усилены после assistant layer." />}
           />
           <Route
             path="/analytics"
-            element={<PlaceholderPage title="Analytics" description="Usage dashboards и activation metrics придут в Sprint 6." />}
+            element={<PlaceholderPage title="Аналитика" description="Usage dashboards и activation metrics будут расширены отдельным аналитическим спринтом." />}
           />
           <Route
             path="/billing"
-            element={<PlaceholderPage title="Billing" description="Stripe/YooKassa и планы запускаются в Sprint 4." />}
+            element={<PlaceholderPage title="Биллинг" description="Биллинг вынесен после assistant/value layer, когда продуктовая ценность уже доказана." />}
           />
           <Route
             path="/settings"
-            element={<PlaceholderPage title="Settings" description="Workspace settings и повторный onboarding будут расширены в следующих спринтах." />}
+            element={<PlaceholderPage title="Настройки" description="Workspace settings, роли и повторный onboarding будут расширены после stabilisation sprint." />}
           />
         </Route>
       </Route>

@@ -207,6 +207,7 @@ class Account(Base):
     last_health_check = Column(DateTime, nullable=True)
     session_backup_at = Column(DateTime, nullable=True)
     account_age_days = Column(Integer, default=0)  # Возраст аккаунта (из register_time)
+    manual_notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
 
@@ -315,6 +316,168 @@ class AccountDraftArtifact(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow)
+
+
+class BusinessBrief(Base):
+    """Базовый growth-brief клиента для AI assistant layer."""
+    __tablename__ = "business_briefs"
+    __table_args__ = (
+        Index("ix_business_briefs_tenant_id", "tenant_id"),
+        Index("ix_business_briefs_workspace_id", "workspace_id"),
+        UniqueConstraint("tenant_id", "workspace_id", name="uq_business_briefs_tenant_workspace"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    status = Column(String(20), default="draft")  # draft, confirmed, archived
+    product_name = Column(String(255), nullable=True)
+    offer_summary = Column(Text, nullable=True)
+    target_audience = Column(Text, nullable=True)
+    competitors = Column(JSONType, nullable=True)
+    tone_of_voice = Column(String(255), nullable=True)
+    pain_points = Column(JSONType, nullable=True)
+    telegram_goals = Column(JSONType, nullable=True)
+    website_url = Column(String(500), nullable=True)
+    channel_url = Column(String(500), nullable=True)
+    bot_url = Column(String(500), nullable=True)
+    summary_text = Column(Text, nullable=True)
+    completeness_score = Column(Float, default=0.0)
+    confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class BusinessAsset(Base):
+    """Ссылки и approved assets, связанные с business brief."""
+    __tablename__ = "business_assets"
+    __table_args__ = (
+        Index("ix_business_assets_tenant_id", "tenant_id"),
+        Index("ix_business_assets_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    brief_id = Column(Integer, ForeignKey("business_briefs.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    asset_type = Column(String(32), nullable=False)  # website, channel, bot, image_prompt, visual, doc
+    title = Column(String(255), nullable=False)
+    value = Column(Text, nullable=True)
+    meta = Column(JSONType, nullable=True)
+    status = Column(String(20), default="active")  # active, archived
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AssistantThread(Base):
+    """Диалоговый поток AI-ассистента внутри workspace."""
+    __tablename__ = "assistant_threads"
+    __table_args__ = (
+        Index("ix_assistant_threads_tenant_id", "tenant_id"),
+        Index("ix_assistant_threads_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    brief_id = Column(Integer, ForeignKey("business_briefs.id"), nullable=True)
+    thread_kind = Column(String(32), default="growth_brief")
+    status = Column(String(20), default="active")  # active, paused, archived
+    title = Column(String(255), nullable=True)
+    last_step = Column(String(64), default="start_brief")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AssistantMessage(Base):
+    """Сообщения в thread ассистента."""
+    __tablename__ = "assistant_messages"
+    __table_args__ = (
+        Index("ix_assistant_messages_thread_id", "thread_id"),
+        Index("ix_assistant_messages_tenant_id", "tenant_id"),
+        Index("ix_assistant_messages_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(Integer, ForeignKey("assistant_threads.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    role = Column(String(20), nullable=False)  # system, assistant, user
+    content = Column(Text, nullable=False)
+    meta = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AssistantRecommendation(Base):
+    """Структурированные рекомендации ассистента по следующему шагу."""
+    __tablename__ = "assistant_recommendations"
+    __table_args__ = (
+        Index("ix_assistant_recommendations_tenant_id", "tenant_id"),
+        Index("ix_assistant_recommendations_workspace_id", "workspace_id"),
+        Index("ix_assistant_recommendations_thread_id", "thread_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    thread_id = Column(Integer, ForeignKey("assistant_threads.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    recommendation_type = Column(String(32), nullable=False)  # next_step, draft, parser, positioning
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    payload = Column(JSONType, nullable=True)
+    status = Column(String(20), default="active")  # active, accepted, dismissed, archived
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class CreativeDraft(Base):
+    """Черновики креативов, которые ассистент генерирует из business context."""
+    __tablename__ = "creative_drafts"
+    __table_args__ = (
+        Index("ix_creative_drafts_tenant_id", "tenant_id"),
+        Index("ix_creative_drafts_workspace_id", "workspace_id"),
+        Index("ix_creative_drafts_brief_id", "brief_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    brief_id = Column(Integer, ForeignKey("business_briefs.id"), nullable=True)
+    draft_type = Column(String(32), nullable=False)  # post, comment, ad_copy, image_prompt
+    status = Column(String(20), default="draft")  # draft, approved, rejected, archived
+    title = Column(String(255), nullable=True)
+    input_prompt = Column(Text, nullable=True)
+    content_text = Column(Text, nullable=True)
+    meta = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class ManualAction(Base):
+    """Ручные действия оператора и клиента внутри web shell."""
+    __tablename__ = "manual_actions"
+    __table_args__ = (
+        Index("ix_manual_actions_tenant_id", "tenant_id"),
+        Index("ix_manual_actions_workspace_id", "workspace_id"),
+        Index("ix_manual_actions_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    action_type = Column(String(32), nullable=False)  # note, approval, manual_step
+    title = Column(String(255), nullable=False)
+    notes = Column(Text, nullable=True)
+    payload = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
 
 
 class ContentTemplate(Base):

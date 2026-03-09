@@ -47,6 +47,7 @@ STEP_TITLES = {
     "gate_review_requested": "Отправлено на подтверждение",
     "returned_to_warmup": "Возврат на прогрев",
     "final_ready": "Аккаунт готов",
+    "manual_note": "Ручная заметка обновлена",
 }
 
 
@@ -472,3 +473,36 @@ async def list_onboarding_runs(
         result = await session.execute(query.limit(max(1, int(limit))))
         runs = list(result.scalars().all())
     return [_run_payload(run) for run in runs]
+
+
+async def list_recent_onboarding_steps(
+    phone: str,
+    *,
+    user_id: int | None = None,
+    limit: int = 5,
+    session: AsyncSession | None = None,
+) -> list[dict[str, Any]]:
+    normalized_phone = _normalize_phone(phone)
+    if not normalized_phone:
+        raise ValueError("invalid_phone")
+
+    owns_session = session is None
+    if session is None:
+        session = async_session()
+    try:
+        if owns_session:
+            await session.__aenter__()
+        query = (
+            select(AccountOnboardingStep)
+            .where(AccountOnboardingStep.phone == normalized_phone)
+            .order_by(AccountOnboardingStep.created_at.desc(), AccountOnboardingStep.id.desc())
+            .limit(max(1, int(limit)))
+        )
+        if user_id is not None:
+            query = query.where(AccountOnboardingStep.user_id == user_id)
+        result = await session.execute(query)
+        rows = list(result.scalars().all())
+        return [_step_payload(row) for row in rows]
+    finally:
+        if owns_session:
+            await session.__aexit__(None, None, None)

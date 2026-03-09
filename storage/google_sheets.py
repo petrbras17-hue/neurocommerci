@@ -41,6 +41,21 @@ class GoogleSheetsStorage:
         "use_case",
         "utm_source",
     ]
+    BRIEFS_HEADERS = [
+        "created_at",
+        "tenant_id",
+        "workspace_id",
+        "product_name",
+        "company",
+        "offer_summary",
+        "target_audience",
+        "tone_of_voice",
+        "completeness_score",
+        "telegram_goals",
+        "website_url",
+        "channel_url",
+        "bot_url",
+    ]
 
     def __init__(self, credentials_file: str, spreadsheet_id: str):
         credentials_path = Path(credentials_file).expanduser()
@@ -92,6 +107,14 @@ class GoogleSheetsStorage:
         except Exception as exc:
             log.warning(f"Ошибка зеркалирования лида в Google Sheets: {exc}")
 
+    async def append_business_brief(self, brief: Any):
+        if not self._enabled:
+            return
+        try:
+            await asyncio.to_thread(self._append_business_brief_sync, brief)
+        except Exception as exc:
+            log.warning(f"Ошибка зеркалирования business brief в Google Sheets: {exc}")
+
     async def get_daily_stats(self) -> dict:
         if not self._enabled:
             return {}
@@ -119,6 +142,10 @@ class GoogleSheetsStorage:
     def _append_lead_sync(self, lead: Any):
         ws = self._ensure_worksheet("Лиды", self.LEADS_HEADERS)
         ws.append_row(self._lead_row(lead), value_input_option="RAW")
+
+    def _append_business_brief_sync(self, brief: Any):
+        ws = self._ensure_worksheet("Брифы", self.BRIEFS_HEADERS)
+        ws.append_row(self._business_brief_row(brief), value_input_option="RAW")
 
     def _get_daily_stats_sync(self) -> dict:
         ws = self._ensure_worksheet("Статистика", self.STATS_HEADERS)
@@ -243,6 +270,28 @@ class GoogleSheetsStorage:
             username,
             _read(lead, "use_case", "") or "",
             _read(lead, "utm_source", "") or "",
+        ]
+
+    @staticmethod
+    def _business_brief_row(brief: Any) -> list[Any]:
+        created_at = _read(brief, "created_at", utcnow())
+        goals = _read(brief, "telegram_goals", []) or []
+        if not isinstance(goals, list):
+            goals = [str(goals)]
+        return [
+            _format_dt(created_at),
+            _read(brief, "tenant_id", ""),
+            _read(brief, "workspace_id", ""),
+            _read(brief, "product_name", "") or "",
+            _read(brief, "company", "") or "",
+            _read(brief, "offer_summary", "") or "",
+            _read(brief, "target_audience", "") or "",
+            _read(brief, "tone_of_voice", "") or "",
+            _read(brief, "completeness_score", 0),
+            ", ".join(str(item) for item in goals if str(item).strip()),
+            _read(brief, "website_url", "") or "",
+            _read(brief, "channel_url", "") or "",
+            _read(brief, "bot_url", "") or "",
         ]
 
     @staticmethod

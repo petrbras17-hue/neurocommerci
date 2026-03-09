@@ -284,3 +284,121 @@ async def test_upload_requires_both_files_and_returns_clean_error(web_accounts_c
         files={"session_file": ("700.session", b"abc")},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_account_notes_and_timeline_are_saved_and_scoped(
+    web_accounts_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    access_a, tenant_a, workspace_a = await _create_authorized_session(web_accounts_client, 9401)
+    access_b, tenant_b, workspace_b = await _create_authorized_session(web_accounts_client, 9402)
+
+    files = {
+        "session_file": ("79990000001.session", b"sqlite-session-bytes"),
+        "metadata_file": (
+            "79990000001.json",
+            json.dumps(
+                {
+                    "phone": "+79990000001",
+                    "session_file": "79990000001.session",
+                    "app_id": 123456,
+                    "app_hash": "abcdef1234567890abcdef1234567890",
+                    "device": "iPhone 15 Pro",
+                    "sdk": "17.4",
+                    "app_version": "11.2",
+                }
+            ).encode("utf-8"),
+            "application/json",
+        ),
+    }
+    upload_response = await web_accounts_client.post(
+        "/v1/web/accounts/upload",
+        headers={"Authorization": f"Bearer {access_a}"},
+        files=files,
+    )
+    account_id = int(upload_response.json()["account_id"])
+
+    async with async_session() as session:
+        async with session.begin():
+            workspace_a_row = (
+                await session.execute(select(Workspace).where(Workspace.id == workspace_a))
+            ).scalar_one()
+            workspace_b_row = (
+                await session.execute(select(Workspace).where(Workspace.id == workspace_b))
+            ).scalar_one()
+            session.add(
+                Proxy(
+                    user_id=workspace_a_row.runtime_user_id,
+                    tenant_id=tenant_a,
+                    workspace_id=workspace_a,
+                    proxy_type="socks5",
+                    host="timeline-a.proxy",
+                    port=1080,
+                    is_active=True,
+                    health_status="alive",
+                )
+            )
+            session.add(
+                Proxy(
+                    user_id=workspace_b_row.runtime_user_id,
+                    tenant_id=tenant_b,
+                    workspace_id=workspace_b,
+                    proxy_type="socks5",
+                    host="timeline-b.proxy",
+                    port=1081,
+                    is_active=True,
+                    health_status="alive",
+                )
+            )
+
+    async def fake_auth_refresh_for_phone(*args, **kwargs):
+        return {
+            "count": 1,
+            "authorized": 1,
+            "results": [
+                {
+                    "phone": "+79990000001",
+                    "authorized": True,
+                    "probe_status": "authorized",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("core.web_accounts.run_auth_refresh_for_phone", fake_auth_refresh_for_phone)
+    await web_accounts_client.post(
+        f"/v1/web/accounts/{account_id}/audit",
+        headers={"Authorization": f"Bearer {access_a}"},
+    )
+
+    note_response = await web_accounts_client.post(
+        f"/v1/web/accounts/{account_id}/notes",
+        headers={"Authorization": f"Bearer {access_a}"},
+        json={"notes": "Оператор проверил safe-shell путь и пока не запускает реальные account actions."},
+    )
+    assert note_response.status_code == 200
+    assert note_response.json()["manual_notes"] == "Оператор проверил safe-shell путь и пока не запускает реальные account actions."
+
+    accounts_response = await web_accounts_client.get(
+        "/v1/web/accounts",
+        headers={"Authorization": f"Bearer {access_a}"},
+    )
+    account_row = accounts_response.json()["items"][0]
+    assert account_row["manual_notes"] == "Оператор проверил safe-shell путь и пока не запускает реальные account actions."
+    assert isinstance(account_row["recent_steps"], list)
+
+    timeline_response = await web_accounts_client.get(
+        f"/v1/web/accounts/{account_id}/timeline",
+        headers={"Authorization": f"Bearer {access_a}"},
+    )
+    assert timeline_response.status_code == 200
+    titles = [item["title"] for item in timeline_response.json()["items"]]
+    assert "Ручная заметка обновлена" in titles
+    assert "Заметка оператора" in titles
+
+    forbidden = await web_accounts_client.get(
+        f"/v1/web/accounts/{account_id}/timeline",
+        headers={"Authorization": f"Bearer {access_b}"},
+    )
+    assert forbidden.status_code == 400
+    assert forbidden.json()["detail"] == "account_not_found"

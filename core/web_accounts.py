@@ -10,10 +10,10 @@ from sqlalchemy.orm import selectinload
 
 from config import settings
 from core.account_audit import build_account_audit_records
-from core.onboarding_service import record_onboarding_step
+from core.onboarding_service import list_recent_onboarding_steps, record_onboarding_step
 from scripts.session_auth_audit import audit_sessions
 from core.proxy_manager import parse_proxy_line
-from storage.models import Account, Proxy, Workspace
+from storage.models import Account, ManualAction, Proxy, Workspace
 from utils.account_uploads import (
     get_account_upload_bundle,
     validate_and_normalize_account_metadata,
@@ -244,6 +244,7 @@ async def list_web_accounts(session: AsyncSession, *, tenant_id: int, workspace_
         sessions_dir=settings.sessions_path,
         strict_proxy=bool(settings.STRICT_PROXY_PER_ACCOUNT),
     )
+    recent_steps_map = await _recent_steps_map(session, accounts)
     items: list[dict[str, Any]] = []
     for row in audit_items:
         account = next((acc for acc in accounts if acc.id == row["id"]), None)
@@ -265,9 +266,28 @@ async def list_web_accounts(session: AsyncSession, *, tenant_id: int, workspace_
                 "recommended_next_action": row["recommended_next_action"],
                 "session": row["session"],
                 "api_credentials": row["api_credentials"],
+                "manual_notes": account.manual_notes if account is not None else None,
+                "recent_steps": recent_steps_map.get(int(row["id"]), []),
             }
         )
     return {"items": items, "total": len(items)}
+
+
+async def _recent_steps_map(
+    session: AsyncSession,
+    accounts: list[Account],
+    *,
+    limit_per_account: int = 3,
+) -> dict[int, list[dict[str, Any]]]:
+    result: dict[int, list[dict[str, Any]]] = {}
+    for account in accounts:
+        result[int(account.id)] = await list_recent_onboarding_steps(
+            account.phone,
+            user_id=account.user_id,
+            limit=limit_per_account,
+            session=session,
+        )
+    return result
 
 
 async def get_web_account_record(
@@ -456,6 +476,125 @@ async def audit_web_account(
         },
         "audit": record,
         "report": report,
+    }
+
+
+async def save_web_account_note(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    account_id: int,
+    auth_user_id: int | None,
+    notes: str,
+) -> dict[str, Any]:
+    account, record = await get_web_account_record(
+        session,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        account_id=account_id,
+    )
+    normalized_notes = str(notes or "").strip()
+    account.manual_notes = normalized_notes or None
+    session.add(
+        ManualAction(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=auth_user_id,
+            account_id=account.id,
+            action_type="note",
+            title="Заметка оператора",
+            notes=normalized_notes or None,
+            payload={"phone": account.phone},
+            created_at=utcnow(),
+        )
+    )
+    await record_onboarding_step(
+        account.phone,
+        user_id=account.user_id,
+        step_key="manual_note",
+        actor="web:account_note",
+        source="web",
+        channel="web",
+        result="saved",
+        notes="Обновлена ручная заметка оператора.",
+        payload={"has_notes": bool(normalized_notes)},
+        session=session,
+    )
+    return {
+        "ok": True,
+        "account_id": account.id,
+        "manual_notes": account.manual_notes,
+        "recommended_next_action": record["recommended_next_action"],
+    }
+
+
+async def get_web_account_timeline(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    account_id: int,
+    limit: int = 20,
+) -> dict[str, Any]:
+    account, record = await get_web_account_record(
+        session,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        account_id=account_id,
+    )
+    step_items = await list_recent_onboarding_steps(
+        account.phone,
+        user_id=account.user_id,
+        limit=max(1, int(limit)),
+        session=session,
+    )
+    manual_actions = (
+        await session.execute(
+            select(ManualAction)
+            .where(
+                ManualAction.tenant_id == tenant_id,
+                ManualAction.workspace_id == workspace_id,
+                ManualAction.account_id == account.id,
+            )
+            .order_by(ManualAction.created_at.desc(), ManualAction.id.desc())
+            .limit(max(1, int(limit)))
+        )
+    ).scalars().all()
+
+    timeline: list[dict[str, Any]] = []
+    for item in step_items:
+        timeline.append(
+            {
+                "kind": "onboarding_step",
+                "title": item["step_title"],
+                "notes": item["notes"],
+                "result": item["result"],
+                "created_at": item["created_at"],
+                "meta": {"step_key": item["step_key"], "source": item["source"]},
+            }
+        )
+    for action in manual_actions:
+        timeline.append(
+            {
+                "kind": "manual_action",
+                "title": action.title,
+                "notes": action.notes,
+                "result": action.action_type,
+                "created_at": action.created_at.isoformat() if action.created_at else None,
+                "meta": action.payload or {},
+            }
+        )
+    timeline.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return {
+        "account": {
+            "id": account.id,
+            "phone": account.phone,
+            "manual_notes": account.manual_notes,
+            "recommended_next_action": record["recommended_next_action"],
+        },
+        "items": timeline[: max(1, int(limit))],
+        "total": len(timeline),
     }
 
 

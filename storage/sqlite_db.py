@@ -391,6 +391,7 @@ def _migrate_existing_db(connection):
         ("accounts", "restriction_reason", "VARCHAR(64)", "VARCHAR(64)"),
         ("accounts", "last_probe_at", "DATETIME", "TIMESTAMP"),
         ("accounts", "capabilities_json", "TEXT", "TEXT"),
+        ("accounts", "manual_notes", "TEXT", "TEXT"),
         # Channel review / publish pipeline
         ("channels", "review_state", "VARCHAR(20) DEFAULT 'discovered'", "VARCHAR(20) DEFAULT 'discovered'"),
         ("channels", "publish_mode", "VARCHAR(20) DEFAULT 'research_only'", "VARCHAR(20) DEFAULT 'research_only'"),

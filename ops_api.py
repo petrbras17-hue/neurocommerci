@@ -19,13 +19,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from core.assistant_service import (
+    AssistantServiceError,
+    approve_creative_draft,
+    confirm_context,
+    generate_creative_draft,
+    get_assistant_thread,
+    get_context_payload,
+    list_creative_drafts,
+    post_assistant_message,
+    start_business_brief,
+)
 from core.web_accounts import (
     WebOnboardingError,
     audit_web_account,
     bind_proxy_for_account,
+    get_web_account_timeline,
     list_available_web_proxies,
     list_web_accounts,
     save_uploaded_account_pair,
+    save_web_account_note,
 )
 from core.web_auth import (
     TELEGRAM_AUTH_MAX_AGE_SECONDS,
@@ -140,6 +153,43 @@ class BindProxyPayload(BaseModel):
         if int(value) <= 0:
             raise ValueError("invalid_proxy_id")
         return int(value)
+
+
+class AccountNotePayload(BaseModel):
+    notes: str = Field(default="", max_length=4000)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def normalize_notes(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class AssistantMessagePayload(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def normalize_message(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+
+class CreativeGeneratePayload(BaseModel):
+    draft_type: str = Field(min_length=1, max_length=32)
+    variant_count: int = Field(default=3, ge=1, le=3)
+
+    @field_validator("draft_type")
+    @classmethod
+    def normalize_draft_type(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class CreativeApprovePayload(BaseModel):
+    draft_id: int = Field(gt=0)
+    selected_variant: Optional[int] = Field(default=None, ge=0, le=2)
 
 
 class WorkspaceSummaryPayload(BaseModel):
@@ -925,6 +975,147 @@ async def web_get_account_audit(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
 
 
+@app.post("/v1/web/accounts/{account_id}/notes")
+async def web_save_account_notes(
+    account_id: int,
+    payload: AccountNotePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await save_web_account_note(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        account_id=account_id,
+        auth_user_id=tenant_context.user_id,
+        notes=payload.notes,
+    )
+
+
+@app.get("/v1/web/accounts/{account_id}/timeline")
+async def web_get_account_timeline(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await get_web_account_timeline(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        account_id=account_id,
+    )
+
+
+@app.post("/v1/assistant/start-brief")
+async def assistant_start_brief(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await start_business_brief(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+    )
+
+
+@app.post("/v1/assistant/message")
+async def assistant_message(
+    payload: AssistantMessagePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await post_assistant_message(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+        message=payload.message,
+    )
+
+
+@app.get("/v1/assistant/thread")
+async def assistant_thread(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await get_assistant_thread(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+    )
+
+
+@app.get("/v1/context")
+async def context_payload(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await get_context_payload(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+    )
+
+
+@app.post("/v1/context/confirm")
+async def context_confirm(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await confirm_context(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+    )
+
+
+@app.get("/v1/creative/drafts")
+async def creative_drafts(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await list_creative_drafts(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+    )
+
+
+@app.post("/v1/creative/generate")
+async def creative_generate(
+    payload: CreativeGeneratePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await generate_creative_draft(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+        draft_type=payload.draft_type,
+        variant_count=payload.variant_count,
+    )
+
+
+@app.post("/v1/creative/approve")
+async def creative_approve(
+    payload: CreativeApprovePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    return await approve_creative_draft(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=tenant_context.user_id,
+        draft_id=payload.draft_id,
+        selected_variant=payload.selected_variant,
+    )
+
+
 @app.get("/app", response_class=HTMLResponse)
 async def app_shell_root() -> Response:
     if _frontend_ready():
@@ -958,6 +1149,12 @@ async def telegram_auth_exception_handler(_: Request, exc: TelegramAuthError) ->
 @app.exception_handler(WebOnboardingError)
 async def web_onboarding_exception_handler(_: Request, exc: WebOnboardingError) -> JSONResponse:
     log.warning("web onboarding rejected: %s", exc)
+    return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
+
+
+@app.exception_handler(AssistantServiceError)
+async def assistant_service_exception_handler(_: Request, exc: AssistantServiceError) -> JSONResponse:
+    log.warning("assistant service rejected: %s", exc)
     return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={"detail": str(exc)})
 
 
