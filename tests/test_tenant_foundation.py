@@ -233,6 +233,16 @@ async def test_rls_blocks_cross_tenant_select_and_insert() -> None:
     assert "row-level security" in str(exc_info.value).lower()
 
 
+async def test_bootstrap_rls_context_allows_auth_user_lookup_without_tenant_settings() -> None:
+    async with async_session() as session:
+        async with session.begin():
+            await apply_session_rls_context(session, bootstrap=True)
+            result = await session.execute(
+                select(AuthUser).where(AuthUser.telegram_user_id == 440602963)
+            )
+            assert result.scalar_one_or_none() is None
+
+
 async def test_log_usage_event_stores_correct_tenant_id() -> None:
     await _seed_tenant(
         tenant_id=TENANT_A,

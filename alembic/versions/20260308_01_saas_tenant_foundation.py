@@ -50,9 +50,9 @@ def _enable_rls(table: str) -> None:
 
 def upgrade() -> None:
     bootstrap_guard = "current_setting('app.bootstrap', true) = '1'"
-    auth_user_scope = "id = current_setting('app.user_id', true)::integer"
-    tenant_scope = "id = current_setting('app.tenant_id', true)::integer"
-    tenant_fk_scope = "tenant_id = current_setting('app.tenant_id', true)::integer"
+    auth_user_scope = "id = NULLIF(current_setting('app.user_id', true), '')::integer"
+    tenant_scope = "id = NULLIF(current_setting('app.tenant_id', true), '')::integer"
+    tenant_fk_scope = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::integer"
 
     op.create_table(
         "auth_users",
