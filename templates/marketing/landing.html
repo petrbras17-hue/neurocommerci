@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }}</title>
+  <meta name="description" content="{{ page.description }}">
+  <meta property="og:title" content="{{ page.title }}">
+  <meta property="og:description" content="{{ page.description }}">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:url" content="{{ request.url }}">
+  <link rel="stylesheet" href="{{ url_for('static', path='marketing.css') }}">
+</head>
+<body>
+  <div class="site-backdrop"></div>
+  <header class="page-shell">
+    <nav class="top-nav">
+      <a href="/" class="brand">
+        <span class="brand-mark">NC</span>
+        <span>NEURO COMMENTING</span>
+      </a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/ecom">Ecom</a>
+        <a href="/edtech">EdTech</a>
+        <a href="/saas">SaaS</a>
+      </div>
+      <a href="#lead-form" class="nav-cta">Записаться</a>
+    </nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Premium Telegram Growth OS</p>
+        <h1>{{ page.headline }}</h1>
+        <p class="subheadline">{{ page.subheadline }}</p>
+
+        <div class="trust-strip">
+          {% for item in trust_strip %}
+          <span>{{ item }}</span>
+          {% endfor %}
+        </div>
+
+        <ul class="hero-bullets">
+          {% for bullet in page.bullets %}
+          <li>{{ bullet }}</li>
+          {% endfor %}
+        </ul>
+
+        <div class="hero-actions">
+          <a href="#lead-form" class="primary-cta">Получить демо</a>
+          <a href="#pricing" class="secondary-cta">Посмотреть тарифы</a>
+        </div>
+      </div>
+
+      <aside class="hero-card">
+        <div class="metrics-grid">
+          {% for metric in proof_metrics %}
+          <article class="metric-card">
+            <span class="metric-value">{{ metric.value }}</span>
+            <span class="metric-label">{{ metric.label }}</span>
+          </article>
+          {% endfor %}
+        </div>
+
+        <div class="form-panel">
+          <p class="eyebrow">Waitlist</p>
+          <h2>Получить доступ и growth-разбор</h2>
+          <p class="panel-copy">Оставьте контакты. Мы ответим в течение 48 часов и покажем, как применить продукт под ваш сценарий роста.</p>
+          <form id="lead-form" class="lead-form">
+            <input type="text" name="name" placeholder="Имя" required>
+            <input type="email" name="email" placeholder="Email" required>
+            <input type="text" name="company" placeholder="Компания" required>
+            <input type="text" name="telegram_username" placeholder="Telegram username (опционально)">
+            <select name="use_case" required>
+              <option value="">Выберите use case</option>
+              <option value="ecom">Ecom</option>
+              <option value="edtech">EdTech</option>
+              <option value="saas">SaaS</option>
+              <option value="agency">Agency</option>
+              <option value="other">Другое</option>
+            </select>
+            <button type="submit">Отправить заявку</button>
+            <p id="form-message" class="form-message" aria-live="polite"></p>
+          </form>
+        </div>
+      </aside>
+    </section>
+
+    <section class="story-grid">
+      <div class="section-head">
+        <p class="eyebrow">Почему это работает</p>
+        <h2>{{ page.segment_title }}</h2>
+      </div>
+      <div class="story-points">
+        {% for point in page.segment_points %}
+        <article class="story-card">
+          <span class="story-index">0{{ loop.index }}</span>
+          <p>{{ point }}</p>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="section-grid">
+      <div class="section-head">
+        <p class="eyebrow">Что внутри</p>
+        <h2>Один премиальный контур для discovery, кампаний и роста</h2>
+      </div>
+      <div class="feature-grid">
+        {% for item in features %}
+        <article class="feature-card">
+          <h3>{{ item.title }}</h3>
+          <p>{{ item.body }}</p>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="section-grid" id="pricing">
+      <div class="section-head">
+        <p class="eyebrow">Тарифы</p>
+        <h2>Три уровня для запуска и масштабирования growth-команды</h2>
+      </div>
+      <div class="pricing-grid">
+        {% for plan in pricing %}
+        <article class="pricing-card{% if plan.featured %} featured{% endif %}">
+          {% if plan.featured %}
+          <span class="pricing-badge">Популярный выбор</span>
+          {% endif %}
+          <h3>{{ plan.name }}</h3>
+          <p class="price">{{ plan.price }}</p>
+          <p class="plan-note">{{ plan.note }}</p>
+          <ul class="plan-bullets">
+            {% for bullet in plan.bullets %}
+            <li>{{ bullet }}</li>
+            {% endfor %}
+          </ul>
+          <a href="#lead-form" class="plan-cta">Обсудить внедрение</a>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="section-grid faq-grid">
+      <div class="section-head">
+        <p class="eyebrow">FAQ</p>
+        <h2>Частые вопросы перед внедрением</h2>
+      </div>
+      <div class="faq-list">
+        {% for question, answer in faq %}
+        <details class="faq-item">
+          <summary>{{ question }}</summary>
+          <p>{{ answer }}</p>
+        </details>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="cta-banner">
+      <div>
+        <p class="eyebrow">Final CTA</p>
+        <h2>Соберите Telegram growth machine, а не набор разрозненных действий</h2>
+        <p>{{ success_message }}</p>
+      </div>
+      <a href="#lead-form" class="cta-link">Оставить заявку</a>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("lead-form");
+    const message = document.getElementById("form-message");
+    const params = new URLSearchParams(window.location.search);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      message.textContent = "Отправляем...";
+      const payload = Object.fromEntries(new FormData(form).entries());
+      payload.utm_source = params.get("utm_source") || "";
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        message.textContent = "Не удалось отправить форму. Проверьте поля и попробуйте ещё раз.";
+        return;
+      }
+      message.textContent = data.message || "{{ success_message }}";
+      form.reset();
+    });
+  </script>
+</body>
+</html>

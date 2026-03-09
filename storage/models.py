@@ -87,6 +87,25 @@ class UsageEvent(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class Lead(Base):
+    """Публичный маркетинговый лид до регистрации в SaaS."""
+    __tablename__ = "leads"
+    __table_args__ = (
+        Index("ix_leads_email", "email"),
+        Index("ix_leads_created_at", "created_at"),
+        Index("ix_leads_utm_source", "utm_source"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), nullable=False)
+    company = Column(String(255), nullable=False)
+    telegram_username = Column(String(255), nullable=True)
+    use_case = Column(String(64), nullable=False)
+    utm_source = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class User(Base):
     """Пользователь SaaS-платформы."""
     __tablename__ = "users"

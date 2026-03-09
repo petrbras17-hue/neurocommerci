@@ -32,6 +32,15 @@ class GoogleSheetsStorage:
     COMMENTS_HEADERS = ["timestamp", "account", "channel", "text_preview", "scenario", "status"]
     ACCOUNTS_HEADERS = ["phone", "proxy", "status", "today_count", "total"]
     STATS_HEADERS = ["date", "comments_sent", "successful", "failed"]
+    LEADS_HEADERS = [
+        "created_at",
+        "name",
+        "email",
+        "company",
+        "telegram_username",
+        "use_case",
+        "utm_source",
+    ]
 
     def __init__(self, credentials_file: str, spreadsheet_id: str):
         credentials_path = Path(credentials_file).expanduser()
@@ -75,6 +84,14 @@ class GoogleSheetsStorage:
         except Exception as exc:
             log.warning(f"Ошибка синка аккаунтов в Google Sheets: {exc}")
 
+    async def append_lead(self, lead: Any):
+        if not self._enabled:
+            return
+        try:
+            await asyncio.to_thread(self._append_lead_sync, lead)
+        except Exception as exc:
+            log.warning(f"Ошибка зеркалирования лида в Google Sheets: {exc}")
+
     async def get_daily_stats(self) -> dict:
         if not self._enabled:
             return {}
@@ -98,6 +115,10 @@ class GoogleSheetsStorage:
         ws = self._ensure_worksheet("Аккаунты", self.ACCOUNTS_HEADERS)
         rows = [self._account_row(account) for account in accounts]
         self._replace_worksheet_data(ws, self.ACCOUNTS_HEADERS, rows)
+
+    def _append_lead_sync(self, lead: Any):
+        ws = self._ensure_worksheet("Лиды", self.LEADS_HEADERS)
+        ws.append_row(self._lead_row(lead), value_input_option="RAW")
 
     def _get_daily_stats_sync(self) -> dict:
         ws = self._ensure_worksheet("Статистика", self.STATS_HEADERS)
@@ -205,6 +226,23 @@ class GoogleSheetsStorage:
             _read(account, "status", ""),
             _read(account, "comments_today", 0),
             _read(account, "total_comments", 0),
+        ]
+
+    @staticmethod
+    def _lead_row(lead: Any) -> list[Any]:
+        created_at = _read(lead, "created_at", utcnow())
+        username = _read(lead, "telegram_username", "") or ""
+        if isinstance(username, str) and username.startswith("@"):
+            username = username[1:]
+
+        return [
+            _format_dt(created_at),
+            _read(lead, "name", "") or "",
+            _read(lead, "email", "") or "",
+            _read(lead, "company", "") or "",
+            username,
+            _read(lead, "use_case", "") or "",
+            _read(lead, "utm_source", "") or "",
         ]
 
     @staticmethod

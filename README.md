@@ -26,6 +26,38 @@ Copy the selected file into `.env` before running services.
 
 Existing Telegram/Gemini/runtime vars from `.env.example` still apply for the legacy control plane.
 
+## Sprint 2 public marketing surface
+
+Sprint 2 adds public marketing routes inside the existing FastAPI app:
+
+- `/`
+- `/ecom`
+- `/edtech`
+- `/saas`
+- `POST /api/leads`
+- `GET /v1/internal/leads`
+- `/robots.txt`
+- `/sitemap.xml`
+
+Notes:
+- the landing pages are public and do not require JWT
+- the `leads` table is platform-level and not tenant-scoped
+- public routes must remain outside tenant/subscription enforcement
+- after `POST /api/leads`, the app tries three side effects:
+  - save lead in PostgreSQL
+  - mirror lead into Google Sheets
+  - send Telegram notifications to the admin bot and digest chat
+- DB save is the source of truth; Sheets/Telegram failures must not break the form
+
+Optional env/config for Sprint 2 lead delivery:
+
+- `ADMIN_BOT_TOKEN`
+- `ADMIN_TELEGRAM_ID`
+- `DIGEST_BOT_TOKEN`
+- `DIGEST_CHAT_ID`
+- `GOOGLE_SHEETS_CREDENTIALS_FILE`
+- `CHANNELS_SPREADSHEET_ID` (used as the default spreadsheet for lead mirroring)
+
 ## Database safety requirements
 
 - The application DB user must not be a PostgreSQL superuser.
@@ -53,6 +85,8 @@ If your local `pg_data` volume was created before the Sprint 1 RLS change, recre
 ## Tests
 
 - Unit/integration tests: `pytest tests/test_tenant_foundation.py`
+- Marketing pages + lead capture: `pytest tests/test_marketing_site.py`
+- Lead funnel side effects: `pytest tests/test_lead_funnel.py`
 - Existing smoke checks: `bash scripts/ci_smoke.sh`
 
 ## Auth modes

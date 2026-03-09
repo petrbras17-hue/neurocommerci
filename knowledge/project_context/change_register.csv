@@ -1,0 +1,5 @@
+date,sprint,branch,commit,area,summary,local_status,vps_status,next_step
+2026-03-08,Sprint 1,sprint/1-tenant-foundation,f335b1d,Tenant foundation,"Initial FastAPI + Alembic + RLS implementation landed.",green,pending,"Fix transaction-scoped tenant lookup and validate on VPS."
+2026-03-08,Sprint 1,sprint/1-tenant-foundation,ecfa4fb,RLS correctness,"Tenant lookup moved inside active transaction before RLS reads.",green,pending,"Deploy Sprint 1 to VPS."
+2026-03-09,Sprint 1,sprint/1-tenant-foundation,2c3c516,VPS baseline,"Added healthcheck script, converted VPS to git checkout, fixed Postgres role, applied Alembic, verified tests on VPS.",green,green,"Start Sprint 2: public landing + lead capture."
+2026-03-09,Sprint 2,sprint/1-tenant-foundation,working-tree,Premium lead funnel,"Upgraded the marketing site to a premium SaaS landing, added Google Sheets + Telegram lead delivery, and added an internal lead summary endpoint.",green,pending,"Commit Sprint 2 v2 and roll it out to VPS."
