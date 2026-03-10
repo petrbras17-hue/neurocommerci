@@ -122,6 +122,87 @@ Frontend production build:
 
 The built assets are emitted to `frontend/dist` and served by FastAPI/nginx through `/app`.
 
+## Sprint 4 AI assistant layer
+
+Sprint 4 adds the first operator-safe AI assistant layer on top of the web shell.
+
+Public/protected surfaces:
+
+- `/app/assistant`
+- `/app/context`
+- `/app/creative`
+
+Assistant/context/creative endpoints:
+
+- `POST /v1/assistant/start-brief`
+- `POST /v1/assistant/message`
+- `GET /v1/assistant/thread`
+- `GET /v1/context`
+- `POST /v1/context/confirm`
+- `GET /v1/creative/drafts`
+- `POST /v1/creative/generate`
+- `POST /v1/creative/approve`
+- `POST /v1/web/accounts/{id}/notes`
+- `GET /v1/web/accounts/{id}/timeline`
+
+Sprint 4 defaults:
+
+- Russian-only operator UX
+- Postgres is the source of truth for assistant/context/creative data
+- Google Sheets and Telegram digest are integration sinks only
+- no Telegram-side account execution is triggered by the assistant layer
+- all live acceptance data should be marked with `TEST` / `AUDIT`
+
+## AI orchestrator foundation
+
+The AI stack now supports a hybrid routing model:
+
+- `gemini_direct` for fast/default paths
+- `openrouter` for boss/manager/fallback paths
+
+Task routing is centralized in `core/ai_router.py`.
+Feature code should not call provider SDKs directly for assistant/context/creative flows.
+
+Configured model tiers:
+
+- `boss`
+- `manager`
+- `worker`
+
+Budget controls:
+
+- `AI_DAILY_BUDGET_USD`
+- `AI_MONTHLY_BUDGET_USD`
+- `AI_BOSS_DAILY_BUDGET_USD`
+- `AI_HARD_STOP_ENABLED`
+
+Provider/routing env:
+
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_BASE_URL`
+- `OPENROUTER_DEFAULT_REFERER`
+- `OPENROUTER_DEFAULT_TITLE`
+- `AI_DEFAULT_MODE`
+- `AI_ALLOWED_PROVIDER_ORDER`
+- `AI_BOSS_MODELS`
+- `AI_MANAGER_MODELS`
+- `AI_WORKER_MODELS`
+
+Current routing defaults:
+
+- `brief_extraction` -> worker
+- `assistant_reply` -> manager
+- `creative_variants` -> manager
+- `parser_query_suggestions` -> worker
+- `campaign_strategy_summary` -> boss, approval required
+- `weekly_marketing_report` -> manager
+
+Current outcomes:
+
+- `executed_as_requested`
+- `downgraded_by_budget_policy`
+- `blocked_by_budget_policy`
+
 ## Database safety requirements
 
 - The application DB user must not be a PostgreSQL superuser.
@@ -152,6 +233,8 @@ If your local `pg_data` volume was created before the Sprint 1 RLS change, recre
 - Marketing pages + lead capture: `pytest tests/test_marketing_site.py`
 - Lead funnel side effects: `pytest tests/test_lead_funnel.py`
 - Sprint 3 auth + onboarding APIs: `pytest tests/test_web_auth.py tests/test_web_accounts.py`
+- Sprint 4 assistant + creative flows: `pytest tests/test_web_assistant.py`
+- AI router + budget controls: `pytest tests/test_ai_router.py`
 - Existing smoke checks: `bash scripts/ci_smoke.sh`
 
 ## Auth modes

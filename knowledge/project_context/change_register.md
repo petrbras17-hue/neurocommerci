@@ -12,8 +12,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | VPS deploy mode | `git checkout` |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 1` |
-| Next planned sprint | `Sprint 2` |
+| Current completed sprint | `Sprint 4 foundation` |
+| Next planned sprint | `AI orchestrator live rollout` |
 
 ## Delivery Ledger
 
@@ -27,6 +27,7 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-10 | Sprint 3 + 4 prep | `working-tree` | `working-tree` | Operator shell + AI assistant layer | Finished operator-first dashboard/accounts UX, added account notes/timeline, and introduced Gemini-first assistant/context/creative backend + React surfaces. | Green | Not deployed | Commit this safe-shell + assistant layer and deploy after branch review. |
 | 2026-03-10 | Sprint 3/4 audit | `working-tree` | `working-tree` | Assistant digest integration | Added digest delivery on context confirmation and included company in brief mirror payload to enable isolated live integration audit. | Green | Pending deploy | Deploy this assistant integration patch and run live Gemini + Sheets + digest verification. |
 | 2026-03-10 | Sprint 3/4 audit | `working-tree` | `working-tree` | Creative page variant rendering fix | Fixed `/app/creative` to render structured draft variants without React runtime crashes on populated assistant tenants. | Green | Pending deploy | Redeploy frontend bundle and re-run public populated UI smoke. |
+| 2026-03-10 | Sprint 4 foundation | `working-tree` | `working-tree` | AI orchestrator | Added a hybrid Gemini + OpenRouter router with boss/manager/worker tiers, budget guardrails, telemetry tables, and assistant/creative integration via a single policy-aware router. | Green | Not deployed | Set `OPENROUTER_API_KEY`, deploy migration + backend, then run live routed AI audit on VPS. |
 
 ## Update Rules
 

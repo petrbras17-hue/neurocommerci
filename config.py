@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = Field(default="")
     GEMINI_MODEL: str = Field(default="gemini-3-pro-preview")
     GEMINI_FLASH_MODEL: str = Field(default="gemini-3-flash-preview")
+    OPENROUTER_API_KEY: str = Field(default="")
+    OPENROUTER_BASE_URL: str = Field(default="https://openrouter.ai/api/v1")
+    OPENROUTER_DEFAULT_REFERER: str = Field(default="")
+    OPENROUTER_DEFAULT_TITLE: str = Field(default="NEURO COMMENTING")
+    AI_DEFAULT_MODE: str = Field(default="hybrid")  # gemini_only | openrouter_only | hybrid
+    AI_ALLOWED_PROVIDER_ORDER: str = Field(default="gemini_direct,openrouter")
+    AI_BOSS_MODELS: str = Field(default="")
+    AI_MANAGER_MODELS: str = Field(default="")
+    AI_WORKER_MODELS: str = Field(default="")
+    AI_DAILY_BUDGET_USD: float = Field(default=25.0)
+    AI_MONTHLY_BUDGET_USD: float = Field(default=500.0)
+    AI_BOSS_DAILY_BUDGET_USD: float = Field(default=5.0)
+    AI_HARD_STOP_ENABLED: bool = Field(default=True)
 
     # --- Legacy compatibility: old Claude env vars (no longer used in critical runtime) ---
     ANTHROPIC_API_KEY: str = Field(default="")

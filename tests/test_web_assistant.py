@@ -12,6 +12,13 @@ import ops_api
 from config import settings
 from ops_api import app
 from storage.models import (
+    AIAgentRun,
+    AIBudgetCounter,
+    AIBudgetLimit,
+    AIEscalation,
+    AIRequest,
+    AIRequestAttempt,
+    AITaskPolicy,
     AssistantMessage,
     AssistantRecommendation,
     AssistantThread,
@@ -48,6 +55,13 @@ async def _reset_assistant_state() -> None:
     async with async_session() as session:
         async with session.begin():
             for model in [
+                AIAgentRun,
+                AIBudgetCounter,
+                AIBudgetLimit,
+                AIEscalation,
+                AIRequestAttempt,
+                AIRequest,
+                AITaskPolicy,
                 AssistantRecommendation,
                 AssistantMessage,
                 AssistantThread,

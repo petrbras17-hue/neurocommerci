@@ -480,6 +480,205 @@ class ManualAction(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class AIModelProfile(Base):
+    """Каталог доступных AI-моделей и их стоимости."""
+    __tablename__ = "ai_model_profiles"
+    __table_args__ = (
+        Index("ix_ai_model_profiles_provider", "provider"),
+        Index("ix_ai_model_profiles_tier", "model_tier"),
+        UniqueConstraint("provider", "model_name", name="uq_ai_model_profiles_provider_model"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    provider = Column(String(32), nullable=False)  # gemini_direct, openrouter
+    model_name = Column(String(255), nullable=False)
+    model_tier = Column(String(20), nullable=False)  # boss, manager, worker
+    is_active = Column(Boolean, default=True)
+    input_cost_per_1m = Column(Float, default=0.0)
+    output_cost_per_1m = Column(Float, default=0.0)
+    max_context_tokens = Column(Integer, nullable=True)
+    capabilities = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AITaskPolicy(Base):
+    """Правила маршрутизации AI-задач per-tenant или глобально."""
+    __tablename__ = "ai_task_policies"
+    __table_args__ = (
+        Index("ix_ai_task_policies_tenant_id", "tenant_id"),
+        Index("ix_ai_task_policies_task_type", "task_type"),
+        UniqueConstraint("tenant_id", "task_type", name="uq_ai_task_policies_tenant_task"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)
+    task_type = Column(String(64), nullable=False)
+    requested_model_tier = Column(String(20), nullable=False)
+    allow_downgrade = Column(Boolean, default=True)
+    approval_required = Column(Boolean, default=False)
+    output_contract_type = Column(String(32), default="json_object")
+    latency_target_ms = Column(Integer, nullable=True)
+    max_budget_usd = Column(Float, nullable=True)
+    policy = Column(JSONType, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AIRequest(Base):
+    """Аудит каждого AI-запроса через единый router."""
+    __tablename__ = "ai_requests"
+    __table_args__ = (
+        Index("ix_ai_requests_tenant_id", "tenant_id"),
+        Index("ix_ai_requests_workspace_id", "workspace_id"),
+        Index("ix_ai_requests_task_type", "task_type"),
+        Index("ix_ai_requests_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    surface = Column(String(64), nullable=False)
+    task_type = Column(String(64), nullable=False)
+    agent_name = Column(String(64), nullable=False)
+    requested_model_tier = Column(String(20), nullable=False)
+    executed_model_tier = Column(String(20), nullable=True)
+    requested_provider = Column(String(32), nullable=True)
+    executed_provider = Column(String(32), nullable=True)
+    executed_model = Column(String(255), nullable=True)
+    status = Column(String(32), default="pending")  # pending, succeeded, failed, blocked
+    outcome = Column(String(32), default="executed_as_requested")
+    output_contract_type = Column(String(32), default="json_object")
+    latency_ms = Column(Integer, nullable=True)
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)
+    fallback_used = Column(Boolean, default=False)
+    reason_code = Column(String(64), nullable=True)
+    quality_flags = Column(JSONType, nullable=True)
+    meta = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class AIRequestAttempt(Base):
+    """Отдельные попытки provider/model внутри одного AIRequest."""
+    __tablename__ = "ai_request_attempts"
+    __table_args__ = (
+        Index("ix_ai_request_attempts_ai_request_id", "ai_request_id"),
+        Index("ix_ai_request_attempts_tenant_id", "tenant_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ai_request_id = Column(Integer, ForeignKey("ai_requests.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    attempt_number = Column(Integer, nullable=False)
+    provider = Column(String(32), nullable=False)
+    model_name = Column(String(255), nullable=False)
+    status = Column(String(32), nullable=False)  # succeeded, failed
+    latency_ms = Column(Integer, nullable=True)
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)
+    fallback_used = Column(Boolean, default=False)
+    reason_code = Column(String(64), nullable=True)
+    response_meta = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AIBudgetLimit(Base):
+    """Лимиты расходов AI per tenant."""
+    __tablename__ = "ai_budget_limits"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", name="uq_ai_budget_limits_tenant_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    daily_budget_usd = Column(Float, nullable=True)
+    monthly_budget_usd = Column(Float, nullable=True)
+    boss_daily_budget_usd = Column(Float, nullable=True)
+    hard_stop_enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AIBudgetCounter(Base):
+    """Агрегированные счётчики usage/cost по периодам."""
+    __tablename__ = "ai_budget_counters"
+    __table_args__ = (
+        Index("ix_ai_budget_counters_tenant_id", "tenant_id"),
+        Index("ix_ai_budget_counters_period_start", "period_start"),
+        UniqueConstraint(
+            "tenant_id",
+            "period_type",
+            "period_start",
+            "model_tier",
+            "provider",
+            name="uq_ai_budget_counters_scope",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    period_type = Column(String(16), nullable=False)  # daily, monthly
+    period_start = Column(DateTime, nullable=False)
+    model_tier = Column(String(20), nullable=False)
+    provider = Column(String(32), nullable=False)
+    request_count = Column(Integer, default=0)
+    prompt_tokens = Column(Integer, default=0)
+    completion_tokens = Column(Integer, default=0)
+    estimated_cost_usd = Column(Float, default=0.0)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AIEscalation(Base):
+    """Эскалации в boss-tier и бюджетные downgrade/stop решения."""
+    __tablename__ = "ai_escalations"
+    __table_args__ = (
+        Index("ix_ai_escalations_tenant_id", "tenant_id"),
+        Index("ix_ai_escalations_ai_request_id", "ai_request_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    ai_request_id = Column(Integer, ForeignKey("ai_requests.id"), nullable=True)
+    task_type = Column(String(64), nullable=False)
+    from_tier = Column(String(20), nullable=True)
+    to_tier = Column(String(20), nullable=True)
+    trigger_type = Column(String(32), nullable=False)  # manual, policy, contradiction
+    reason_code = Column(String(64), nullable=True)
+    approved_by_user = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AIAgentRun(Base):
+    """Логический запуск одного агентного workstream."""
+    __tablename__ = "ai_agent_runs"
+    __table_args__ = (
+        Index("ix_ai_agent_runs_tenant_id", "tenant_id"),
+        Index("ix_ai_agent_runs_ai_request_id", "ai_request_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    ai_request_id = Column(Integer, ForeignKey("ai_requests.id"), nullable=True)
+    agent_name = Column(String(64), nullable=False)
+    task_type = Column(String(64), nullable=False)
+    requested_model_tier = Column(String(20), nullable=False)
+    executed_model_tier = Column(String(20), nullable=True)
+    status = Column(String(32), default="pending")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
 class ContentTemplate(Base):
     """DB-first контент-шаблоны (посты/комменты)."""
     __tablename__ = "content_templates"

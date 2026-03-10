@@ -8,14 +8,12 @@ from functools import lru_cache
 from html import escape
 from typing import Any, Optional
 
-from google import genai
-from google.genai import types
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from core.ai_router import route_ai_task
 from core.digest_service import send_digest_text
-from core.gemini_models import get_text_model_candidates
 from storage.google_sheets import GoogleSheetsStorage
 from storage.models import (
     AssistantMessage,
@@ -301,65 +299,6 @@ def _extract_labeled_updates(message: str) -> dict[str, Any]:
     return updates
 
 
-class _GeminiAssistant:
-    def __init__(self) -> None:
-        self._client: Optional[genai.Client] = None
-        self._initialized = False
-
-    def _init(self) -> None:
-        if self._initialized:
-            return
-        if settings.GEMINI_API_KEY:
-            try:
-                self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            except Exception as exc:
-                log.warning(f"Gemini assistant init failed: {exc}")
-        self._initialized = True
-
-    @property
-    def is_available(self) -> bool:
-        self._init()
-        return self._client is not None
-
-    async def json(self, prompt: str, *, max_output_tokens: int = 700) -> dict[str, Any] | None:
-        self._init()
-        if not self._client:
-            return None
-        system_instruction = (
-            "Ты внутренний AI-маркетинг-ассистент для SaaS. "
-            "Возвращай только валидный JSON без markdown и пояснений."
-        )
-        for model in get_text_model_candidates(settings.GEMINI_MODEL, settings.GEMINI_FLASH_MODEL):
-            try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._client.models.generate_content,
-                        model=model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_instruction,
-                            temperature=0.4,
-                            max_output_tokens=max_output_tokens,
-                        ),
-                    ),
-                    timeout=30.0,
-                )
-                text = (getattr(response, "text", "") or "").strip()
-                if not text:
-                    continue
-                cleaned = re.sub(r"```json\s*", "", text, flags=re.IGNORECASE)
-                cleaned = re.sub(r"```\s*$", "", cleaned).strip()
-                parsed = json.loads(cleaned)
-                if isinstance(parsed, dict):
-                    return parsed
-            except Exception as exc:
-                log.warning(f"Gemini assistant request failed ({model}): {exc}")
-        return None
-
-
-_assistant = _GeminiAssistant()
-
-
 @lru_cache(maxsize=1)
 def _assistant_sheets_storage() -> GoogleSheetsStorage:
     spreadsheet_id = str(settings.CHANNELS_SPREADSHEET_ID or settings.STATS_SPREADSHEET_ID or "").strip()
@@ -528,7 +467,43 @@ def _apply_brief_updates(brief: BusinessBrief, updates: dict[str, Any]) -> bool:
     return changed
 
 
-async def _gemini_extract_updates(message: str, brief: BusinessBrief) -> dict[str, Any]:
+async def _routed_json_task(
+    session: AsyncSession,
+    *,
+    task_type: str,
+    tenant_id: int,
+    workspace_id: int,
+    user_id: int | None,
+    prompt: str,
+    max_output_tokens: int,
+    surface: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    result = await route_ai_task(
+        session,
+        task_type=task_type,
+        prompt=prompt,
+        system_instruction=(
+            "Ты внутренний AI-маркетинг-ассистент для SaaS. "
+            "Возвращай только валидный JSON без markdown и пояснений."
+        ),
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        max_output_tokens=max_output_tokens,
+        surface=surface,
+    )
+    return result.parsed, result.as_meta()
+
+
+async def _gemini_extract_updates(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    user_id: int | None,
+    message: str,
+    brief: BusinessBrief,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     prompt = (
         "Извлеки только структурированные поля growth-brief из сообщения пользователя.\n"
         "Верни JSON с любыми из ключей: product_name, offer_summary, target_audience, "
@@ -537,24 +512,50 @@ async def _gemini_extract_updates(message: str, brief: BusinessBrief) -> dict[st
         f"Текущий бриф:\n{_brief_summary_text(brief)}\n\n"
         f"Сообщение пользователя:\n{message}"
     )
-    parsed = await _assistant.json(prompt, max_output_tokens=500)
-    return parsed or {}
+    parsed, trace = await _routed_json_task(
+        session,
+        task_type="brief_extraction",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        prompt=prompt,
+        max_output_tokens=500,
+        surface="assistant",
+    )
+    return parsed or {}, trace
 
 
-async def _assistant_reply(message: str, brief: BusinessBrief) -> str:
+async def _assistant_reply(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    user_id: int | None,
+    message: str,
+    brief: BusinessBrief,
+) -> tuple[str, dict[str, Any]]:
     prompt = (
         "Ты AI-маркетинг-ассистент для Telegram Growth OS. Ответь по-русски кратко: "
         "1) что уже понял из сообщения, 2) что нужно уточнить дальше, 3) какой следующий шаг лучше.\n\n"
         f"Текущий бриф:\n{_brief_summary_text(brief)}\n\n"
         f"Сообщение клиента:\n{message}"
     )
-    parsed = await _assistant.json(prompt, max_output_tokens=500)
+    parsed, trace = await _routed_json_task(
+        session,
+        task_type="assistant_reply",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        prompt=prompt,
+        max_output_tokens=500,
+        surface="assistant",
+    )
     if parsed and isinstance(parsed.get("reply"), str):
-        return _norm_text(parsed["reply"], 2000)
+        return _norm_text(parsed["reply"], 2000), trace
     return (
         "Я обновил контекст там, где это удалось определить из вашего сообщения. "
         + _next_question_text(brief)
-    )
+    ), {**trace, "fallback_used": True, "reason_code": trace.get("reason_code") or "assistant_reply_fallback"}
 
 
 async def start_business_brief(
@@ -639,12 +640,26 @@ async def post_assistant_message(
     )
 
     updates = _extract_labeled_updates(content)
-    gemini_updates = await _gemini_extract_updates(content, brief)
+    gemini_updates, extraction_trace = await _gemini_extract_updates(
+        session,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        message=content,
+        brief=brief,
+    )
     for key, value in gemini_updates.items():
         updates.setdefault(key, value)
     _apply_brief_updates(brief, updates)
 
-    reply = await _assistant_reply(content, brief)
+    reply, reply_trace = await _assistant_reply(
+        session,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        message=content,
+        brief=brief,
+    )
     await _append_message(
         session,
         thread=thread,
@@ -653,7 +668,11 @@ async def post_assistant_message(
         user_id=user_id,
         role="assistant",
         content=reply,
-        meta={"captured_fields": sorted(updates.keys())},
+        meta={
+            "captured_fields": sorted(updates.keys()),
+            "brief_extraction_ai": extraction_trace,
+            "assistant_reply_ai": reply_trace,
+        },
     )
     await _replace_next_recommendation(
         session,
@@ -914,17 +933,35 @@ def _fallback_creative_variants(brief: BusinessBrief, draft_type: str, variant_c
     return variants
 
 
-async def _gemini_creative_variants(brief: BusinessBrief, draft_type: str, variant_count: int) -> list[dict[str, Any]] | None:
+async def _gemini_creative_variants(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    user_id: int | None,
+    brief: BusinessBrief,
+    draft_type: str,
+    variant_count: int,
+) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
     prompt = (
         "Сгенерируй 2-3 варианта креатива по growth-brief. Верни только JSON вида "
         "{\"variants\":[{\"title\":\"...\",\"content\":\"...\"}]}\n\n"
         f"Тип: {draft_type}\n"
         f"Бриф:\n{_brief_summary_text(brief)}"
     )
-    parsed = await _assistant.json(prompt, max_output_tokens=900)
+    parsed, trace = await _routed_json_task(
+        session,
+        task_type="creative_variants",
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        prompt=prompt,
+        max_output_tokens=900,
+        surface="creative",
+    )
     variants = parsed.get("variants") if isinstance(parsed, dict) else None
     if not isinstance(variants, list):
-        return None
+        return None, {**trace, "fallback_used": True, "reason_code": trace.get("reason_code") or "creative_variants_fallback"}
     cleaned: list[dict[str, Any]] = []
     for item in variants[: max(1, min(variant_count, 3))]:
         if not isinstance(item, dict):
@@ -933,7 +970,7 @@ async def _gemini_creative_variants(brief: BusinessBrief, draft_type: str, varia
         content = _norm_text(item.get("content"), 4000)
         if title and content:
             cleaned.append({"title": title, "content": content})
-    return cleaned or None
+    return cleaned or None, trace
 
 
 async def list_creative_drafts(
@@ -967,9 +1004,22 @@ async def generate_creative_draft(
     if draft_type not in DRAFT_TYPE_TITLES:
         raise AssistantServiceError("invalid_draft_type")
     brief = await _ensure_brief(session, tenant_id=tenant_id, workspace_id=workspace_id, user_id=user_id)
-    variants = await _gemini_creative_variants(brief, draft_type, variant_count)
+    variants, ai_trace = await _gemini_creative_variants(
+        session,
+        tenant_id=tenant_id,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        brief=brief,
+        draft_type=draft_type,
+        variant_count=variant_count,
+    )
     if not variants:
         variants = _fallback_creative_variants(brief, draft_type, variant_count)
+        ai_trace = {
+            **ai_trace,
+            "fallback_used": True,
+            "reason_code": ai_trace.get("reason_code") or "creative_variants_fallback",
+        }
     draft = CreativeDraft(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
@@ -980,7 +1030,7 @@ async def generate_creative_draft(
         title=f"{DRAFT_TYPE_TITLES[draft_type]} для growth workflow",
         input_prompt=_brief_summary_text(brief),
         content_text=variants[0]["content"],
-        meta={"variants": variants, "selected_variant": 0},
+        meta={"variants": variants, "selected_variant": 0, "ai_trace": ai_trace},
         created_at=utcnow(),
         updated_at=utcnow(),
     )
