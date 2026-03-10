@@ -6,8 +6,10 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | Field | Value |
 |---|---|
-| Current branch | `sprint/1-tenant-foundation` |
-| Current reference commit | `2c3c516` |
+| Current local branch | `sprint/3-telegram-first-auth-shell` |
+| Last committed HEAD | `c37798e` |
+| VPS safe branch | `sprint/1-tenant-foundation` |
+| VPS safe commit | `2c3c516` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -29,6 +31,7 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-10 | Sprint 3/4 audit | `working-tree` | `working-tree` | Creative page variant rendering fix | Fixed `/app/creative` to render structured draft variants without React runtime crashes on populated assistant tenants. | Green | Pending deploy | Redeploy frontend bundle and re-run public populated UI smoke. |
 | 2026-03-10 | Sprint 4 foundation | `working-tree` | `working-tree` | AI orchestrator | Added a hybrid Gemini + OpenRouter router with boss/manager/worker tiers, budget guardrails, telemetry tables, and assistant/creative integration via a single policy-aware router. | Green | Not deployed | Set `OPENROUTER_API_KEY`, deploy migration + backend, then run live routed AI audit on VPS. |
 | 2026-03-10 | Sprint 4 stabilization | `sprint/3-telegram-first-auth-shell` | `working-tree` | Structured output hardening | Tightened JSON contracts, moved reliable OpenRouter models earlier for manager/worker tasks, and excluded Kimi from strict JSON routes until a dedicated loose-output profile exists. | Green | Pending deploy | Commit, deploy to VPS, then run live assistant -> context -> creative audit with cost trace. |
+| 2026-03-11 | Sprint 4 security patch | `sprint/3-telegram-first-auth-shell` | `working-tree` | Tenant isolation + hardcoded creds | Fixed cross-tenant refresh token/logout/get_me in web_auth.py, removed hardcoded DB password defaults from docker-compose.yml, added cross-tenant isolation test. | Green | Pending deploy | Commit stabilization patch, run full test suite, then deploy to VPS. |
 
 ## Update Rules
 

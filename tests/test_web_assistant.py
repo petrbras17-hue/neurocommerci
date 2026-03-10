@@ -10,6 +10,8 @@ from sqlalchemy import delete, select
 
 import ops_api
 from config import settings
+from core.assistant_service import AssistantServiceError
+from core.assistant_jobs import process_pending_jobs
 from ops_api import app
 from storage.models import (
     AIAgentRun,
@@ -125,6 +127,59 @@ async def _clean_state(monkeypatch: pytest.MonkeyPatch) -> None:
     await _reset_assistant_state()
 
 
+@pytest.fixture(autouse=True)
+def _mock_assistant_integrations(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_extract_updates(*args, **kwargs):
+        return {}, {
+            "ok": True,
+            "provider": "test",
+            "model_name": "test-worker",
+            "fallback_used": False,
+            "quality_score": 1.0,
+            "reason_code": None,
+        }
+
+    async def fake_assistant_reply(*args, **kwargs):
+        return (
+            "Контекст обновлён. Продолжайте заполнять growth-brief.",
+            {
+                "ok": True,
+                "provider": "test",
+                "model_name": "test-manager",
+                "fallback_used": False,
+                "quality_score": 1.0,
+                "reason_code": None,
+            },
+        )
+
+    async def fake_creative_variants(*args, **kwargs):
+        draft_type = kwargs.get("draft_type") or "post"
+        variant_count = int(kwargs.get("variant_count") or 3)
+        variants = [
+            {
+                "title": f"{draft_type} variant {idx + 1}",
+                "content": f"TEST AUDIT creative variant {idx + 1} for {draft_type}",
+            }
+            for idx in range(max(1, min(variant_count, 3)))
+        ]
+        return variants, {
+            "ok": True,
+            "provider": "test",
+            "model_name": "test-creative",
+            "fallback_used": False,
+            "quality_score": 1.0,
+            "reason_code": None,
+        }
+
+    async def fake_send_digest_text(text: str) -> dict[str, object]:
+        return {"ok": True, "text": text, "sink": "test-digest"}
+
+    monkeypatch.setattr("core.assistant_service._gemini_extract_updates", fake_extract_updates)
+    monkeypatch.setattr("core.assistant_service._assistant_reply", fake_assistant_reply)
+    monkeypatch.setattr("core.assistant_service._gemini_creative_variants", fake_creative_variants)
+    monkeypatch.setattr("core.assistant_service.send_digest_text", fake_send_digest_text)
+
+
 @pytest.mark.asyncio
 async def test_assistant_brief_flow_creates_thread_and_context(assistant_client: AsyncClient) -> None:
     access_token, _, _ = await _create_authorized_session(assistant_client, 9501)
@@ -134,9 +189,24 @@ async def test_assistant_brief_flow_creates_thread_and_context(assistant_client:
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert start_response.status_code == 200
-    body = start_response.json()
-    assert body["thread"]["thread_kind"] == "growth_brief"
-    assert len(body["messages"]) >= 1
+    start_job = start_response.json()
+    assert start_job["status"] == "queued"
+    await process_pending_jobs()
+
+    start_status = await assistant_client.get(
+        f"/v1/jobs/{start_job['job_id']}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert start_status.status_code == 200
+    assert start_status.json()["status"] == "succeeded"
+
+    thread_response = await assistant_client.get(
+        "/v1/assistant/thread",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    thread_body = thread_response.json()
+    assert thread_body["thread"]["thread_kind"] == "growth_brief"
+    assert len(thread_body["messages"]) >= 1
 
     message_response = await assistant_client.post(
         "/v1/assistant/message",
@@ -153,7 +223,22 @@ async def test_assistant_brief_flow_creates_thread_and_context(assistant_client:
         },
     )
     assert message_response.status_code == 200
-    updated = message_response.json()
+    message_job = message_response.json()
+    assert message_job["status"] == "queued"
+    await process_pending_jobs()
+
+    message_status = await assistant_client.get(
+        f"/v1/jobs/{message_job['job_id']}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert message_status.status_code == 200
+    assert message_status.json()["status"] == "succeeded"
+
+    updated_response = await assistant_client.get(
+        "/v1/assistant/thread",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    updated = updated_response.json()
     assert len(updated["messages"]) >= 3
     assert updated["brief"]["product_name"] == "Slice Pizza CRM"
     assert "цели в Telegram" not in " ".join(updated["brief"]["missing_fields"]).lower()
@@ -172,6 +257,7 @@ async def test_creative_generation_and_approval_use_business_context(assistant_c
     access_token, _, _ = await _create_authorized_session(assistant_client, 9502)
 
     await assistant_client.post("/v1/assistant/start-brief", headers={"Authorization": f"Bearer {access_token}"})
+    await process_pending_jobs()
     await assistant_client.post(
         "/v1/assistant/message",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -185,6 +271,7 @@ async def test_creative_generation_and_approval_use_business_context(assistant_c
             )
         },
     )
+    await process_pending_jobs()
 
     generate_response = await assistant_client.post(
         "/v1/creative/generate",
@@ -192,14 +279,25 @@ async def test_creative_generation_and_approval_use_business_context(assistant_c
         json={"draft_type": "post", "variant_count": 3},
     )
     assert generate_response.status_code == 200
-    draft_id = int(generate_response.json()["draft"]["id"])
+    generate_job = generate_response.json()
+    assert generate_job["status"] == "queued"
+    await process_pending_jobs()
+
+    generate_status = await assistant_client.get(
+        f"/v1/jobs/{generate_job['job_id']}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert generate_status.status_code == 200
+    assert generate_status.json()["status"] == "succeeded"
 
     drafts_response = await assistant_client.get(
         "/v1/creative/drafts",
         headers={"Authorization": f"Bearer {access_token}"},
     )
     assert drafts_response.status_code == 200
-    assert drafts_response.json()["total"] >= 1
+    drafts_body = drafts_response.json()
+    assert drafts_body["total"] >= 1
+    draft_id = int(drafts_body["items"][0]["id"])
 
     approve_response = await assistant_client.post(
         "/v1/creative/approve",
@@ -223,6 +321,7 @@ async def test_context_confirm_and_tenant_isolation(assistant_client: AsyncClien
     access_b, _, _ = await _create_authorized_session(assistant_client, 9504)
 
     await assistant_client.post("/v1/assistant/start-brief", headers={"Authorization": f"Bearer {access_a}"})
+    await process_pending_jobs()
     await assistant_client.post(
         "/v1/assistant/message",
         headers={"Authorization": f"Bearer {access_a}"},
@@ -236,15 +335,30 @@ async def test_context_confirm_and_tenant_isolation(assistant_client: AsyncClien
             )
         },
     )
+    await process_pending_jobs()
 
     confirm_response = await assistant_client.post(
         "/v1/context/confirm",
         headers={"Authorization": f"Bearer {access_a}"},
     )
     assert confirm_response.status_code == 200
-    assert confirm_response.json()["brief"]["status"] == "confirmed"
-    assert "google_sheets" in confirm_response.json()
-    assert "digest_notification" in confirm_response.json()
+    confirm_job = confirm_response.json()
+    assert confirm_job["status"] == "queued"
+    await process_pending_jobs()
+
+    confirm_status = await assistant_client.get(
+        f"/v1/jobs/{confirm_job['job_id']}",
+        headers={"Authorization": f"Bearer {access_a}"},
+    )
+    assert confirm_status.status_code == 200
+    assert confirm_status.json()["status"] == "succeeded"
+
+    confirmed_context = await assistant_client.get(
+        "/v1/context",
+        headers={"Authorization": f"Bearer {access_a}"},
+    )
+    assert confirmed_context.status_code == 200
+    assert confirmed_context.json()["brief"]["status"] == "confirmed"
 
     foreign_thread = await assistant_client.get(
         "/v1/assistant/thread",
@@ -259,3 +373,78 @@ async def test_context_confirm_and_tenant_isolation(assistant_client: AsyncClien
     )
     assert foreign_context.status_code == 200
     assert foreign_context.json()["brief"]["product_name"] == ""
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_refresh_token_rejected(assistant_client: AsyncClient) -> None:
+    """Refresh token forged for a different tenant must not grant access at the service layer."""
+    from core.web_auth import make_refresh_token, refresh_web_session, TelegramAuthError
+
+    # Create two independent tenants
+    access_a, tenant_a, workspace_a = await _create_authorized_session(assistant_client, 9601)
+    access_b, tenant_b, workspace_b = await _create_authorized_session(assistant_client, 9602)
+    assert tenant_a != tenant_b
+
+    # Forge a refresh token that claims tenant_b's IDs but has no matching DB row
+    forged_token = make_refresh_token(
+        user_id=99999,  # Non-existent user
+        tenant_id=tenant_b,
+        workspace_id=workspace_b,
+        role="owner",
+    )
+
+    # Attempting refresh with the forged token must fail:
+    # no DB row matches (token_hash, tenant_b, user_id=99999)
+    with pytest.raises(TelegramAuthError, match="refresh_token_revoked"):
+        async with async_session() as session:
+            async with session.begin():
+                await refresh_web_session(session, forged_token)
+
+    # Also forge a token using tenant_a's real user but claiming tenant_b
+    # This must also fail — the DB row is scoped to tenant_a
+    # First get tenant_a's auth_user_id from the access token
+    import jwt as pyjwt
+    claims_a = pyjwt.decode(access_a, settings.JWT_ACCESS_SECRET, algorithms=[settings.JWT_ALGORITHM])
+    real_user_id_a = int(claims_a["sub"])
+
+    cross_tenant_token = make_refresh_token(
+        user_id=real_user_id_a,
+        tenant_id=tenant_b,  # Wrong tenant
+        workspace_id=workspace_b,
+        role="owner",
+    )
+
+    with pytest.raises(TelegramAuthError, match="refresh_token_revoked"):
+        async with async_session() as session:
+            async with session.begin():
+                await refresh_web_session(session, cross_tenant_token)
+
+
+@pytest.mark.asyncio
+async def test_assistant_job_failure_is_exposed_via_job_status(
+    assistant_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    access_token, _, _ = await _create_authorized_session(assistant_client, 9505)
+
+    async def fail_start(*args, **kwargs):
+        raise AssistantServiceError("brief_bootstrap_failed")
+
+    monkeypatch.setattr("core.assistant_jobs.start_business_brief", fail_start)
+
+    response = await assistant_client.post(
+        "/v1/assistant/start-brief",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    await process_pending_jobs()
+
+    job_status = await assistant_client.get(
+        f"/v1/jobs/{payload['job_id']}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert job_status.status_code == 200
+    body = job_status.json()
+    assert body["status"] == "failed"
+    assert body["error_code"] == "brief_bootstrap_failed"

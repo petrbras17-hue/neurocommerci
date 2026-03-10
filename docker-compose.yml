@@ -4,7 +4,7 @@ services:
     command: python -m uvicorn ops_api:app --host 0.0.0.0 --port 8081
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
     ports:
       - "127.0.0.1:8081:8081"
@@ -29,7 +29,7 @@ services:
     command: python main.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - OPS_API_URL=http://ops_api:8081
       - WORKER_ID=bot
@@ -59,7 +59,7 @@ services:
     command: python worker.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       # Set via .env (0 keeps disabled-claim mode, >0 enables distributed workers).
       - MAX_ACCOUNTS_PER_WORKER=${MAX_ACCOUNTS_PER_WORKER:-0}
@@ -89,7 +89,7 @@ services:
     command: python worker.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - MAX_ACCOUNTS_PER_WORKER=1
       - MAX_CONNECTED_CLIENTS_PER_WORKER=${MAX_CONNECTED_CLIENTS_PER_WORKER:-50}
@@ -120,7 +120,7 @@ services:
     command: python worker.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - MAX_ACCOUNTS_PER_WORKER=1
       - MAX_CONNECTED_CLIENTS_PER_WORKER=${MAX_CONNECTED_CLIENTS_PER_WORKER:-50}
@@ -151,7 +151,7 @@ services:
     command: python packager_worker.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - WORKER_ID=packager
     volumes:
@@ -174,7 +174,7 @@ services:
     command: python recovery_worker.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - WORKER_ID=recovery
     volumes:
@@ -198,7 +198,7 @@ services:
     command: python parser_service.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - WORKER_ID=parser
     volumes:
@@ -222,7 +222,7 @@ services:
     command: python scheduler_service.py
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD:-neuropass}@db:5432/neurocomment
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
       - REDIS_URL=redis://redis:6379/0
       - WORKER_ID=scheduler
     volumes:
@@ -258,10 +258,10 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
       APP_DB_NAME: neurocomment
       APP_DB_USER: nc
-      APP_DB_PASSWORD: ${DB_PASSWORD:-neuropass}
+      APP_DB_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro

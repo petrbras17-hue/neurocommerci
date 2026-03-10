@@ -559,18 +559,27 @@ async def refresh_web_session(
         user_id=int(payload["sub"]),
     )
     token_hash = _refresh_token_hash(refresh_token)
+    expected_tenant_id = int(payload["tenant_id"])
+    expected_user_id = int(payload["sub"])
+    expected_workspace_id = int(payload["workspace_id"])
     token_row_result = await session.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.tenant_id == expected_tenant_id,
+            RefreshToken.user_id == expected_user_id,
+        )
     )
     token_row = token_row_result.scalar_one_or_none()
     if token_row is None or token_row.revoked_at is not None or token_row.expires_at <= utcnow():
         raise TelegramAuthError("refresh_token_revoked")
 
-    auth_user = await session.get(AuthUser, int(payload["sub"]))
-    tenant = await session.get(Tenant, int(payload["tenant_id"]))
-    workspace = await session.get(Workspace, int(payload["workspace_id"]))
+    auth_user = await session.get(AuthUser, expected_user_id)
+    tenant = await session.get(Tenant, expected_tenant_id)
+    workspace = await session.get(Workspace, expected_workspace_id)
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("refresh_context_not_found")
+    if tenant.id != expected_tenant_id or workspace.id != expected_workspace_id:
+        raise TelegramAuthError("refresh_context_mismatch")
     membership_result = await session.execute(
         select(TeamMember).where(
             TeamMember.user_id == auth_user.id,
@@ -616,8 +625,18 @@ async def refresh_web_session(
 async def logout_web_session(session: AsyncSession, refresh_token: str | None) -> None:
     if not refresh_token:
         return
+    try:
+        payload = decode_refresh_token(refresh_token)
+    except TelegramAuthError:
+        return
     token_hash = _refresh_token_hash(refresh_token)
-    result = await session.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
+    result = await session.execute(
+        select(RefreshToken).where(
+            RefreshToken.token_hash == token_hash,
+            RefreshToken.tenant_id == int(payload["tenant_id"]),
+            RefreshToken.user_id == int(payload["sub"]),
+        )
+    )
     token_row = result.scalar_one_or_none()
     if token_row is not None and token_row.revoked_at is None:
         token_row.revoked_at = utcnow()
@@ -635,12 +654,14 @@ async def get_me_payload(
     workspace = await session.get(Workspace, int(workspace_id))
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("me_context_not_found")
+    if tenant.id != int(tenant_id) or workspace.id != int(workspace_id):
+        raise TelegramAuthError("me_context_mismatch")
 
     membership_result = await session.execute(
         select(TeamMember).where(
-            TeamMember.user_id == auth_user.id,
-            TeamMember.tenant_id == tenant.id,
-            TeamMember.workspace_id == workspace.id,
+            TeamMember.user_id == int(auth_user_id),
+            TeamMember.tenant_id == int(tenant_id),
+            TeamMember.workspace_id == int(workspace_id),
         )
     )
     membership = membership_result.scalar_one_or_none()
