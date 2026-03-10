@@ -12,6 +12,7 @@ from core.ai_router import (
     PROVIDER_GEMINI,
     TIER_BOSS,
     TIER_MANAGER,
+    _extract_json_dict,
     route_ai_task,
     ProviderCallResult,
 )
@@ -291,6 +292,11 @@ async def test_openrouter_fallback_executes_when_gemini_fails(monkeypatch: pytes
             assert result.ok is True
             assert result.provider == "openrouter"
             assert result.fallback_used is True
+
+
+def test_extract_json_dict_repairs_common_model_noise() -> None:
+    assert _extract_json_dict("```json\n{\"reply\":\"ok\",}\n```") == {"reply": "ok"}
+    assert _extract_json_dict("{'reply': 'ok', 'count': 2}") == {"reply": "ok", "count": 2}
 
 
 @pytest.mark.asyncio

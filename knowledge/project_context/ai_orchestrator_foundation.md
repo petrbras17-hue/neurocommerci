@@ -46,6 +46,21 @@ Build a hybrid AI orchestration layer for NEURO COMMENTING where:
 - `gemini_direct`
 - `openrouter`
 
+## Current production-first model matrix
+
+- `boss`
+  - `openrouter:openai/gpt-5.4`
+  - `openrouter:anthropic/claude-opus-4.6`
+- `manager`
+  - `openrouter:anthropic/claude-sonnet-4.6`
+  - `openrouter:google/gemini-2.5-pro`
+  - `gemini_direct:gemini-3-pro-preview`
+- `worker`
+  - `openrouter:google/gemini-2.5-flash`
+  - `gemini_direct:gemini-3-flash-preview`
+
+`moonshotai/kimi-k2.5` is intentionally excluded from strict JSON routes for now and should only return after a dedicated loose-output validation pass.
+
 ## Outcomes
 
 - `executed_as_requested`
@@ -86,13 +101,12 @@ Not integrated yet:
 
 ## Operational note
 
-Before live OpenRouter rollout:
+After live OpenRouter rollout:
 
-1. set `OPENROUTER_API_KEY`
-2. apply Alembic migration `20260310_07_ai_orchestrator_foundation`
-3. redeploy backend
-4. run a `TEST` / `AUDIT` assistant flow on VPS
-5. verify:
+1. keep boss-tier gated by manual approval/policy
+2. monitor `json_parse_failed` by provider/model
+3. confirm worker/manager routes stay under daily budget caps
+4. verify:
    - provider chosen
    - executed model tier
    - estimated cost

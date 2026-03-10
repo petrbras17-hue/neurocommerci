@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import re
 from dataclasses import dataclass
@@ -201,16 +202,16 @@ def _default_model_refs_for_tier(tier: str) -> list[str]:
         if refs:
             return refs
         return [
-            f"{PROVIDER_GEMINI}:{normalize_model_name(settings.GEMINI_MODEL)}",
             "openrouter:anthropic/claude-sonnet-4.6",
             "openrouter:google/gemini-2.5-pro",
+            f"{PROVIDER_GEMINI}:{normalize_model_name(settings.GEMINI_MODEL)}",
         ]
     refs = _parse_csv(settings.AI_WORKER_MODELS)
     if refs:
         return refs
     return [
-        f"{PROVIDER_GEMINI}:{normalize_model_name(settings.GEMINI_FLASH_MODEL)}",
         "openrouter:google/gemini-2.5-flash",
+        f"{PROVIDER_GEMINI}:{normalize_model_name(settings.GEMINI_FLASH_MODEL)}",
     ]
 
 
@@ -254,21 +255,45 @@ def _extract_json_dict(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
         return None
-    cleaned = re.sub(r"```json\s*", "", raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    cleaned = raw.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+    cleaned = re.sub(r"```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
     candidates = [cleaned]
     first = cleaned.find("{")
     last = cleaned.rfind("}")
     if first != -1 and last != -1 and last > first:
         candidates.append(cleaned[first : last + 1])
     for candidate in candidates:
+        candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
         try:
             parsed = json.loads(candidate)
         except json.JSONDecodeError:
-            continue
+            parsed = None
+        if isinstance(parsed, dict):
+            return parsed
+        try:
+            parsed = ast.literal_eval(candidate)
+        except (ValueError, SyntaxError):
+            parsed = None
         if isinstance(parsed, dict):
             return parsed
     return None
+
+
+def _json_contract_instruction(system_instruction: str) -> str:
+    suffix = (
+        "\n\nSTRICT OUTPUT CONTRACT:\n"
+        "- Return exactly one JSON object.\n"
+        "- No markdown fences.\n"
+        "- No prose before or after JSON.\n"
+        "- Use double quotes for all keys and strings.\n"
+        "- Do not include trailing commas.\n"
+        "- If some value is unknown, omit that field."
+    )
+    base = str(system_instruction or "").strip()
+    if "STRICT OUTPUT CONTRACT" in base:
+        return base
+    return f"{base}{suffix}" if base else suffix.strip()
 
 
 def _get_gemini_client() -> genai.Client | None:
@@ -495,9 +520,10 @@ async def _call_gemini_json(
                 model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=temperature,
+                    system_instruction=_json_contract_instruction(system_instruction),
+                    temperature=max(0.1, min(temperature, 0.35)),
                     max_output_tokens=max_output_tokens,
+                    response_mime_type="application/json",
                 ),
             ),
             timeout=35.0,
@@ -577,10 +603,10 @@ async def _call_openrouter_json(
     payload: dict[str, Any] = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": system_instruction},
+            {"role": "system", "content": _json_contract_instruction(system_instruction)},
             {"role": "user", "content": prompt},
         ],
-        "temperature": temperature,
+        "temperature": max(0.1, min(temperature, 0.35)),
         "max_tokens": max_output_tokens,
         "response_format": {"type": "json_object"},
         "provider": {
