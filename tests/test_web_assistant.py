@@ -229,6 +229,8 @@ async def test_context_confirm_and_tenant_isolation(assistant_client: AsyncClien
     )
     assert confirm_response.status_code == 200
     assert confirm_response.json()["brief"]["status"] == "confirmed"
+    assert "google_sheets" in confirm_response.json()
+    assert "digest_notification" in confirm_response.json()
 
     foreign_thread = await assistant_client.get(
         "/v1/assistant/thread",

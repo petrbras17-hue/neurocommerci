@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from html import escape
 from typing import Any, Optional
 
 from google import genai
@@ -13,12 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from core.digest_service import send_digest_text
 from core.gemini_models import get_text_model_candidates
 from storage.google_sheets import GoogleSheetsStorage
 from storage.models import (
     AssistantMessage,
     AssistantRecommendation,
     AssistantThread,
+    AuthUser,
     BusinessAsset,
     BusinessBrief,
     CreativeDraft,
@@ -139,6 +142,11 @@ def _brief_summary_text(brief: BusinessBrief) -> str:
         f"Бот: {_norm_text(brief.bot_url, 500) or '—'}",
     ]
     return "\n".join(parts)
+
+
+def _digest_safe(value: Any, max_length: int = 255) -> str:
+    text = _norm_text(value, max_length=max_length)
+    return escape(text) if text else "—"
 
 
 def _initial_assistant_message() -> str:
@@ -805,6 +813,9 @@ async def confirm_context(
     user_id: int | None,
 ) -> dict[str, Any]:
     brief = await _ensure_brief(session, tenant_id=tenant_id, workspace_id=workspace_id, user_id=user_id)
+    auth_user = None
+    if user_id:
+        auth_user = await session.get(AuthUser, int(user_id))
     brief.status = "confirmed"
     brief.completeness_score = _brief_completeness(brief)[0]
     brief.summary_text = _brief_summary_text(brief)
@@ -827,7 +838,7 @@ async def confirm_context(
         tenant_id=tenant_id,
         workspace_id=workspace_id,
         product_name=brief.product_name or "",
-        company="",
+        company=str(getattr(auth_user, "company", "") or ""),
         offer_summary=brief.offer_summary or "",
         target_audience=brief.target_audience or "",
         tone_of_voice=brief.tone_of_voice or "",
@@ -842,10 +853,32 @@ async def confirm_context(
         mirror_result = await mirror_brief_to_google_sheets(snapshot)
     except Exception as exc:
         mirror_result = {"ok": False, "error": str(exc)}
+    notification_result: dict[str, Any]
+    try:
+        notification_result = await send_digest_text(
+            "\n".join(
+                [
+                    "🧠 <b>Контекст бизнеса подтверждён</b>",
+                    "━━━━━━━━━━━━━━━━━━━━",
+                    f"Tenant: <code>{tenant_id}</code>",
+                    f"Workspace: <code>{workspace_id}</code>",
+                    f"Компания: <b>{_digest_safe(snapshot.company)}</b>",
+                    f"Продукт: <b>{_digest_safe(brief.product_name)}</b>",
+                    f"Оффер: {_digest_safe(brief.offer_summary, 500)}",
+                    f"ЦА: {_digest_safe(brief.target_audience, 500)}",
+                    f"Тон: <b>{_digest_safe(brief.tone_of_voice)}</b>",
+                    f"Цели Telegram: {_digest_safe(', '.join(list(brief.telegram_goals or [])), 500)}",
+                    f"Completeness: <b>{float(brief.completeness_score or 0.0):.2f}</b>",
+                ]
+            )
+        )
+    except Exception as exc:
+        notification_result = {"ok": False, "error": str(exc)}
     return {
         "ok": True,
         "brief": _brief_payload(brief),
         "google_sheets": mirror_result,
+        "digest_notification": notification_result,
     }
 
 
