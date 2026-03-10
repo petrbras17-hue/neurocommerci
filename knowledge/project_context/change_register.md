@@ -26,6 +26,7 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-10 | Sprint 3 | `sprint/1-tenant-foundation` | `working-tree` | Telegram-first workspace shell | Added Telegram-first auth, refresh-token cookies, React/Vite workspace shell, and tenant-scoped web onboarding for accounts/proxies. | Green | Not deployed | Commit Sprint 3 and deploy after BotFather `/setdomain` is confirmed. |
 | 2026-03-10 | Sprint 3 + 4 prep | `working-tree` | `working-tree` | Operator shell + AI assistant layer | Finished operator-first dashboard/accounts UX, added account notes/timeline, and introduced Gemini-first assistant/context/creative backend + React surfaces. | Green | Not deployed | Commit this safe-shell + assistant layer and deploy after branch review. |
 | 2026-03-10 | Sprint 3/4 audit | `working-tree` | `working-tree` | Assistant digest integration | Added digest delivery on context confirmation and included company in brief mirror payload to enable isolated live integration audit. | Green | Pending deploy | Deploy this assistant integration patch and run live Gemini + Sheets + digest verification. |
+| 2026-03-10 | Sprint 3/4 audit | `working-tree` | `working-tree` | Creative page variant rendering fix | Fixed `/app/creative` to render structured draft variants without React runtime crashes on populated assistant tenants. | Green | Pending deploy | Redeploy frontend bundle and re-run public populated UI smoke. |
 
 ## Update Rules
 

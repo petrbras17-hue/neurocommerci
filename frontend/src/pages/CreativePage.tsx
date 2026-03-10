@@ -8,7 +8,7 @@ type CreativeItem = {
   status: string;
   title: string;
   content_text: string;
-  variants: string[];
+  variants: Array<string | { title?: string; content?: string }>;
   selected_variant: number;
   created_at: string | null;
 };
@@ -24,6 +24,19 @@ const DRAFT_TYPES = [
   { value: "ad_copy", label: "Рекламный текст" },
   { value: "image_prompt", label: "Промпт для изображения" },
 ];
+
+function normalizeVariant(variant: string | { title?: string; content?: string }, index: number) {
+  if (typeof variant === "string") {
+    return {
+      title: `Вариант ${index + 1}`,
+      content: variant,
+    };
+  }
+  return {
+    title: variant?.title || `Вариант ${index + 1}`,
+    content: variant?.content || "",
+  };
+}
 
 export function CreativePage() {
   const { accessToken } = useAuth();
@@ -161,22 +174,25 @@ export function CreativePage() {
                 <p>{item.content_text}</p>
                 {(item.variants || []).length ? (
                   <div className="field-list">
-                    {item.variants.map((variant, index) => (
-                      <div className="info-block" key={`${item.id}-${index}`}>
-                        <strong>Вариант {index + 1}</strong>
-                        <p className="muted">{variant}</p>
-                        <div className="actions-row">
-                          <button
-                            className="ghost-button"
-                            type="button"
-                            disabled={busy || item.status === "approved"}
-                            onClick={() => void approve(item.id, index)}
-                          >
-                            {item.status === "approved" && item.selected_variant === index ? "Утверждён" : "Утвердить вариант"}
-                          </button>
+                    {item.variants.map((variant, index) => {
+                      const normalized = normalizeVariant(variant, index);
+                      return (
+                        <div className="info-block" key={`${item.id}-${index}`}>
+                          <strong>{normalized.title}</strong>
+                          <p className="muted">{normalized.content}</p>
+                          <div className="actions-row">
+                            <button
+                              className="ghost-button"
+                              type="button"
+                              disabled={busy || item.status === "approved"}
+                              onClick={() => void approve(item.id, index)}
+                            >
+                              {item.status === "approved" && item.selected_variant === index ? "Утверждён" : "Утвердить вариант"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : null}
               </div>
