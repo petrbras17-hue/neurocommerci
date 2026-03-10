@@ -421,6 +421,94 @@ async def test_cross_tenant_refresh_token_rejected(assistant_client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_logout_with_bad_and_foreign_token(assistant_client: AsyncClient) -> None:
+    """Logout must not crash on bad tokens and must not revoke foreign tenant rows."""
+    from core.web_auth import logout_web_session, make_refresh_token
+
+    access_a, tenant_a, _ = await _create_authorized_session(assistant_client, 9701)
+    access_b, tenant_b, workspace_b = await _create_authorized_session(assistant_client, 9702)
+    assert tenant_a != tenant_b
+
+    # Logout with garbage string — must silently succeed
+    async with async_session() as session:
+        async with session.begin():
+            await logout_web_session(session, "totally-invalid-garbage")
+
+    # Logout with forged token claiming tenant_b — must not revoke any real rows
+    forged = make_refresh_token(
+        user_id=99999,
+        tenant_id=tenant_b,
+        workspace_id=workspace_b,
+        role="owner",
+    )
+    async with async_session() as session:
+        async with session.begin():
+            await logout_web_session(session, forged)
+
+    # Verify tenant_a can still refresh (their tokens weren't touched)
+    verify_a = await assistant_client.post(
+        "/auth/telegram/verify",
+        json=_telegram_payload(
+            bot_token=settings.ADMIN_BOT_TOKEN,
+            telegram_user_id=9701,
+            username="logouttest_a",
+        ),
+    )
+    assert verify_a.status_code == 200
+    assert verify_a.json()["status"] == "authorized"
+
+
+@pytest.mark.asyncio
+async def test_expired_refresh_token_rejected(assistant_client: AsyncClient) -> None:
+    """An expired refresh token must be rejected even if the DB row exists."""
+    from datetime import timedelta
+    from core.web_auth import (
+        _refresh_token_hash,
+        decode_refresh_token,
+        refresh_web_session,
+        TelegramAuthError,
+    )
+
+    access_a, tenant_a, workspace_a = await _create_authorized_session(assistant_client, 9703)
+
+    # Get a real refresh token via re-login
+    verify = await assistant_client.post(
+        "/auth/telegram/verify",
+        json=_telegram_payload(
+            bot_token=settings.ADMIN_BOT_TOKEN,
+            telegram_user_id=9703,
+            username="expiredtest",
+        ),
+    )
+    assert verify.status_code == 200
+
+    # Extract refresh token from Set-Cookie
+    refresh_cookie = None
+    for hv in verify.headers.get_list("set-cookie"):
+        if "nc_refresh_token=" in hv:
+            refresh_cookie = hv.split("nc_refresh_token=")[1].split(";")[0]
+            break
+    assert refresh_cookie, "Expected refresh cookie"
+
+    # Manually expire the DB row
+    token_hash = _refresh_token_hash(refresh_cookie)
+    async with async_session() as session:
+        async with session.begin():
+            from sqlalchemy import update
+            await session.execute(
+                update(RefreshToken)
+                .where(RefreshToken.token_hash == token_hash)
+                .values(expires_at=utcnow() - timedelta(hours=1))
+            )
+
+    # Now refreshing must fail
+    with pytest.raises(TelegramAuthError, match="refresh_token_revoked"):
+        async with async_session() as session:
+            async with session.begin():
+                await refresh_web_session(session, refresh_cookie)
+
+
+@pytest.mark.asyncio
 async def test_assistant_job_failure_is_exposed_via_job_status(
     assistant_client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

@@ -24,6 +24,13 @@ Copy the selected file into `.env` before running services.
 - `JWT_ACCESS_TTL_MINUTES`
 - `JWT_REFRESH_TTL_DAYS`
 
+## Required env vars for Docker Compose
+
+- `DB_PASSWORD` — password for the `nc` PostgreSQL app role (used in all service `DATABASE_URL` values)
+- `POSTGRES_SUPERUSER_PASSWORD` — password for the `postgres` superuser (used by the `db` container init)
+
+Both must be set in `.env` before running `docker compose up`. There are no default fallbacks.
+
 Existing Telegram/Gemini/runtime vars from `.env.example` still apply for the legacy control plane.
 
 ## Sprint 2 public marketing surface

@@ -578,8 +578,6 @@ async def refresh_web_session(
     workspace = await session.get(Workspace, expected_workspace_id)
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("refresh_context_not_found")
-    if tenant.id != expected_tenant_id or workspace.id != expected_workspace_id:
-        raise TelegramAuthError("refresh_context_mismatch")
     membership_result = await session.execute(
         select(TeamMember).where(
             TeamMember.user_id == auth_user.id,
@@ -654,14 +652,12 @@ async def get_me_payload(
     workspace = await session.get(Workspace, int(workspace_id))
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("me_context_not_found")
-    if tenant.id != int(tenant_id) or workspace.id != int(workspace_id):
-        raise TelegramAuthError("me_context_mismatch")
 
     membership_result = await session.execute(
         select(TeamMember).where(
-            TeamMember.user_id == int(auth_user_id),
-            TeamMember.tenant_id == int(tenant_id),
-            TeamMember.workspace_id == int(workspace_id),
+            TeamMember.user_id == auth_user.id,
+            TeamMember.tenant_id == tenant.id,
+            TeamMember.workspace_id == workspace.id,
         )
     )
     membership = membership_result.scalar_one_or_none()
