@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 from pathlib import Path
+import time
 import traceback
 from typing import Any, AsyncIterator, List, Optional
 
 import jwt
 import uvicorn
 from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -281,6 +284,44 @@ async def _enqueue_farm_job(
     return {"job_id": job_id, "status": "queued"}
 
 log = logging.getLogger("uvicorn.error")
+
+# ---------------------------------------------------------------------------
+# Simple in-memory rate limiter (no external dependency)
+# Buckets are keyed by (scope, identifier) and store a deque of timestamps.
+# ---------------------------------------------------------------------------
+
+_rate_limit_buckets: dict[tuple[str, str], collections.deque] = collections.defaultdict(collections.deque)
+
+
+def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_seconds: int) -> None:
+    """Raise HTTP 429 if the caller has exceeded max_calls within window_seconds.
+
+    Rate limiting is disabled in development and test environments to avoid
+    breaking test suites that call auth endpoints multiple times from the same
+    in-process address.
+    """
+    if str(settings.APP_ENV or "").strip().lower() in {"development", "test", "testing"}:
+        return
+    now = time.monotonic()
+    bucket = _rate_limit_buckets[(scope, identifier)]
+    cutoff = now - window_seconds
+    while bucket and bucket[0] < cutoff:
+        bucket.popleft()
+    if len(bucket) >= max_calls:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limit_exceeded",
+        )
+    bucket.append(now)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
@@ -942,6 +983,7 @@ async def require_internal_token(request: Request) -> None:
 async def get_tenant_context(request: Request) -> TenantContext:
     token = _bearer_token(request)
     tenant_context = _decode_jwt(token)
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
 
     async with async_session() as session:
         async with session.begin():
@@ -1115,6 +1157,34 @@ async def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/health")
+async def health_check() -> JSONResponse:
+    """Detailed health check — verifies DB and Redis connectivity."""
+    db_ok = False
+    redis_ok = False
+
+    # DB probe
+    try:
+        async with async_session() as session:
+            await session.execute(select(func.now()))
+        db_ok = True
+    except Exception as exc:
+        log.warning("health: db probe failed: %s", exc)
+
+    # Redis probe
+    try:
+        await task_queue.connect()
+        redis_ok = await task_queue.ping()
+    except Exception as exc:
+        log.warning("health: redis probe failed: %s", exc)
+
+    overall = "ok" if (db_ok and redis_ok) else "degraded"
+    return JSONResponse(
+        status_code=status.HTTP_200_OK if overall == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"status": overall, "db": db_ok, "redis": redis_ok, "version": "sprint-4"},
+    )
+
+
 @app.get("/auth/telegram/widget-config")
 async def telegram_widget_config(request: Request) -> dict[str, Any]:
     forwarded_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").strip()
@@ -1129,6 +1199,7 @@ async def telegram_widget_config(request: Request) -> dict[str, Any]:
 
 @app.post("/auth/telegram/verify")
 async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
     try:
         async with async_session() as session:
             async with session.begin():
@@ -1160,6 +1231,7 @@ async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request)
 
 @app.post("/auth/complete-profile")
 async def auth_complete_profile(payload: CompleteProfilePayload, request: Request) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
     try:
         async with async_session() as session:
             async with session.begin():
@@ -1195,6 +1267,7 @@ async def auth_refresh(
     request: Request,
     refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
 ) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
     if not refresh_token:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "anonymous"})
     async with async_session() as session:
@@ -1289,6 +1362,7 @@ async def landing_saas(request: Request) -> HTMLResponse:
 
 @app.post("/api/leads")
 async def create_lead(payload: LeadCreatePayload, request: Request) -> JSONResponse:
+    _check_rate_limit("public", _client_ip(request), max_calls=30, window_seconds=60)
     utm_source = payload.utm_source or request.query_params.get("utm_source")
     lead_snapshot: Optional[LeadSnapshot] = None
     async with async_session() as session:
@@ -1426,14 +1500,20 @@ async def list_workspaces(
 
 @app.get("/v1/web/accounts")
 async def web_list_accounts(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    return await list_web_accounts(
+    result = await list_web_accounts(
         session,
         tenant_id=tenant_context.tenant_id,
         workspace_id=int(tenant_context.workspace_id or 0),
     )
+    all_items = result["items"]
+    total = result["total"]
+    page_items = all_items[offset: offset + limit]
+    return {"items": page_items, "total": total, "limit": limit, "offset": offset}
 
 
 @app.post("/v1/web/accounts/upload")
@@ -1580,15 +1660,24 @@ async def assistant_message(
 
 @app.get("/v1/assistant/thread")
 async def assistant_thread(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    return await get_assistant_thread(
+    result = await get_assistant_thread(
         session,
         tenant_id=tenant_context.tenant_id,
         workspace_id=int(tenant_context.workspace_id or 0),
         user_id=tenant_context.user_id,
     )
+    all_messages = result.get("messages") or []
+    total_messages = len(all_messages)
+    result["messages"] = all_messages[offset: offset + limit]
+    result["messages_total"] = total_messages
+    result["limit"] = limit
+    result["offset"] = offset
+    return result
 
 
 @app.get("/v1/context")
@@ -1617,14 +1706,20 @@ async def context_confirm(
 
 @app.get("/v1/creative/drafts")
 async def creative_drafts(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    return await list_creative_drafts(
+    result = await list_creative_drafts(
         session,
         tenant_id=tenant_context.tenant_id,
         workspace_id=int(tenant_context.workspace_id or 0),
     )
+    all_items = result["items"]
+    total = result["total"]
+    page_items = all_items[offset: offset + limit]
+    return {"items": page_items, "total": total, "limit": limit, "offset": offset}
 
 
 @app.post("/v1/creative/generate")
@@ -1675,6 +1770,36 @@ async def app_job_status(
         )
     except AssistantJobError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@app.delete("/v1/jobs/{job_id}")
+async def app_job_cancel(
+    job_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Cancel a queued or processing job that belongs to the current tenant."""
+    job = (
+        await session.execute(
+            select(AppJob).where(
+                AppJob.id == job_id,
+                AppJob.tenant_id == tenant_context.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+    if job.status not in ("queued", "processing"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"job_cannot_be_cancelled_status_{job.status}",
+        )
+    job.status = "cancelled"
+    job.completed_at = utcnow()
+    job.updated_at = utcnow()
+    await session.flush()
+    from core.assistant_jobs import _job_response
+    return _job_response(job)
 
 
 @app.get("/v1/ai/quality-summary")
@@ -3957,7 +4082,8 @@ async def channel_map_list(
     category: Optional[str] = Query(default=None),
     language: Optional[str] = Query(default=None),
     min_members: Optional[int] = Query(default=None, ge=0),
-    limit: int = Query(default=50, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
@@ -3968,13 +4094,13 @@ async def channel_map_list(
         q = q.where(ChannelMapEntry.language == language)
     if min_members is not None:
         q = q.where(ChannelMapEntry.member_count >= min_members)
-    q = q.order_by(ChannelMapEntry.member_count.desc()).limit(limit)
-    rows = (await session.execute(q)).scalars().all()
     total_q = select(func.count()).select_from(ChannelMapEntry).where(
         ChannelMapEntry.tenant_id == tenant_context.tenant_id
     )
     total = (await session.execute(total_q)).scalar_one()
-    return {"items": [_serialize_channel_map_entry(r) for r in rows], "total": total}
+    q = q.order_by(ChannelMapEntry.member_count.desc()).offset(offset).limit(limit)
+    rows = (await session.execute(q)).scalars().all()
+    return {"items": [_serialize_channel_map_entry(r) for r in rows], "total": total, "limit": limit, "offset": offset}
 
 
 @app.post("/v1/channel-map/search")
@@ -4570,6 +4696,19 @@ async def analytics_roi(
 # ---------------------------------------------------------------------------
 # Exception handlers
 # ---------------------------------------------------------------------------
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    field = ".".join(str(loc) for loc in first.get("loc", []))
+    msg = first.get("msg", "validation_error")
+    detail = f"{field}: {msg}" if field else msg
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": detail, "errors": errors},
+    )
 
 
 @app.exception_handler(HTTPException)

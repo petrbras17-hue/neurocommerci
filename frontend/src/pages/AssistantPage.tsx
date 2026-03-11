@@ -1,4 +1,6 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Brain, Send, Loader, Sparkles, BarChart2 } from "lucide-react";
 import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
@@ -45,6 +47,17 @@ type QualitySummary = {
   >;
 };
 
+const fadeUp = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -8 },
+  transition: { duration: 0.25, ease: [0.16, 1, 0.3, 1] as const },
+};
+
+const staggerContainer = {
+  animate: { transition: { staggerChildren: 0.06 } },
+};
+
 export function AssistantPage() {
   const { accessToken } = useAuth();
   const [thread, setThread] = useState<ThreadResponse | null>(null);
@@ -53,6 +66,7 @@ export function AssistantPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [jobState, setJobState] = useState<JobStatusResponse | null>(null);
   const [quality, setQuality] = useState<QualitySummary | null>(null);
+  const threadEndRef = useRef<HTMLDivElement>(null);
 
   const loadThread = async () => {
     if (!accessToken) {
@@ -74,6 +88,10 @@ export function AssistantPage() {
     void loadThread().catch(() => setThread(null));
     void loadQuality().catch(() => setQuality(null));
   }, [accessToken]);
+
+  useEffect(() => {
+    threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [thread?.messages]);
 
   const runQueuedAction = async (path: string, json?: unknown, successMessage?: string) => {
     if (!accessToken) {
@@ -127,167 +145,452 @@ export function AssistantPage() {
     setMessage("");
   };
 
-  return (
-    <div className="page-grid">
-      <section className="two-column-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">AI assistant</div>
-              <h2>Что делает ассистент</h2>
-            </div>
-          </div>
-          <ul className="bullet-list">
-            <li>Собирает growth-brief по продукту, офферу, ЦА и Telegram-целям.</li>
-            <li>Подсказывает, чего не хватает для стратегии, черновиков и визуалов.</li>
-            <li>Ничего не делает молча: каждое крупное решение остаётся за оператором.</li>
-          </ul>
-        </article>
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Operator role</div>
-              <h2>Что отвечаете вы</h2>
-            </div>
-          </div>
-          <ul className="bullet-list">
-            <li>Описываете продукт простым языком, без идеальной структуры.</li>
-            <li>Подтверждаете summary и корректируете спорные формулировки.</li>
-            <li>Решаете, какие рекомендации и creative drafts реально переходят в работу.</li>
-          </ul>
-        </article>
-      </section>
+  const completeness = Math.round(Number(thread?.brief?.completeness_score || 0) * 100);
+  const missingFields = thread?.brief?.missing_fields || [];
 
-      <section className="panel">
+  return (
+    <motion.div
+      className="page-grid"
+      variants={staggerContainer}
+      initial="initial"
+      animate="animate"
+    >
+      {/* ── Quality Stats Bar ── */}
+      <motion.div variants={fadeUp} style={qualityBarStyle}>
+        <div style={qualityStatStyle}>
+          <BarChart2 size={14} style={{ color: "var(--accent)" }} />
+          <span style={qualityLabelStyle}>Requests</span>
+          <span style={qualityValueStyle}>{quality?.overview?.total_requests ?? 0}</span>
+        </div>
+        <div style={qualitySepStyle} />
+        <div style={qualityStatStyle}>
+          <Sparkles size={14} style={{ color: "var(--accent)" }} />
+          <span style={qualityLabelStyle}>Avg Score</span>
+          <span style={qualityValueStyle}>{quality?.overview?.avg_quality_score ?? 0}</span>
+        </div>
+        <div style={qualitySepStyle} />
+        <div style={qualityStatStyle}>
+          <span style={qualityLabelStyle}>Fallback</span>
+          <span style={qualityValueStyle}>{Math.round(Number(quality?.overview?.fallback_rate || 0) * 100)}%</span>
+        </div>
+        <div style={qualitySepStyle} />
+        <div style={qualityStatStyle}>
+          <span style={qualityLabelStyle}>Repair</span>
+          <span style={qualityValueStyle}>{Math.round(Number(quality?.overview?.repair_rate || 0) * 100)}%</span>
+        </div>
+
+        {["brief_extraction", "assistant_reply"].map((task) => {
+          const item = quality?.latest_by_task?.[task];
+          if (!item) return null;
+          return (
+            <div key={task} style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+              <div style={qualitySepStyle} />
+              <span style={{ ...qualityLabelStyle, textTransform: "none" }}>{task}</span>
+              <span style={{ ...qualityValueStyle, fontSize: 11 }}>
+                {item.provider || "\u2014"}/{item.model || "\u2014"} s{item.quality_score ?? 0}
+                {item.fallback_used ? " fb" : ""}
+                {item.repair_applied ? " rp" : ""}
+                {item.latency_ms ? ` ${item.latency_ms}ms` : ""}
+              </span>
+            </div>
+          );
+        })}
+      </motion.div>
+
+      {/* ── Brief Status Panel ── */}
+      <motion.section variants={fadeUp} className="hero-panel">
         <div className="panel-header">
-          <div>
-            <div className="eyebrow">Brief status</div>
-            <h2>Текущий growth-brief</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={iconBoxStyle}>
+              <Brain size={18} />
+            </div>
+            <div>
+              <div className="eyebrow">Growth Brief</div>
+              <h2 style={{ fontSize: "1.3rem" }}>
+                {thread?.brief?.assistant_ready ? "Brief ready" : "Brief in progress"}
+              </h2>
+            </div>
           </div>
           <div className="badge-row">
-            <span className="pill">Готовность: {Math.round(Number(thread?.brief?.completeness_score || 0) * 100)}%</span>
-            <span className="pill">{thread?.brief?.assistant_ready ? "Можно переходить к креативу" : "Нужны ещё ответы"}</span>
+            <span className="pill">{completeness}%</span>
+            <span className={`pill ${thread?.brief?.assistant_ready ? "" : "warning"}`}>
+              {thread?.brief?.assistant_ready ? "Ready for creative" : "Needs more input"}
+            </span>
           </div>
         </div>
-        {statusMessage ? <div className="status-banner">{statusMessage}</div> : null}
-        <div className="actions-row">
-          <button className="primary-button" type="button" disabled={busy} onClick={() => void startBrief()}>
-            {busy ? "Запускаем…" : "Запустить или обновить brief"}
-          </button>
-        </div>
-        <div className="inline-note">
-          Не хватает: {(thread?.brief?.missing_fields || []).length ? (thread?.brief?.missing_fields || []).join(", ") : "brief уже достаточно заполнен"}
-        </div>
-        {jobState ? (
-          <div className="inline-note">
-            Последняя job: #{jobState.id} · {jobState.status}
-            {jobState.error_code ? ` · ${jobState.error_code}` : ""}
-          </div>
-        ) : null}
-      </section>
 
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="eyebrow">AI quality</div>
-            <h2>Качество последней генерации</h2>
-          </div>
-        </div>
-        <div className="status-grid">
-          <div className="info-block">
-            <strong>Средний score</strong>
-            <span>{quality?.overview?.avg_quality_score ?? 0}</span>
-          </div>
-          <div className="info-block">
-            <strong>Fallback rate</strong>
-            <span>{Math.round(Number(quality?.overview?.fallback_rate || 0) * 100)}%</span>
-          </div>
-          <div className="info-block">
-            <strong>Repair rate</strong>
-            <span>{Math.round(Number(quality?.overview?.repair_rate || 0) * 100)}%</span>
-          </div>
-        </div>
-        <div className="field-list">
-          {["brief_extraction", "assistant_reply"].map((task) => {
-            const item = quality?.latest_by_task?.[task];
-            if (!item) {
-              return null;
-            }
-            return (
-              <div className="field-row" key={task}>
-                <strong>{task}</strong>
-                <span className="field-value">
-                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
-                  {item.fallback_used ? " · fallback" : ""}
-                  {item.repair_applied ? " · repair" : ""}
-                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+        <AnimatePresence mode="wait">
+          {statusMessage && (
+            <motion.div
+              key="status"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              style={statusBannerStyle}
+            >
+              {statusMessage}
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-      <section className="two-column-grid">
-        <article className="panel">
+        {/* Processing animation */}
+        <AnimatePresence>
+          {busy && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              style={processingBarStyle}
+            >
+              <Loader size={14} style={{ animation: "spin 1s linear infinite" }} />
+              <span style={{ fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace", fontSize: 13 }}>
+                Processing
+              </span>
+              <span style={blinkingCursorStyle}>_</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 8 }}>
+          <motion.button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void startBrief()}
+            whileHover={{ scale: 1.02, boxShadow: "0 0 24px rgba(0, 255, 136, 0.3)" }}
+            whileTap={{ scale: 0.98 }}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Brain size={15} />
+            {busy ? "Launching..." : "Start / Update Brief"}
+          </motion.button>
+
+          {jobState && (
+            <span style={{ fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace", fontSize: 12, color: "var(--muted)" }}>
+              job #{jobState.id} {jobState.status}
+              {jobState.error_code ? ` \u00b7 ${jobState.error_code}` : ""}
+            </span>
+          )}
+        </div>
+
+        {missingFields.length > 0 && (
+          <div style={{ marginTop: 12, fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace", fontSize: 12, color: "var(--warning)" }}>
+            Missing: {missingFields.join(", ")}
+          </div>
+        )}
+        {missingFields.length === 0 && thread && (
+          <div style={{ marginTop: 12, fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace", fontSize: 12, color: "var(--accent)" }}>
+            Brief sufficiently filled
+          </div>
+        )}
+      </motion.section>
+
+      {/* ── Two-column: Chat + Recommendations ── */}
+      <div className="two-column-grid">
+        {/* Chat Thread */}
+        <motion.article variants={fadeUp} className="panel" style={{ display: "flex", flexDirection: "column" }}>
           <div className="panel-header">
-            <div>
-              <div className="eyebrow">Dialogue</div>
-              <h2>Диалог с ассистентом</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={iconBoxStyle}>
+                <Sparkles size={16} />
+              </div>
+              <div>
+                <div className="eyebrow">Dialogue</div>
+                <h2 style={{ fontSize: "1.1rem" }}>Assistant Thread</h2>
+              </div>
             </div>
           </div>
-          <div className="thread-list">
-            {(thread?.messages || []).length ? (
-              thread!.messages.map((item) => (
-                <div className={`thread-item ${item.role === "assistant" ? "assistant" : "user"}`} key={item.id}>
-                  <div className="thread-meta">
-                    <strong>{item.role === "assistant" ? "Ассистент" : "Вы"}</strong>
-                    <span>{item.created_at || "—"}</span>
-                  </div>
-                  <p>{item.content}</p>
-                </div>
-              ))
-            ) : (
-              <p className="muted">Пока нет сообщений. Запустите growth-brief и ответьте на вопросы ассистента.</p>
-            )}
+
+          <div style={threadContainerStyle}>
+            <AnimatePresence initial={false}>
+              {(thread?.messages || []).length ? (
+                thread!.messages.map((item) => (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.2 }}
+                    style={item.role === "assistant" ? assistantMsgStyle : userMsgStyle}
+                  >
+                    <div style={msgMetaStyle}>
+                      <strong style={{ color: item.role === "assistant" ? "var(--accent)" : "var(--text)" }}>
+                        {item.role === "assistant" ? "> Assistant" : "You"}
+                      </strong>
+                      <span style={{ color: "var(--muted)", fontSize: 11, fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace" }}>
+                        {item.created_at || "\u2014"}
+                      </span>
+                    </div>
+                    <p style={{
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      color: "var(--text-secondary)",
+                      fontFamily: item.role === "assistant"
+                        ? "\"JetBrains Mono Variable\", \"JetBrains Mono\", \"Fira Code\", monospace"
+                        : "inherit",
+                      fontSize: item.role === "assistant" ? 13 : 14,
+                      lineHeight: 1.6,
+                    }}>
+                      {item.content}
+                    </p>
+                  </motion.div>
+                ))
+              ) : (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  style={{
+                    color: "var(--muted)",
+                    textAlign: "center",
+                    fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+                    fontSize: 13,
+                    padding: "32px 0",
+                  }}
+                >
+                  No messages yet. Start a growth-brief to begin.
+                </motion.p>
+              )}
+            </AnimatePresence>
+            <div ref={threadEndRef} />
           </div>
-          <form className="stack-form" onSubmit={sendMessage}>
+
+          {/* Input Area */}
+          <form onSubmit={sendMessage} style={{ marginTop: "auto", display: "grid", gap: 10, paddingTop: 16 }}>
             <textarea
-              className="assistant-textarea"
               value={message}
               onChange={(event) => setMessage(event.target.value)}
-              placeholder="Опишите продукт, оффер, аудиторию, цели в Telegram и тон общения."
+              placeholder="Describe your product, offer, audience, Telegram goals, and tone of voice..."
+              style={textareaStyle}
+              rows={3}
             />
-            <button className="secondary-button" type="submit" disabled={busy}>
-              Отправить ответ ассистенту
-            </button>
+            <motion.button
+              className="primary-button"
+              type="submit"
+              disabled={busy}
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.98 }}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+            >
+              <Send size={14} />
+              {busy ? "Sending..." : "Send Message"}
+            </motion.button>
           </form>
-        </article>
+        </motion.article>
 
-        <article className="panel">
+        {/* Recommendations */}
+        <motion.article variants={fadeUp} className="panel">
           <div className="panel-header">
-            <div>
-              <div className="eyebrow">Recommendations</div>
-              <h2>Следующие шаги</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={iconBoxStyle}>
+                <BarChart2 size={16} />
+              </div>
+              <div>
+                <div className="eyebrow">Recommendations</div>
+                <h2 style={{ fontSize: "1.1rem" }}>Next Steps</h2>
+              </div>
             </div>
           </div>
-          <div className="thread-list">
-            {(thread?.recommendations || []).length ? (
-              thread!.recommendations.map((item) => (
-                <div className="thread-item assistant" key={item.id}>
-                  <div className="thread-meta">
-                    <strong>{item.title}</strong>
-                    <span>{item.status}</span>
-                  </div>
-                  <p>{item.body}</p>
-                </div>
-              ))
-            ) : (
-              <p className="muted">Когда brief начнёт заполняться, здесь появятся рекомендации по следующему шагу.</p>
-            )}
+
+          <div style={{ display: "grid", gap: 8 }}>
+            <AnimatePresence initial={false}>
+              {(thread?.recommendations || []).length ? (
+                thread!.recommendations.map((item, idx) => (
+                  <motion.div
+                    key={item.id}
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.2, delay: idx * 0.05 }}
+                    style={recItemStyle}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <strong style={{
+                        fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+                        fontSize: 13,
+                        color: "var(--accent)",
+                      }}>
+                        {">"} {item.title}
+                      </strong>
+                      <span className="pill" style={{ fontSize: 10 }}>{item.status}</span>
+                    </div>
+                    <p style={{
+                      margin: 0,
+                      whiteSpace: "pre-wrap",
+                      color: "var(--text-secondary)",
+                      fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+                      fontSize: 12,
+                      lineHeight: 1.5,
+                    }}>
+                      {item.body}
+                    </p>
+                  </motion.div>
+                ))
+              ) : (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  style={{
+                    color: "var(--muted)",
+                    textAlign: "center",
+                    fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+                    fontSize: 13,
+                    padding: "32px 0",
+                  }}
+                >
+                  Recommendations will appear as the brief fills in.
+                </motion.p>
+              )}
+            </AnimatePresence>
           </div>
-        </article>
-      </section>
-    </div>
+        </motion.article>
+      </div>
+
+      {/* Inline keyframes for spinner */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </motion.div>
   );
 }
+
+/* ── Inline style objects ── */
+
+const iconBoxStyle: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  display: "grid",
+  placeItems: "center",
+  background: "var(--accent-glow)",
+  color: "var(--accent)",
+  flexShrink: 0,
+};
+
+const qualityBarStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 16,
+  padding: "10px 20px",
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", \"Fira Code\", monospace",
+  fontSize: 12,
+  color: "var(--text-secondary)",
+  flexWrap: "wrap",
+};
+
+const qualityStatStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  whiteSpace: "nowrap",
+};
+
+const qualityLabelStyle: React.CSSProperties = {
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: "var(--muted)",
+};
+
+const qualityValueStyle: React.CSSProperties = {
+  fontWeight: 700,
+  color: "var(--text)",
+  fontSize: 13,
+};
+
+const qualitySepStyle: React.CSSProperties = {
+  width: 1,
+  height: 16,
+  background: "var(--border)",
+  flexShrink: 0,
+};
+
+const statusBannerStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: 8,
+  background: "rgba(0, 255, 136, 0.06)",
+  border: "1px solid rgba(0, 255, 136, 0.15)",
+  color: "var(--accent)",
+  fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+  fontSize: 13,
+  overflow: "hidden",
+};
+
+const processingBarStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "8px 14px",
+  background: "var(--surface-2)",
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  color: "var(--accent)",
+  marginTop: 8,
+};
+
+const blinkingCursorStyle: React.CSSProperties = {
+  animation: "terminalBlink 1s step-end infinite",
+  fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace",
+  fontWeight: 700,
+  color: "var(--accent)",
+};
+
+const threadContainerStyle: React.CSSProperties = {
+  display: "grid",
+  gap: 10,
+  maxHeight: 480,
+  overflowY: "auto",
+  paddingRight: 4,
+};
+
+const assistantMsgStyle: React.CSSProperties = {
+  padding: 14,
+  borderRadius: 12,
+  background: "var(--surface-2)",
+  borderLeft: "3px solid var(--accent)",
+  display: "grid",
+  gap: 6,
+};
+
+const userMsgStyle: React.CSSProperties = {
+  padding: 14,
+  borderRadius: 12,
+  background: "var(--surface)",
+  border: "1px solid var(--border)",
+  display: "grid",
+  gap: 6,
+  marginLeft: 32,
+};
+
+const msgMetaStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  fontSize: 12,
+};
+
+const textareaStyle: React.CSSProperties = {
+  width: "100%",
+  minHeight: 80,
+  padding: 14,
+  borderRadius: 12,
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
+  color: "var(--text)",
+  resize: "vertical",
+  fontFamily: "inherit",
+  fontSize: 14,
+  outline: "none",
+};
+
+const recItemStyle: React.CSSProperties = {
+  padding: 14,
+  borderRadius: 12,
+  background: "var(--surface-2)",
+  border: "1px solid var(--border)",
+  display: "grid",
+  gap: 8,
+};

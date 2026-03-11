@@ -1,4 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, useCallback, DragEvent } from "react";
+import { motion } from "framer-motion";
+import { Upload, Shield, Link, FileText, Clock, AlertTriangle, CheckCircle, User } from "lucide-react";
 import { apiFetch } from "../api";
 import { useAuth } from "../auth";
 
@@ -55,6 +57,51 @@ type TimelineResponse = {
   total: number;
 };
 
+/* ── animation helpers ── */
+
+const container = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { staggerChildren: 0.07 } },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as const } },
+};
+
+/* ── risk pill color helper ── */
+
+function riskColor(level: string): { bg: string; fg: string } {
+  const l = level.toLowerCase();
+  if (l === "low" || l === "safe") return { bg: "rgba(0,255,136,0.15)", fg: "var(--accent)" };
+  if (l === "medium" || l === "moderate") return { bg: "rgba(255,170,0,0.15)", fg: "var(--warning)" };
+  return { bg: "rgba(255,68,68,0.15)", fg: "var(--danger)" };
+}
+
+/* ── status pill color helper ── */
+
+function statusColor(status: string): { bg: string; fg: string } {
+  const s = status.toLowerCase();
+  if (s === "active" || s === "ok" || s === "healthy" || s === "connected")
+    return { bg: "rgba(0,255,136,0.15)", fg: "var(--accent)" };
+  if (s === "frozen" || s === "quarantine" || s === "warning")
+    return { bg: "rgba(255,170,0,0.15)", fg: "var(--warning)" };
+  if (s === "banned" || s === "error" || s === "dead")
+    return { bg: "rgba(255,68,68,0.15)", fg: "var(--danger)" };
+  return { bg: "rgba(68,136,255,0.15)", fg: "var(--info)" };
+}
+
+/* ── timeline event icon ── */
+
+function timelineIcon(kind: string) {
+  const k = kind.toLowerCase();
+  if (k.includes("audit") || k.includes("check")) return <Shield size={14} />;
+  if (k.includes("note") || k.includes("manual")) return <FileText size={14} />;
+  if (k.includes("proxy") || k.includes("bind")) return <Link size={14} />;
+  if (k.includes("upload") || k.includes("import")) return <Upload size={14} />;
+  return <Clock size={14} />;
+}
+
 export function AccountsPage() {
   const { accessToken } = useAuth();
   const [accounts, setAccounts] = useState<AccountsResponse>({ items: [], total: 0 });
@@ -68,11 +115,10 @@ export function AccountsPage() {
   const [busy, setBusy] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
-  const loadState = async () => {
-    if (!accessToken) {
-      return;
-    }
+  const loadState = useCallback(async () => {
+    if (!accessToken) return;
     const [accountsPayload, proxiesPayload] = await Promise.all([
       apiFetch<AccountsResponse>("/v1/web/accounts", { accessToken }),
       apiFetch<ProxiesResponse>("/v1/web/proxies/available", { accessToken }),
@@ -85,11 +131,11 @@ export function AccountsPage() {
     if (proxiesPayload.items.length && selectedProxyId === null) {
       setSelectedProxyId(proxiesPayload.items[0].id);
     }
-  };
+  }, [accessToken, selectedAccountId, selectedProxyId]);
 
   useEffect(() => {
     void loadState();
-  }, [accessToken]);
+  }, [loadState]);
 
   const selectedAccount = useMemo(
     () => accounts.items.find((item) => item.id === selectedAccountId) || null,
@@ -135,9 +181,7 @@ export function AccountsPage() {
   };
 
   const bindProxy = async () => {
-    if (!accessToken || !selectedAccountId) {
-      return;
-    }
+    if (!accessToken || !selectedAccountId) return;
     setBusy(true);
     setStatusMessage("");
     try {
@@ -160,9 +204,7 @@ export function AccountsPage() {
   };
 
   const runAudit = async (accountId: number) => {
-    if (!accessToken) {
-      return;
-    }
+    if (!accessToken) return;
     setBusy(true);
     setStatusMessage("");
     try {
@@ -180,9 +222,7 @@ export function AccountsPage() {
   };
 
   const saveNotes = async () => {
-    if (!accessToken || !selectedAccountId) {
-      return;
-    }
+    if (!accessToken || !selectedAccountId) return;
     setBusy(true);
     setStatusMessage("");
     try {
@@ -202,27 +242,56 @@ export function AccountsPage() {
     }
   };
 
+  /* ── drag-and-drop handlers ── */
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    for (const f of files) {
+      if (f.name.endsWith(".session")) setSessionFile(f);
+      if (f.name.endsWith(".json")) setMetadataFile(f);
+    }
+  };
+
   return (
-    <div className="page-grid">
-      <section className="two-column-grid">
-        <article className="panel">
+    <motion.div
+      className="page-grid"
+      variants={container}
+      initial="hidden"
+      animate="show"
+    >
+      {/* ── Hero info cards ── */}
+      <motion.section className="two-column-grid" variants={item}>
+        <article className="panel" style={{ borderTop: "2px solid var(--accent)" }}>
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Operator path</div>
-              <h2>Что делает система</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Shield size={12} /> Operator path
+              </div>
+              <h2 style={{ color: "var(--text)" }}>Что делает система</h2>
             </div>
           </div>
           <ul className="bullet-list">
-            <li>Принимает pair `.session + .json` и держит canonical storage.</li>
+            <li>Принимает pair <code style={{ color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace", fontSize: 12 }}>.session + .json</code> и держит canonical storage.</li>
             <li>Показывает прокси, audit, lifecycle и следующий рекомендуемый шаг.</li>
             <li>Сохраняет историю действий и ручные заметки без запуска боевых Telegram-side действий.</li>
           </ul>
         </article>
-        <article className="panel">
+        <article className="panel" style={{ borderTop: "2px solid var(--accent)" }}>
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Operator path</div>
-              <h2>Что делает оператор вручную</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <User size={12} /> Operator path
+              </div>
+              <h2 style={{ color: "var(--text)" }}>Что делает оператор вручную</h2>
             </div>
           </div>
           <ul className="bullet-list">
@@ -231,67 +300,171 @@ export function AccountsPage() {
             <li>Решает, когда аккаунт безопасно двигать дальше, не опираясь на silent automation.</li>
           </ul>
         </article>
-      </section>
+      </motion.section>
 
-      <section className="panel">
+      {/* ── Upload section ── */}
+      <motion.section className="panel" variants={item}>
         <div className="panel-header">
           <div>
-            <div className="eyebrow">Step 1</div>
-            <h2>Загрузите pair `.session + .json`</h2>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Upload size={12} /> Step 1
+            </div>
+            <h2 style={{ color: "var(--text)" }}>Загрузите pair .session + .json</h2>
           </div>
         </div>
         <form className="stack-form" onSubmit={uploadPair}>
-          <label className="field">
-            <span>Файл `.session`</span>
-            <input type="file" accept=".session" onChange={(event) => setSessionFile(event.target.files?.[0] || null)} />
-          </label>
-          <label className="field">
-            <span>Файл `.json`</span>
-            <input type="file" accept=".json" onChange={(event) => setMetadataFile(event.target.files?.[0] || null)} />
-          </label>
-          <button className="primary-button" type="submit" disabled={busy}>
-            {busy ? "Загружаем…" : "Загрузить pair"}
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            style={{
+              border: `2px dashed ${dragOver ? "var(--accent)" : "var(--border-bright)"}`,
+              borderRadius: 12,
+              padding: 32,
+              textAlign: "center",
+              background: dragOver ? "var(--accent-glow)" : "var(--surface-2)",
+              transition: "all 200ms ease",
+              cursor: "pointer",
+            }}
+          >
+            <Upload
+              size={32}
+              style={{ color: dragOver ? "var(--accent)" : "var(--muted)", marginBottom: 12 }}
+            />
+            <p style={{ color: "var(--text-secondary)", margin: "0 0 16px 0", fontSize: 13 }}>
+              Перетащите файлы сюда или выберите вручную
+            </p>
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr", maxWidth: 500, margin: "0 auto" }}>
+              <label className="field" style={{ textAlign: "left" }}>
+                <span style={{ color: "var(--accent)", fontSize: 12, fontWeight: 500 }}>.session</span>
+                <input
+                  type="file"
+                  accept=".session"
+                  onChange={(event) => setSessionFile(event.target.files?.[0] || null)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                  }}
+                />
+                {sessionFile && (
+                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
+                    <CheckCircle size={10} style={{ marginRight: 4 }} />{sessionFile.name}
+                  </span>
+                )}
+              </label>
+              <label className="field" style={{ textAlign: "left" }}>
+                <span style={{ color: "var(--accent)", fontSize: 12, fontWeight: 500 }}>.json</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(event) => setMetadataFile(event.target.files?.[0] || null)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                  }}
+                />
+                {metadataFile && (
+                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
+                    <CheckCircle size={10} style={{ marginRight: 4 }} />{metadataFile.name}
+                  </span>
+                )}
+              </label>
+            </div>
+          </div>
+          <button className="primary-button" type="submit" disabled={busy} style={{ justifySelf: "start" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Upload size={14} />
+              {busy ? "Загружаем..." : "Загрузить pair"}
+            </span>
           </button>
         </form>
-      </section>
+      </motion.section>
 
-      <section className="two-column-grid">
+      {/* ── Proxy bind + Audit ── */}
+      <motion.section className="two-column-grid" variants={item}>
         <article className="panel">
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Step 2</div>
-              <h2>Привяжите живой прокси</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Link size={12} /> Step 2
+              </div>
+              <h2 style={{ color: "var(--text)" }}>Привяжите живой прокси</h2>
             </div>
           </div>
-          <div className="field">
-            <span>Аккаунт</span>
-            <select value={selectedAccountId ?? ""} onChange={(event) => setSelectedAccountId(Number(event.target.value))}>
-              {accounts.items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.phone}
+          <div className="field" style={{ marginBottom: 12 }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>Аккаунт</span>
+            <select
+              value={selectedAccountId ?? ""}
+              onChange={(event) => setSelectedAccountId(Number(event.target.value))}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                fontFamily: "'JetBrains Mono Variable', monospace",
+                fontSize: 13,
+              }}
+            >
+              {accounts.items.map((a) => (
+                <option key={a.id} value={a.id}>{a.phone}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ marginBottom: 12 }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>Прокси из пула</span>
+            <select
+              value={selectedProxyId ?? ""}
+              onChange={(event) => setSelectedProxyId(Number(event.target.value))}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                fontSize: 13,
+              }}
+            >
+              {(proxies?.items || []).map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.url} - {p.health_status}
                 </option>
               ))}
             </select>
           </div>
-          <div className="field">
-            <span>Прокси из пула</span>
-            <select value={selectedProxyId ?? ""} onChange={(event) => setSelectedProxyId(Number(event.target.value))}>
-              {(proxies?.items || []).map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.url} • {item.health_status}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="field">
-            <span>Или добавьте proxy string вручную</span>
+          <label className="field" style={{ marginBottom: 14 }}>
+            <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>Или добавьте proxy string вручную</span>
             <input
               value={manualProxy}
               onChange={(event) => setManualProxy(event.target.value)}
               placeholder="socks5://user:pass@host:port"
+              style={{
+                padding: "10px 14px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                fontFamily: "'JetBrains Mono Variable', monospace",
+                fontSize: 13,
+              }}
             />
           </label>
-          <button className="secondary-button" type="button" disabled={busy || !selectedAccountId} onClick={() => void bindProxy()}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy || !selectedAccountId}
+            onClick={() => void bindProxy()}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Link size={14} />
             Привязать прокси
           </button>
         </article>
@@ -299,38 +472,99 @@ export function AccountsPage() {
         <article className="panel">
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Step 3</div>
-              <h2>Безопасный audit</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Shield size={12} /> Step 3
+              </div>
+              <h2 style={{ color: "var(--text)" }}>Безопасный audit</h2>
             </div>
           </div>
-          <p className="muted">
-            Этот шаг показывает, что сейчас видит система: session status, lifecycle и recommended next action. До конца Sprint 3
-            это safe shell без реального execution path.
+          <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 16px 0" }}>
+            Этот шаг показывает, что сейчас видит система: session status, lifecycle и recommended next action.
+            До конца Sprint 3 это safe shell без реального execution path.
           </p>
           <button
             className="ghost-button"
             type="button"
             disabled={busy || !selectedAccountId}
             onClick={() => selectedAccountId && void runAudit(selectedAccountId)}
+            style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}
           >
+            <Shield size={14} />
             Запустить audit для выбранного аккаунта
           </button>
           {selectedAccount ? (
-            <div className="inline-note">
-              Для {selectedAccount.phone}: следующий рекомендуемый шаг — {selectedAccount.recommended_next_action}
+            <div style={{
+              marginTop: 8,
+              padding: "10px 14px",
+              borderRadius: 8,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+              fontSize: 13,
+              color: "var(--text-secondary)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}>
+              <AlertTriangle size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />
+              <span>
+                Для <span style={{ color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>{selectedAccount.phone}</span>: следующий шаг —{" "}
+                <strong style={{ color: "var(--text)" }}>{selectedAccount.recommended_next_action}</strong>
+              </span>
             </div>
           ) : null}
         </article>
-      </section>
+      </motion.section>
 
-      <section className="panel wide">
+      {/* ── Accounts table ── */}
+      <motion.section className="panel wide" variants={item}>
         <div className="panel-header">
           <div>
-            <div className="eyebrow">Account audit</div>
-            <h2>Аккаунты в workspace</h2>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <User size={12} /> Account audit
+            </div>
+            <h2 style={{ color: "var(--text)" }}>Аккаунты в workspace</h2>
           </div>
+          <span style={{
+            fontFamily: "'JetBrains Mono Variable', monospace",
+            fontSize: 12,
+            color: "var(--muted)",
+          }}>
+            {accounts.total} total
+          </span>
         </div>
-        {statusMessage ? <div className="status-banner">{statusMessage}</div> : null}
+
+        {statusMessage ? (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 8,
+              background: statusMessage.toLowerCase().includes("fail") || statusMessage.toLowerCase().includes("ошибк")
+                ? "rgba(255,68,68,0.1)"
+                : "rgba(0,255,136,0.1)",
+              color: statusMessage.toLowerCase().includes("fail") || statusMessage.toLowerCase().includes("ошибк")
+                ? "var(--danger)"
+                : "var(--accent)",
+              border: `1px solid ${
+                statusMessage.toLowerCase().includes("fail") || statusMessage.toLowerCase().includes("ошибк")
+                  ? "rgba(255,68,68,0.2)"
+                  : "rgba(0,255,136,0.2)"
+              }`,
+              fontSize: 13,
+              marginBottom: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            {statusMessage.toLowerCase().includes("fail") || statusMessage.toLowerCase().includes("ошибк")
+              ? <AlertTriangle size={14} />
+              : <CheckCircle size={14} />}
+            {statusMessage}
+          </motion.div>
+        ) : null}
+
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -346,76 +580,209 @@ export function AccountsPage() {
               </tr>
             </thead>
             <tbody>
-              {accounts.items.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.phone}</td>
-                  <td>{item.proxy || "—"}</td>
-                  <td>{item.session_status}</td>
-                  <td>{item.last_active || "—"}</td>
-                  <td>{item.ban_risk_level}</td>
-                  <td>{item.lifecycle_stage}</td>
-                  <td>{item.recommended_next_action}</td>
-                  <td>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => {
-                        setSelectedAccountId(item.id);
-                        void runAudit(item.id);
-                      }}
-                      disabled={busy}
-                    >
-                      Проверить
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {accounts.items.map((a) => {
+                const risk = riskColor(a.ban_risk_level);
+                const status = statusColor(a.session_status);
+                return (
+                  <tr
+                    key={a.id}
+                    onClick={() => setSelectedAccountId(a.id)}
+                    style={{
+                      cursor: "pointer",
+                      background: a.id === selectedAccountId ? "var(--surface-2)" : undefined,
+                    }}
+                  >
+                    <td style={{
+                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontSize: 13,
+                      fontWeight: 500,
+                      color: "var(--text)",
+                    }}>
+                      {a.phone}
+                    </td>
+                    <td style={{
+                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontSize: 12,
+                      color: a.proxy ? "var(--text-secondary)" : "var(--muted)",
+                    }}>
+                      {a.proxy || "---"}
+                    </td>
+                    <td>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "3px 10px",
+                        borderRadius: 999,
+                        background: status.bg,
+                        color: status.fg,
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}>
+                        {a.session_status}
+                      </span>
+                    </td>
+                    <td style={{
+                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontSize: 12,
+                      color: "var(--muted)",
+                    }}>
+                      {a.last_active || "---"}
+                    </td>
+                    <td>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "3px 10px",
+                        borderRadius: 999,
+                        background: risk.bg,
+                        color: risk.fg,
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}>
+                        {a.ban_risk_level}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                      {a.lifecycle_stage}
+                    </td>
+                    <td style={{ fontSize: 12, color: "var(--text-secondary)", maxWidth: 220 }}>
+                      {a.recommended_next_action}
+                    </td>
+                    <td>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedAccountId(a.id);
+                          void runAudit(a.id);
+                        }}
+                        disabled={busy}
+                        style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+                      >
+                        <Shield size={12} />
+                        Проверить
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
-      </section>
+      </motion.section>
 
-      <section className="two-column-grid">
+      {/* ── Notes + Timeline ── */}
+      <motion.section className="two-column-grid" variants={item}>
         <article className="panel">
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Manual notes</div>
-              <h2>Заметки оператора</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <FileText size={12} /> Manual notes
+              </div>
+              <h2 style={{ color: "var(--text)" }}>Заметки оператора</h2>
             </div>
           </div>
           <textarea
-            className="notes-input"
             value={notesDraft}
             onChange={(event) => setNotesDraft(event.target.value)}
             placeholder="Зафиксируйте, что оператор проверил руками и что безопасно делать дальше."
+            style={{
+              width: "100%",
+              minHeight: 150,
+              padding: 14,
+              borderRadius: 12,
+              border: "1px solid var(--border)",
+              background: "var(--surface-2)",
+              color: "var(--text)",
+              resize: "vertical",
+              fontFamily: "inherit",
+              fontSize: 13,
+              lineHeight: 1.5,
+            }}
           />
-          <button className="secondary-button" type="button" disabled={busy || !selectedAccountId} onClick={() => void saveNotes()}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy || !selectedAccountId}
+            onClick={() => void saveNotes()}
+            style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}
+          >
+            <FileText size={14} />
             Сохранить заметку
           </button>
         </article>
 
-        <article className="panel">
+        <article className="panel" style={{ borderLeft: "2px solid var(--accent)" }}>
           <div className="panel-header">
             <div>
-              <div className="eyebrow">Timeline</div>
-              <h2>История шагов</h2>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Clock size={12} /> Timeline
+              </div>
+              <h2 style={{ color: "var(--text)" }}>История шагов</h2>
             </div>
           </div>
-          <div className="timeline-list">
+          <div className="terminal-window" style={{ maxHeight: 360 }}>
             {(timeline?.items || []).length ? (
-              (timeline?.items || []).map((item, index) => (
-                <div className="timeline-item" key={`${item.kind}-${item.created_at || index}`}>
-                  <strong>{item.title}</strong>
-                  <span>{item.created_at || "—"}</span>
-                  {item.notes ? <p>{item.notes}</p> : null}
+              (timeline?.items || []).map((t, index) => (
+                <div
+                  key={`${t.kind}-${t.created_at || index}`}
+                  className="terminal-line"
+                  style={{
+                    padding: "8px 0",
+                    borderBottom: index < (timeline?.items || []).length - 1 ? "1px solid var(--border)" : "none",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                  }}
+                >
+                  <span style={{
+                    color: "var(--accent)",
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    marginTop: 2,
+                  }}>
+                    {timelineIcon(t.kind)}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <strong style={{ color: "var(--text)", fontSize: 13 }}>{t.title}</strong>
+                      <span style={{
+                        color: "var(--muted)",
+                        fontSize: 11,
+                        fontFamily: "'JetBrains Mono Variable', monospace",
+                        flexShrink: 0,
+                      }}>
+                        {t.created_at || "---"}
+                      </span>
+                    </div>
+                    {t.notes ? (
+                      <p style={{ margin: "4px 0 0", color: "var(--text-secondary)", fontSize: 12, whiteSpace: "pre-wrap" }}>
+                        {t.notes}
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               ))
             ) : (
-              <p className="muted">Пока нет истории шагов. После audit и заметок она появится здесь.</p>
+              <div style={{
+                padding: "24px 0",
+                textAlign: "center",
+                color: "var(--muted)",
+                fontSize: 13,
+                fontFamily: "'JetBrains Mono Variable', monospace",
+              }}>
+                <Clock size={20} style={{ marginBottom: 8, opacity: 0.5 }} />
+                <p style={{ margin: 0 }}>Пока нет истории шагов.</p>
+                <p style={{ margin: "4px 0 0", fontSize: 11 }}>После audit и заметок она появится здесь.</p>
+              </div>
             )}
           </div>
         </article>
-      </section>
-    </div>
+      </motion.section>
+    </motion.div>
   );
 }

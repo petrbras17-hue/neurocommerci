@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import { FileText, CheckCircle, AlertCircle, Loader } from "lucide-react";
 import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
@@ -38,6 +40,36 @@ type QualitySummary = {
     }
   >;
 };
+
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06 },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as const } },
+};
+
+type FieldCardProps = {
+  label: string;
+  value: string;
+};
+
+function FieldCard({ label, value }: FieldCardProps) {
+  const isEmpty = !value || value === "—";
+  return (
+    <motion.div variants={item} className="ctx-field-card">
+      <span className="ctx-field-label">{label}</span>
+      <span className={isEmpty ? "ctx-field-value ctx-field-value--empty" : "ctx-field-value"}>
+        {isEmpty ? "Не заполнено" : value}
+      </span>
+    </motion.div>
+  );
+}
 
 export function ContextPage() {
   const { accessToken } = useAuth();
@@ -104,30 +136,189 @@ export function ContextPage() {
   };
 
   const brief = context?.brief;
+  const completeness = Math.round(Number(brief?.completeness_score || 0) * 100);
+  const isConfirmed = !!brief?.confirmed_at;
+  const qualityItem = quality?.latest_by_task?.["assistant_reply"];
 
   return (
     <div className="page-grid">
-      <section className="hero-panel">
-        <div className="eyebrow">Business context</div>
-        <h1>Контекст бизнеса, который будет помнить ассистент</h1>
-        <p>
-          Здесь живёт утверждённый growth-brief: продукт, оффер, ЦА, тональность, цели в Telegram и ссылки на основные assets.
-          Это источник правды для следующих черновиков и рекомендаций.
+      {/* Hero */}
+      <motion.section
+        className="hero-panel"
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <FileText size={20} color="var(--accent)" />
+          <span className="eyebrow">Business context</span>
+        </div>
+        <h1>Контекст бизнеса</h1>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Утверждённый growth-brief: продукт, оффер, ЦА, тональность, цели в Telegram.
+          Источник правды для черновиков и рекомендаций.
         </p>
-      </section>
+      </motion.section>
 
-      <section className="panel">
+      {/* Status bar */}
+      <motion.section
+        className="dash-status-bar"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.1 }}
+      >
+        <div className="dash-status-item">
+          <div className={`dash-status-dot ${completeness >= 80 ? "dash-status-dot--green" : completeness >= 40 ? "dash-status-dot--amber" : "dash-status-dot--red"}`} />
+          <span>Готовность {completeness}%</span>
+        </div>
+        <div className="dash-status-sep" />
+        <div className="dash-status-item">
+          {isConfirmed
+            ? <><CheckCircle size={14} color="var(--accent)" /> <span style={{ color: "var(--accent)" }}>Подтверждён</span></>
+            : <><AlertCircle size={14} color="var(--warning)" /> <span style={{ color: "var(--warning)" }}>Ещё не подтверждён</span></>
+          }
+        </div>
+        <div className="dash-status-sep" />
+        <div className="dash-status-item">
+          <span>Assets: {brief?.assets_count || 0}</span>
+        </div>
+        <div className="dash-status-sep" />
+        <div className="dash-status-item">
+          <span>Drafts: {brief?.draft_count || 0}</span>
+        </div>
+        <div className="dash-status-sep" />
+        <div className="dash-status-item">
+          <span>Assistant: {brief?.assistant_ready ? "Ready" : "Pending"}</span>
+        </div>
+      </motion.section>
+
+      {/* Status message */}
+      {statusMessage ? (
+        <motion.div
+          className="status-banner"
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+        >
+          {statusMessage}
+        </motion.div>
+      ) : null}
+
+      {/* Job state */}
+      {jobState ? (
+        <motion.div
+          className="dash-status-bar"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace", fontSize: 12 }}
+        >
+          <div className="dash-status-item">
+            {jobState.status === "queued" || jobState.status === "running"
+              ? <Loader size={14} color="var(--accent)" style={{ animation: "pulse 1.2s ease-in-out infinite" }} />
+              : jobState.status === "succeeded"
+                ? <CheckCircle size={14} color="var(--accent)" />
+                : <AlertCircle size={14} color="var(--danger)" />
+            }
+            <span>Job #{jobState.id}</span>
+          </div>
+          <div className="dash-status-sep" />
+          <div className="dash-status-item">
+            <span>{jobState.status}</span>
+          </div>
+          {jobState.error_code ? (
+            <>
+              <div className="dash-status-sep" />
+              <div className="dash-status-item">
+                <span style={{ color: "var(--danger)" }}>{jobState.error_code}</span>
+              </div>
+            </>
+          ) : null}
+        </motion.div>
+      ) : null}
+
+      {/* Summary terminal window */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
         <div className="panel-header">
           <div>
-            <div className="eyebrow">Readiness</div>
-            <h2>Статус контекста</h2>
-          </div>
-          <div className="badge-row">
-            <span className="pill">Готовность: {Math.round(Number(brief?.completeness_score || 0) * 100)}%</span>
-            <span className="pill">{brief?.confirmed_at ? "Подтверждён" : "Ещё не подтверждён"}</span>
+            <div className="eyebrow">Summary</div>
+            <h2>Сводка brief</h2>
           </div>
         </div>
-        {statusMessage ? <div className="status-banner">{statusMessage}</div> : null}
+        <div className="terminal-window">
+          <div className="terminal-line">
+            <span className="timestamp">$</span>
+            <span className={brief?.summary_text ? "message white" : "message"}>
+              {brief?.summary_text || "// Сначала ответьте ассистенту, чтобы появилась сводка бизнеса."}
+            </span>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* Context fields — 2-column card grid */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">Fields</div>
+            <h2>Подробные поля контекста</h2>
+          </div>
+        </div>
+        <motion.div
+          className="ctx-field-grid"
+          variants={container}
+          initial="hidden"
+          animate="show"
+        >
+          <FieldCard label="Продукт" value={brief?.product_name || "—"} />
+          <FieldCard label="Оффер" value={brief?.offer_summary || "—"} />
+          <FieldCard label="Целевая аудитория" value={brief?.target_audience || "—"} />
+          <FieldCard label="Тон коммуникации" value={brief?.tone_of_voice || "—"} />
+          <FieldCard label="Конкуренты" value={(brief?.competitors || []).join(", ") || "—"} />
+          <FieldCard label="Боли клиентов" value={(brief?.pain_points || []).join(", ") || "—"} />
+          <FieldCard label="Цели в Telegram" value={(brief?.telegram_goals || []).join(", ") || "—"} />
+          <FieldCard label="Сайт" value={brief?.website_url || "—"} />
+          <FieldCard label="Канал" value={brief?.channel_url || "—"} />
+          <FieldCard label="Бот" value={brief?.bot_url || "—"} />
+        </motion.div>
+      </motion.section>
+
+      {/* Missing fields */}
+      <motion.div
+        className="dash-status-bar"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.25 }}
+        style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace", fontSize: 12 }}
+      >
+        <div className="dash-status-item">
+          <AlertCircle size={14} color="var(--warning)" />
+          <span>
+            Не хватает: {(brief?.missing_fields || []).length ? brief!.missing_fields.join(", ") : "обязательные поля уже собраны"}
+          </span>
+        </div>
+      </motion.div>
+
+      {/* Confirm action */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+      >
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">Action</div>
+            <h2>Подтвердить контекст</h2>
+          </div>
+        </div>
         <div className="info-split">
           <div className="info-block">
             <strong>Что делает система</strong>
@@ -138,137 +329,91 @@ export function ContextPage() {
             <p className="muted">Проверяет summary, исправляет смысловые ошибки и подтверждает только уже осмысленный brief.</p>
           </div>
         </div>
-        <div className="actions-row">
-          <button className="secondary-button" type="button" disabled={busy} onClick={() => void confirm()}>
-            Подтвердить текущий контекст
+        <div className="actions-row" style={{ marginTop: 18 }}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void confirm()}
+            style={busy ? {} : { boxShadow: "0 0 24px rgba(0, 255, 136, 0.25)" }}
+          >
+            {busy ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Loader size={14} style={{ animation: "pulse 1.2s ease-in-out infinite" }} />
+                Подтверждаем...
+              </span>
+            ) : (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <CheckCircle size={14} />
+                Подтвердить текущий контекст
+              </span>
+            )}
           </button>
         </div>
-        <div className="inline-note">
-          Не хватает: {(brief?.missing_fields || []).length ? brief!.missing_fields.join(", ") : "обязательные поля уже собраны"}
-        </div>
-        {jobState ? (
-          <div className="inline-note">
-            Последняя job: #{jobState.id} · {jobState.status}
-            {jobState.error_code ? ` · ${jobState.error_code}` : ""}
-          </div>
-        ) : null}
-      </section>
+      </motion.section>
 
-      <section className="panel">
+      {/* AI Quality */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.35 }}
+      >
         <div className="panel-header">
           <div>
             <div className="eyebrow">AI quality</div>
             <h2>Качество подтверждения контекста</h2>
           </div>
         </div>
-        <div className="field-list">
-          {(() => {
-            const item = quality?.latest_by_task?.["assistant_reply"];
-            if (!item) {
-              return <p className="muted">Качество появится после обработки brief и подтверждения контекста.</p>;
-            }
-            return (
-              <div className="field-row">
-                <strong>Последний assistant flow</strong>
-                <span className="field-value">
-                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
-                  {item.fallback_used ? " · fallback" : ""}
-                  {item.repair_applied ? " · repair" : ""}
-                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
-                </span>
-              </div>
-            );
-          })()}
-        </div>
-      </section>
-
-      <section className="two-column-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Summary</div>
-              <h2>Сводка brief</h2>
+        {qualityItem ? (
+          <div className="dash-status-bar" style={{ background: "transparent", border: "none", padding: 0 }}>
+            <div className="dash-status-item">
+              <span className="ctx-field-label" style={{ marginRight: 4 }}>Provider</span>
+              <span>{qualityItem.provider || "—"}</span>
             </div>
-          </div>
-          <div className="context-item">
-            <p>{brief?.summary_text || "Сначала ответьте ассистенту, чтобы здесь появилась сводка бизнеса."}</p>
-          </div>
-        </article>
-
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Assets</div>
-              <h2>Что уже готово</h2>
+            <div className="dash-status-sep" />
+            <div className="dash-status-item">
+              <span className="ctx-field-label" style={{ marginRight: 4 }}>Model</span>
+              <span>{qualityItem.model || "—"}</span>
             </div>
-          </div>
-          <div className="status-grid">
-            <div className="info-block">
-              <strong>Approved assets</strong>
-              <span>{brief?.assets_count || 0}</span>
+            <div className="dash-status-sep" />
+            <div className="dash-status-item">
+              <span className="ctx-field-label" style={{ marginRight: 4 }}>Score</span>
+              <span style={{ color: qualityItem.quality_score >= 7 ? "var(--accent)" : qualityItem.quality_score >= 4 ? "var(--warning)" : "var(--danger)" }}>
+                {qualityItem.quality_score ?? 0}
+              </span>
             </div>
-            <div className="info-block">
-              <strong>Drafts</strong>
-              <span>{brief?.draft_count || 0}</span>
-            </div>
-            <div className="info-block">
-              <strong>Assistant ready</strong>
-              <span>{brief?.assistant_ready ? "Да" : "Пока нет"}</span>
-            </div>
+            {qualityItem.fallback_used ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item">
+                  <span className="pill warning">fallback</span>
+                </div>
+              </>
+            ) : null}
+            {qualityItem.repair_applied ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item">
+                  <span className="pill info">repair</span>
+                </div>
+              </>
+            ) : null}
+            {qualityItem.latency_ms ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item">
+                  <span>{qualityItem.latency_ms}ms</span>
+                </div>
+              </>
+            ) : null}
           </div>
-        </article>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="eyebrow">Fields</div>
-            <h2>Подробные поля контекста</h2>
-          </div>
-        </div>
-        <div className="field-list">
-          <div className="field-row">
-            <strong>Продукт</strong>
-            <span className="field-value">{brief?.product_name || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Оффер</strong>
-            <span className="field-value">{brief?.offer_summary || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Целевая аудитория</strong>
-            <span className="field-value">{brief?.target_audience || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Тон коммуникации</strong>
-            <span className="field-value">{brief?.tone_of_voice || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Конкуренты</strong>
-            <span className="field-value">{(brief?.competitors || []).join(", ") || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Боли клиентов</strong>
-            <span className="field-value">{(brief?.pain_points || []).join(", ") || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Цели в Telegram</strong>
-            <span className="field-value">{(brief?.telegram_goals || []).join(", ") || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Сайт</strong>
-            <span className="field-value">{brief?.website_url || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Канал</strong>
-            <span className="field-value">{brief?.channel_url || "—"}</span>
-          </div>
-          <div className="field-row">
-            <strong>Бот</strong>
-            <span className="field-value">{brief?.bot_url || "—"}</span>
-          </div>
-        </div>
-      </section>
+        ) : (
+          <p className="muted" style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace", fontSize: 13 }}>
+            // Качество появится после обработки brief и подтверждения контекста.
+          </p>
+        )}
+      </motion.section>
     </div>
   );
 }

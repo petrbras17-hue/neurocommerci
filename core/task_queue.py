@@ -256,6 +256,16 @@ class TaskQueue:
         await pubsub.subscribe(channel)
         return pubsub
 
+    async def ping(self) -> bool:
+        """Return True if Redis is reachable."""
+        if self._redis is None:
+            return False
+        try:
+            await self._redis.ping()
+            return True
+        except Exception:
+            return False
+
 
 # Global instance
 task_queue = TaskQueue()
