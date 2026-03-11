@@ -1045,6 +1045,10 @@ h1, h2, h3, h4, h5, h6 {
     top: 0;
     left: 0;
     width: 260px;
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     z-index: 100;
     box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
   }
