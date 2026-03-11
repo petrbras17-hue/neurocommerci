@@ -64,8 +64,8 @@ export function ParserPage() {
 
   const loadDbDetail = async (dbId: number) => {
     if (!accessToken) return;
-    const payload = await channelDbApi.get(accessToken, dbId);
-    setDbChannels(payload.channels);
+    const payload = await channelDbApi.listChannels(accessToken, dbId);
+    setDbChannels(payload.items);
   };
 
   const loadJobs = async () => {

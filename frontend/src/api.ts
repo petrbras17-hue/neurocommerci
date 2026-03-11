@@ -203,6 +203,9 @@ export const channelDbApi = {
   get: (token: string, id: number) =>
     apiFetch<ChannelDatabase>(`/v1/channel-db/${id}`, { accessToken: token }),
 
+  listChannels: (token: string, dbId: number, limit = 200, offset = 0) =>
+    apiFetch<{ items: ChannelEntry[]; total: number }>(`/v1/channel-db/${dbId}/channels?limit=${limit}&offset=${offset}`, { accessToken: token }),
+
   create: (token: string, name: string) =>
     apiFetch<ChannelDatabase>("/v1/channel-db", { method: "POST", accessToken: token, json: { name } }),
 
