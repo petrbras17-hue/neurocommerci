@@ -6,16 +6,17 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | Field | Value |
 |---|---|
-| Current local branch | `sprint/3-telegram-first-auth-shell` |
-| Last committed HEAD | `c37798e` |
-| VPS safe branch | `sprint/1-tenant-foundation` |
-| VPS safe commit | `2c3c516` |
+| Current local branch | `main` |
+| Last committed HEAD | `2c77889` |
+| VPS safe branch | `main` |
+| VPS safe commit | `2c77889` |
 | VPS deploy path | `/opt/neuro-commenting` |
-| VPS deploy mode | `git checkout` |
+| VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 4 foundation` |
-| Next planned sprint | `AI orchestrator live rollout` |
+| Current completed sprint | `Sprint 5 (Security + Deploy)` |
+| Next planned sprint | `Sprint 6 (Product Stability & Testing)` |
+| Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
 
