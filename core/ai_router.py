@@ -84,6 +84,7 @@ class ProviderCallResult:
     estimated_cost_usd: float = 0.0
     reason_code: str | None = None
     response_meta: dict[str, Any] | None = None
+    quality_flags: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +125,7 @@ class RoutedTaskResult:
 
 
 DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
+    # --- Assistant & Creative ---
     "brief_extraction": TaskPolicy(
         task_type="brief_extraction",
         agent_name="Research & Parser Agent",
@@ -142,12 +144,96 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_MANAGER,
         output_contract_type="json_object",
     ),
+    # --- Parsing & Research ---
     "parser_query_suggestions": TaskPolicy(
         task_type="parser_query_suggestions",
         agent_name="Research & Parser Agent",
         requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
+    "channel_analysis": TaskPolicy(
+        task_type="channel_analysis",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "channel_spam_rating": TaskPolicy(
+        task_type="channel_spam_rating",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    # --- Farm & Commenting ---
+    "farm_comment": TaskPolicy(
+        task_type="farm_comment",
+        agent_name="Farm Commenting Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "farm_comment_hater": TaskPolicy(
+        task_type="farm_comment_hater",
+        agent_name="Farm Commenting Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "farm_comment_expert": TaskPolicy(
+        task_type="farm_comment_expert",
+        agent_name="Farm Commenting Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "farm_auto_reply": TaskPolicy(
+        task_type="farm_auto_reply",
+        agent_name="DM Auto-Reply Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "farm_dm_sales": TaskPolicy(
+        task_type="farm_dm_sales",
+        agent_name="DM Sales Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    # --- Profile & Identity ---
+    "profile_generation": TaskPolicy(
+        task_type="profile_generation",
+        agent_name="Profile Factory Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "profile_bio_generation": TaskPolicy(
+        task_type="profile_bio_generation",
+        agent_name="Profile Factory Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    # --- Anti-Detection & Safety ---
+    "anti_ban_pattern_analysis": TaskPolicy(
+        task_type="anti_ban_pattern_analysis",
+        agent_name="Anti-Detection Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "behavior_pattern_optimization": TaskPolicy(
+        task_type="behavior_pattern_optimization",
+        agent_name="Anti-Detection Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    # --- Chatting & Dialogs ---
+    "neuro_chat_message": TaskPolicy(
+        task_type="neuro_chat_message",
+        agent_name="NeuroChatting Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "neuro_dialog_turn": TaskPolicy(
+        task_type="neuro_dialog_turn",
+        agent_name="NeuroDialog Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    # --- Campaigns & Strategy ---
     "campaign_strategy_summary": TaskPolicy(
         task_type="campaign_strategy_summary",
         agent_name="CEO Strategy Agent",
@@ -155,9 +241,48 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         output_contract_type="json_object",
         approval_required=True,
     ),
+    "campaign_targeting": TaskPolicy(
+        task_type="campaign_targeting",
+        agent_name="Campaign Targeting Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "campaign_ab_test": TaskPolicy(
+        task_type="campaign_ab_test",
+        agent_name="Campaign A/B Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    # --- Analytics & Reporting ---
     "weekly_marketing_report": TaskPolicy(
         task_type="weekly_marketing_report",
         agent_name="Reporting Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "roi_analysis": TaskPolicy(
+        task_type="roi_analysis",
+        agent_name="Analytics Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "competitor_analysis": TaskPolicy(
+        task_type="competitor_analysis",
+        agent_name="Market Intelligence Agent",
+        requested_model_tier=TIER_BOSS,
+        output_contract_type="json_object",
+        approval_required=True,
+    ),
+    # --- Content & Post Analysis ---
+    "post_analysis": TaskPolicy(
+        task_type="post_analysis",
+        agent_name="Content Analysis Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "content_generation": TaskPolicy(
+        task_type="content_generation",
+        agent_name="Content Creator Agent",
         requested_model_tier=TIER_MANAGER,
         output_contract_type="json_object",
     ),
@@ -172,6 +297,51 @@ GEMINI_PRICING_PER_1M: dict[str, tuple[float, float]] = {
     "gemini-3.1-flash-preview": (0.30, 2.50),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),
+}
+
+# Extended model catalog for OpenRouter — used for dynamic model selection
+# Format: model_id -> (input_price_per_1M, output_price_per_1M, supports_json, best_for)
+OPENROUTER_MODEL_CATALOG: dict[str, dict] = {
+    # Boss tier — strategic decisions, complex analysis
+    "openai/gpt-5.4": {"tier": "boss", "json": True, "speed": "slow", "quality": 10},
+    "anthropic/claude-opus-4.6": {"tier": "boss", "json": True, "speed": "slow", "quality": 10},
+    "google/gemini-2.5-pro": {"tier": "boss", "json": True, "speed": "medium", "quality": 9},
+    # Manager tier — commenting, creative, analysis
+    "anthropic/claude-sonnet-4.6": {"tier": "manager", "json": True, "speed": "fast", "quality": 9},
+    "openai/gpt-4.1": {"tier": "manager", "json": True, "speed": "fast", "quality": 8},
+    "openai/gpt-4.1-mini": {"tier": "manager", "json": True, "speed": "fast", "quality": 7},
+    "moonshotai/kimi-k2.5": {"tier": "manager", "json": True, "speed": "fast", "quality": 8},
+    "deepseek/deepseek-r1": {"tier": "manager", "json": True, "speed": "medium", "quality": 9},
+    "deepseek/deepseek-chat-v3-0324": {"tier": "manager", "json": True, "speed": "fast", "quality": 8},
+    "meta-llama/llama-4-maverick": {"tier": "manager", "json": True, "speed": "fast", "quality": 7},
+    "meta-llama/llama-4-scout": {"tier": "manager", "json": True, "speed": "fast", "quality": 7},
+    "qwen/qwen3-235b-a22b": {"tier": "manager", "json": True, "speed": "medium", "quality": 8},
+    "mistralai/mistral-large-2411": {"tier": "manager", "json": True, "speed": "fast", "quality": 7},
+    # Worker tier — fast bulk tasks, commenting, reactions
+    "google/gemini-2.5-flash": {"tier": "worker", "json": True, "speed": "fast", "quality": 7},
+    "anthropic/claude-haiku-4.5": {"tier": "worker", "json": True, "speed": "fast", "quality": 7},
+    "openai/gpt-4.1-nano": {"tier": "worker", "json": True, "speed": "fast", "quality": 6},
+    "deepseek/deepseek-chat-v3-0324:free": {"tier": "worker", "json": True, "speed": "fast", "quality": 6},
+    "meta-llama/llama-4-scout:free": {"tier": "worker", "json": True, "speed": "fast", "quality": 5},
+    "qwen/qwen3-30b-a3b": {"tier": "worker", "json": True, "speed": "fast", "quality": 6},
+    "mistralai/mistral-small-3.1-24b-instruct": {"tier": "worker", "json": True, "speed": "fast", "quality": 6},
+}
+
+# Task-to-model affinity: some tasks work better with specific models
+TASK_MODEL_AFFINITY: dict[str, list[str]] = {
+    "farm_comment": ["openai/gpt-4.1-mini", "anthropic/claude-haiku-4.5", "deepseek/deepseek-chat-v3-0324:free"],
+    "farm_comment_hater": ["openai/gpt-4.1-mini", "moonshotai/kimi-k2.5", "deepseek/deepseek-chat-v3-0324"],
+    "farm_comment_expert": ["anthropic/claude-sonnet-4.6", "openai/gpt-4.1", "deepseek/deepseek-r1"],
+    "farm_auto_reply": ["openai/gpt-4.1-mini", "anthropic/claude-haiku-4.5"],
+    "farm_dm_sales": ["anthropic/claude-sonnet-4.6", "openai/gpt-4.1"],
+    "neuro_chat_message": ["openai/gpt-4.1-mini", "deepseek/deepseek-chat-v3-0324:free"],
+    "neuro_dialog_turn": ["openai/gpt-4.1-mini", "anthropic/claude-haiku-4.5"],
+    "profile_generation": ["openai/gpt-4.1-mini", "google/gemini-2.5-flash"],
+    "channel_analysis": ["google/gemini-2.5-flash", "deepseek/deepseek-chat-v3-0324:free"],
+    "anti_ban_pattern_analysis": ["anthropic/claude-sonnet-4.6", "deepseek/deepseek-r1"],
+    "campaign_strategy_summary": ["openai/gpt-5.4", "anthropic/claude-opus-4.6"],
+    "competitor_analysis": ["openai/gpt-5.4", "anthropic/claude-opus-4.6"],
+    "content_generation": ["anthropic/claude-sonnet-4.6", "openai/gpt-4.1"],
 }
 
 
@@ -230,15 +400,40 @@ def _parse_model_ref(ref: str, default_tier: str) -> CandidateModel | None:
     return CandidateModel(provider=provider, model_name=model_name, model_tier=default_tier)
 
 
-def _resolve_candidates(model_tier: str, allowed_providers: Iterable[str] | None = None) -> list[CandidateModel]:
+def _resolve_candidates(
+    model_tier: str,
+    allowed_providers: Iterable[str] | None = None,
+    task_type: str | None = None,
+) -> list[CandidateModel]:
     allow = list(allowed_providers or _provider_order())
+
+    # If task has model affinity, prefer those models first
+    affinity_refs = TASK_MODEL_AFFINITY.get(task_type or "", [])
+    affinity_candidates: list[CandidateModel] = []
+    for model_id in affinity_refs:
+        candidate = _parse_model_ref(f"openrouter:{model_id}", model_tier)
+        if candidate and candidate.provider in allow:
+            affinity_candidates.append(candidate)
+
+    # Then add default tier models
     refs = _default_model_refs_for_tier(model_tier)
     candidates = [_parse_model_ref(ref, model_tier) for ref in refs]
     filtered = [candidate for candidate in candidates if candidate and candidate.provider in allow]
+
     ordered: list[CandidateModel] = []
+    seen: set[str] = set()
+    # Affinity models first (if any)
+    for candidate in affinity_candidates:
+        key = f"{candidate.provider}:{candidate.model_name}"
+        if key not in seen:
+            seen.add(key)
+            ordered.append(candidate)
+    # Then provider-ordered defaults
     for provider in allow:
         for candidate in filtered:
-            if candidate.provider == provider and candidate not in ordered:
+            key = f"{candidate.provider}:{candidate.model_name}"
+            if candidate.provider == provider and key not in seen:
+                seen.add(key)
                 ordered.append(candidate)
     return ordered
 
@@ -251,33 +446,95 @@ def _estimate_gemini_cost(model_name: str, prompt_tokens: int, completion_tokens
     return round(((prompt_tokens / 1_000_000) * in_price) + ((completion_tokens / 1_000_000) * out_price), 6)
 
 
-def _extract_json_dict(text: str) -> dict[str, Any] | None:
+def _extract_json_dict_with_meta(text: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     raw = str(text or "").strip()
     if not raw:
-        return None
+        return None, {
+            "json_parse_failed": True,
+            "json_repair_applied": False,
+            "json_repair_strategy": None,
+            "parsed_without_repair": False,
+        }
     cleaned = raw.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
     cleaned = re.sub(r"```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-    candidates = [cleaned]
+    candidates: list[tuple[str, str | None, bool]] = [(raw, None, False)]
+    if cleaned != raw:
+        candidates.append((cleaned, "normalized_quotes_or_fences", True))
     first = cleaned.find("{")
     last = cleaned.rfind("}")
     if first != -1 and last != -1 and last > first:
-        candidates.append(cleaned[first : last + 1])
-    for candidate in candidates:
-        candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        sliced = cleaned[first : last + 1]
+        if sliced != cleaned:
+            candidates.append((sliced, "object_slice", True))
+    seen: set[str] = set()
+    for candidate, strategy, repaired in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        sanitized = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        repair_strategy = strategy
+        repair_applied = repaired
+        if sanitized != candidate:
+            repair_strategy = "+".join(filter(None, [repair_strategy, "trailing_commas_removed"]))
+            repair_applied = True
         try:
-            parsed = json.loads(candidate)
+            parsed = json.loads(sanitized)
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            return parsed
+            return parsed, {
+                "json_parse_failed": False,
+                "json_repair_applied": bool(repair_applied),
+                "json_repair_strategy": repair_strategy,
+                "parsed_without_repair": not repair_applied,
+            }
         try:
-            parsed = ast.literal_eval(candidate)
+            parsed = ast.literal_eval(sanitized)
         except (ValueError, SyntaxError):
             parsed = None
         if isinstance(parsed, dict):
-            return parsed
-    return None
+            repair_strategy = "+".join(filter(None, [repair_strategy, "literal_eval"]))
+            return parsed, {
+                "json_parse_failed": False,
+                "json_repair_applied": True,
+                "json_repair_strategy": repair_strategy,
+                "parsed_without_repair": False,
+            }
+    return None, {
+        "json_parse_failed": True,
+        "json_repair_applied": False,
+        "json_repair_strategy": None,
+        "parsed_without_repair": False,
+    }
+
+
+def _extract_json_dict(text: str) -> dict[str, Any] | None:
+    parsed, _ = _extract_json_dict_with_meta(text)
+    return parsed
+
+
+def _quality_score(
+    *,
+    ok: bool,
+    json_parse_failed: bool,
+    json_repair_applied: bool,
+    fallback_used: bool,
+    downgraded_by_budget_policy: bool,
+    blocked_by_budget_policy: bool,
+) -> float:
+    if blocked_by_budget_policy:
+        return 0.0
+    if not ok:
+        return 0.2 if json_parse_failed else 0.1
+    score = 1.0
+    if json_repair_applied:
+        score -= 0.2
+    if fallback_used:
+        score -= 0.15
+    if downgraded_by_budget_policy:
+        score -= 0.15
+    return round(max(0.0, score), 3)
 
 
 def _json_contract_instruction(system_instruction: str) -> str:
@@ -557,7 +814,7 @@ async def _call_gemini_json(
         or getattr(usage, "output_token_count", 0)
         or 0
     )
-    parsed = _extract_json_dict(text)
+    parsed, parse_meta = _extract_json_dict_with_meta(text)
     latency_ms = max(1, int((utcnow() - started).total_seconds() * 1000))
     return ProviderCallResult(
         ok=parsed is not None,
@@ -571,6 +828,7 @@ async def _call_gemini_json(
         estimated_cost_usd=_estimate_gemini_cost(model_name, prompt_tokens, completion_tokens),
         reason_code=None if parsed is not None else "json_parse_failed",
         response_meta={"usage_metadata_present": usage is not None},
+        quality_flags=parse_meta,
     )
 
 
@@ -649,7 +907,7 @@ async def _call_openrouter_json(
     content = message.get("content") or ""
     if isinstance(content, list):
         content = "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-    parsed = _extract_json_dict(str(content))
+    parsed, parse_meta = _extract_json_dict_with_meta(str(content))
     usage = data.get("usage") or {}
     prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -672,6 +930,7 @@ async def _call_openrouter_json(
             "provider": data.get("provider"),
             "id": data.get("id"),
         },
+        quality_flags=parse_meta,
     )
 
 
@@ -731,6 +990,10 @@ async def _record_attempt(
             estimated_cost_usd=result.estimated_cost_usd or 0.0,
             fallback_used=fallback_used,
             reason_code=result.reason_code,
+            json_parse_failed=bool((result.quality_flags or {}).get("json_parse_failed")),
+            json_repair_applied=bool((result.quality_flags or {}).get("json_repair_applied")),
+            json_repair_strategy=(result.quality_flags or {}).get("json_repair_strategy"),
+            parsed_without_repair=bool((result.quality_flags or {}).get("parsed_without_repair")),
             response_meta=result.response_meta or {},
             created_at=utcnow(),
         )
@@ -862,6 +1125,9 @@ async def route_ai_task(
         blocked_request.status = RESPONSE_STATUS_BLOCKED
         blocked_request.outcome = OUTCOME_BLOCKED
         blocked_request.reason_code = budget_decision.reason_code
+        blocked_request.blocked_by_budget_policy = True
+        blocked_request.downgraded_by_budget_policy = False
+        blocked_request.quality_score = 0.0
         blocked_request.completed_at = utcnow()
         blocked_request.updated_at = utcnow()
         await _record_agent_run(
@@ -892,7 +1158,11 @@ async def route_ai_task(
         )
 
     executed_tier = budget_decision.executed_tier or policy.requested_model_tier
-    candidates = _resolve_candidates(executed_tier, policy_context.get("allowed_providers"))
+    candidates = _resolve_candidates(
+        executed_tier,
+        policy_context.get("allowed_providers"),
+        task_type=task_type,
+    )
     if settings.AI_DEFAULT_MODE == "gemini_only":
         candidates = [candidate for candidate in candidates if candidate.provider == PROVIDER_GEMINI]
     elif settings.AI_DEFAULT_MODE == "openrouter_only":
@@ -935,6 +1205,16 @@ async def route_ai_task(
         ai_request.outcome = budget_decision.outcome
         ai_request.executed_model_tier = executed_tier
         ai_request.reason_code = "no_model_candidates"
+        ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+        ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+        ai_request.quality_score = _quality_score(
+            ok=False,
+            json_parse_failed=False,
+            json_repair_applied=False,
+            fallback_used=False,
+            downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+            blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+        )
         ai_request.completed_at = utcnow()
         ai_request.updated_at = utcnow()
         await _record_agent_run(
@@ -1005,9 +1285,24 @@ async def route_ai_task(
         ai_request.estimated_cost_usd = result.estimated_cost_usd
         ai_request.fallback_used = attempts > 1 or budget_decision.outcome == OUTCOME_DOWNGRADED
         ai_request.reason_code = budget_decision.reason_code
+        ai_request.json_parse_failed = bool((result.quality_flags or {}).get("json_parse_failed"))
+        ai_request.json_repair_applied = bool((result.quality_flags or {}).get("json_repair_applied"))
+        ai_request.json_repair_strategy = (result.quality_flags or {}).get("json_repair_strategy")
+        ai_request.parsed_without_repair = bool((result.quality_flags or {}).get("parsed_without_repair"))
+        ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+        ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+        ai_request.quality_score = _quality_score(
+            ok=True,
+            json_parse_failed=bool(ai_request.json_parse_failed),
+            json_repair_applied=bool(ai_request.json_repair_applied),
+            fallback_used=bool(ai_request.fallback_used),
+            downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+            blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+        )
         ai_request.quality_flags = {
             "parsed_ok": True,
             "fallback_used": ai_request.fallback_used,
+            **(result.quality_flags or {}),
         }
         ai_request.completed_at = utcnow()
         ai_request.updated_at = utcnow()
@@ -1052,6 +1347,18 @@ async def route_ai_task(
     ai_request.status = RESPONSE_STATUS_FAILED
     ai_request.outcome = budget_decision.outcome
     ai_request.reason_code = "all_provider_attempts_failed"
+    ai_request.fallback_used = attempts > 1
+    ai_request.json_parse_failed = True
+    ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+    ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+    ai_request.quality_score = _quality_score(
+        ok=False,
+        json_parse_failed=True,
+        json_repair_applied=False,
+        fallback_used=attempts > 1,
+        downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+        blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+    )
     ai_request.quality_flags = {"parsed_ok": False, "fallback_used": attempts > 1}
     ai_request.completed_at = utcnow()
     ai_request.updated_at = utcnow()

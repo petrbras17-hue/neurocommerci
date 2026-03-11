@@ -15,6 +15,7 @@ Public API (unchanged):
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -32,12 +33,41 @@ _db_url = settings.db_url
 _is_postgres = "postgresql" in _db_url
 
 
-def _build_engine():
+class SessionFactoryProxy:
+    """Mutable proxy so tests can swap the underlying sessionmaker without breaking imports."""
+
+    def __init__(self, factory: async_sessionmaker[AsyncSession]):
+        self._factory = factory
+
+    def set_factory(self, factory: async_sessionmaker[AsyncSession]) -> None:
+        self._factory = factory
+
+    def __call__(self, *args: Any, **kwargs: Any):
+        return self._factory(*args, **kwargs)
+
+
+def _attach_sqlite_pragmas(target_engine) -> None:
+    if "postgresql" in str(target_engine.url):
+        return
+
+    @event.listens_for(target_engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, connection_record):
+        """Enable WAL mode and SQLite optimizations on each new connection."""
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
+def _build_engine(db_url: str | None = None):
     """Create the appropriate engine based on the database URL."""
-    if _is_postgres:
+    resolved_url = db_url or _db_url
+    is_postgres = "postgresql" in str(resolved_url)
+    if is_postgres:
         log.info("Database: PostgreSQL mode (asyncpg + pool)")
-        return create_async_engine(
-            _db_url,
+        engine = create_async_engine(
+            resolved_url,
             echo=False,
             poolclass=AsyncAdaptedQueuePool,
             pool_size=20,
@@ -45,16 +75,19 @@ def _build_engine():
         )
     else:
         log.info("Database: SQLite mode (aiosqlite + NullPool)")
-        return create_async_engine(
-            _db_url,
+        engine = create_async_engine(
+            resolved_url,
             echo=False,
             poolclass=NullPool,
             connect_args={"check_same_thread": False},
         )
+        _attach_sqlite_pragmas(engine)
+    return engine
 
 
 engine = _build_engine()
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+async_session = SessionFactoryProxy(_session_factory)
 
 
 def _alembic_config() -> Config:
@@ -101,19 +134,6 @@ async def apply_session_rls_context(
             text("SELECT set_config('app.user_id', :user_id, true)"),
             {"user_id": str(int(user_id))},
         )
-
-
-# --- SQLite pragmas (only for SQLite) ---
-
-if not _is_postgres:
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, connection_record):
-        """Enable WAL mode and SQLite optimizations on each new connection."""
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.close()
 
 
 # --- Migration helpers (SQLite only) ---
@@ -419,3 +439,18 @@ async def init_db():
 async def dispose_engine():
     """Gracefully close the engine on application shutdown."""
     await engine.dispose()
+
+
+async def reconfigure_database(db_url: str) -> None:
+    """Swap the active engine/sessionmaker for tests or isolated local runs."""
+    global _db_url, _is_postgres, engine, _session_factory
+
+    await engine.dispose()
+    _db_url = str(db_url)
+    _is_postgres = "postgresql" in _db_url
+    settings.DATABASE_URL = _db_url if _is_postgres else ""
+    if not _is_postgres and _db_url.startswith("sqlite+aiosqlite:///"):
+        settings.DB_PATH = _db_url.replace("sqlite+aiosqlite:///", "", 1)
+    engine = _build_engine(_db_url)
+    _session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async_session.set_factory(_session_factory)

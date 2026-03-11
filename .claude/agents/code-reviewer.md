@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Review Python code for quality, security, and anti-ban safety. Use proactively after code changes.
+description: "[LEGACY Telegram runtime] Review Python code for quality, security, and historical anti-ban logic. Do not use as the default reviewer for SaaS sprint work."
 tools: Read, Grep, Glob
 model: haiku
 ---

@@ -1,46 +1,52 @@
 # NEURO COMMENTING
 
-## Описание
-Аналог NeuroCom.store — система автоматического комментирования в Telegram для продвижения DartVPN (https://t.me/DartVPNBot).
-Легальный VPN-сервис, зарегистрированный в РФ, оплата по ГБ, карты «Мир».
+Team-shared Claude Code memory for the SaaS rebuild.
 
-## Стек
-- Python 3.9+, aiogram 3 (Telegram-бот), Telethon (userbot), Google Gemini API (gemini-3.1-pro-preview)
-- SQLite + SQLAlchemy (async), Google Sheets (gspread), APScheduler
-- Rich (CLI), Loguru (логирование)
+Start here on every session:
+- Read @knowledge/project_context/claude_code_master_context.md for the latest consolidated repo + VPS + sprint handoff.
+- Read @knowledge/project_context/claude_code_prompts.md for ready-to-use Claude Code prompts.
+- Read @README.md for current repo setup.
+- Read @knowledge/project_context/claude_saas_scrum_master.md for the full Scrum, VPS, sprint, and product context.
+- Read @knowledge/project_context/change_register.md for the live delivery ledger.
 
-## Запуск
-```bash
-cd "NEURO COMMENTING"
-source venv/bin/activate
-python main.py          # Telegram-бот (основной)
-python main.py --cli    # CLI в терминале
-```
+## Current Ground Truth
+- Product direction: multi-tenant SaaS "Telegram Growth OS" for RU/CIS mid-market brands.
+- Active local branch: `sprint/3-telegram-first-auth-shell`
+- Last committed HEAD: `c37798e` (Harden AI router JSON contracts and model routing)
+- Sprints 1-4 foundation implemented locally; Sprint 1 deployed and verified on VPS.
+- Safe production baseline on VPS:
+  - path: `/opt/neuro-commenting`
+  - deploy mode: git checkout
+  - branch: `sprint/1-tenant-foundation`
+  - commit: `2c3c516`
+- Current safe services: `db`, `redis`, `ops_api`, `bot`.
+- `packager`, `worker_a`, and `worker_b` are intentionally not part of the Sprint 1 baseline.
+- Next deploy target: Sprint 4 stabilization patch (pending commit + VPS rollout).
 
-## Структура
-```
-main.py              — точка входа (бот или CLI через --cli)
-config.py            — pydantic-settings, все из .env
-core/                — аккаунты, прокси, сессии, rate limiter
-channels/            — поиск каналов, мониторинг, анализ (НЕ НАЧАТО)
-comments/            — AI генерация, сценарии A/B, отправка (НЕ НАЧАТО)
-storage/             — SQLite модели + Google Sheets (Sheets НЕ НАЧАТО)
-admin/bot_admin.py   — ОСНОВНОЙ интерфейс: Telegram-бот с кнопками
-admin/cli_menu.py    — CLI интерфейс (урезанный)
-utils/               — логирование, антибан (антибан НЕ НАЧАТО)
-data/sessions/       — .session файлы Telegram аккаунтов
-```
+## Working Rules
+- Default stack for upcoming SaaS sprints: Python + FastAPI + SQLAlchemy + Alembic + PostgreSQL + Redis.
+- Do not introduce a second app stack unless the sprint explicitly requires it.
+- Keep all new database changes in Alembic migrations.
+- Keep tenant isolation strict: every SaaS query must be tenant-safe via RLS or scoped ORM access.
+- Public marketing routes and pre-signup lead capture are platform-level and not tenant-scoped.
+- Treat old Telegram anti-ban and appeal automation as legacy context, not as the default SaaS direction.
 
-## Текущий статус
-- **Спринт 1 (ГОТОВ)**: config, модели БД, прокси, сессии, аккаунты, rate limiter, Telegram-бот с полным меню
-- **Спринт 2-7 (НЕ НАЧАТЫ)**: см. CONTINUE_PLAN.md
+## Scrum Rules
+- Stay within the current sprint scope.
+- Before coding:
+  - confirm current branch and commit,
+  - read the sprint section in the Scrum master file,
+  - check the change register for the latest status and blockers.
+- After coding:
+  - run relevant tests,
+  - update the change register,
+  - leave a short deploy note if the sprint changes VPS behavior.
 
-## Важные правила
-- Основной интерфейс = Telegram-бот (НЕ CLI)
-- Никогда не коммитить .env, credentials.json, .session файлы
-- Перед каждым вызовом Gemini API спрашивать подтверждение (экономия)
-- Комментарии отправляются в discussion groups каналов (linked_chat_id)
-- Антибан: прогрев (5→10→20→35 за 4 дня), Gaussian delays, 1 прокси = 1 аккаунт
+## Project Helpers
+- Use the project slash commands in `.claude/commands/`.
+- Prefer the project agents in `.claude/agents/` for sprint delivery, QA, and VPS audits.
+- Prefer the project skill `.claude/skills/sprint-context/` when the task is about loading or refreshing sprint context.
 
-## Подробный план продолжения
-**Читай файл CONTINUE_PLAN.md** — там 6 спринтов с кодом, классами и пояснениями.
+## Legacy Note
+- Older project files and some existing `.claude/agents/` entries describe the historical Telegram runtime.
+- For SaaS sprints, prefer the new Scrum and Sprint files imported above.

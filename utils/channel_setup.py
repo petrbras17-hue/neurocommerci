@@ -36,6 +36,7 @@ from telethon.tl.types import InputChatUploadedPhoto
 from sqlalchemy import select, update
 
 from config import settings, BASE_DIR
+from core.gemini_models import get_text_model_candidates
 from core.session_manager import SessionManager
 from core.account_manager import AccountManager
 from storage.sqlite_db import async_session
@@ -54,6 +55,8 @@ class ChannelResult(TypedDict):
     success: bool
     channel_title: str
     channel_link: str
+    personal_channel_set: bool
+    bio_fallback_used: bool
     error: Optional[str]
 
 
@@ -286,6 +289,13 @@ class ChannelSetup:
         if settings.GEMINI_API_KEY:
             self._ai_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+    @staticmethod
+    def _model_candidates() -> list[str]:
+        return get_text_model_candidates(
+            settings.GEMINI_MODEL,
+            settings.GEMINI_FLASH_MODEL,
+        )
+
     async def generate_channel_content(self, style: str = "casual") -> dict:
         """
         Сгенерировать контент для канала-переходника через AI.
@@ -296,25 +306,23 @@ class ChannelSetup:
 
         prompt = get_channel_name_prompt(style)
 
-        try:
-            response = await asyncio.to_thread(
-                self._ai_client.models.generate_content,
-                model=settings.GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.95,
-                    max_output_tokens=300,
-                ),
-            )
+        for model_name in self._model_candidates():
+            try:
+                response = await asyncio.to_thread(
+                    self._ai_client.models.generate_content,
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.95,
+                        max_output_tokens=300,
+                    ),
+                )
+                if response and response.text:
+                    return self._parse_response(response.text)
+            except Exception as exc:
+                log.warning(f"Ошибка AI генерации канала (model={model_name}): {exc}")
 
-            if not response or not response.text:
-                return self._get_fallback()
-
-            return self._parse_response(response.text)
-
-        except Exception as exc:
-            log.warning(f"Ошибка AI генерации канала: {exc}")
-            return self._get_fallback()
+        return self._get_fallback()
 
     def _parse_response(self, text: str) -> dict:
         """Парсинг ответа AI (только name + desc, пост берём из фоллбэков)."""
@@ -444,6 +452,125 @@ class ChannelSetup:
         log.warning(f"{phone}: не удалось назначить username каналу")
         return False
 
+    async def create_channel_shell(
+        self,
+        phone: str,
+        *,
+        content: Optional[dict] = None,
+        style: str = "casual",
+        index: int = 0,
+    ) -> dict:
+        """Создать только канал и его базовое оформление без публикации поста."""
+        client = self.session_mgr.get_client(phone)
+        if not client or not client.is_connected():
+            return {"ok": False, "error": "client_not_connected", "phone": phone}
+
+        if not content:
+            content = await self.generate_channel_content(style=style)
+        channel_title = str(content.get("name") or "").strip() or self._get_indexed_fallback(index)["name"]
+        channel_desc = str(content.get("desc") or "").strip()[:255]
+
+        try:
+            result = await client(CreateChannelRequest(
+                title=channel_title,
+                about=channel_desc,
+                broadcast=True,
+            ))
+            channel = result.chats[0]
+            entity = await client.get_entity(channel.id)
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            await self._assign_channel_username(client, entity, phone)
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+            await self._set_channel_avatar(client, entity)
+            channel_link = await self._get_channel_link(client, entity, channel)
+            if channel_link:
+                await self._save_channel_link(phone, channel_link)
+            return {
+                "ok": True,
+                "phone": phone,
+                "channel_id": int(channel.id),
+                "channel_title": channel_title,
+                "channel_desc": channel_desc,
+                "channel_link": channel_link,
+            }
+        except FloodWaitError as exc:
+            return {
+                "ok": False,
+                "phone": phone,
+                "error": f"flood_wait_{exc.seconds}s",
+                "channel_title": channel_title,
+            }
+        except Exception as exc:
+            log.error(f"{phone}: ошибка create_channel_shell: {exc}")
+            return {
+                "ok": False,
+                "phone": phone,
+                "error": str(exc),
+                "channel_title": channel_title,
+            }
+
+    async def publish_content_to_channel(
+        self,
+        phone: str,
+        *,
+        channel_id: int,
+        post_text: str,
+        pin_post: bool = True,
+        attach_personal_channel: bool = True,
+        allow_bio_fallback: bool | None = None,
+    ) -> dict:
+        """Опубликовать и при необходимости закрепить пост в уже созданном канале."""
+        client = self.session_mgr.get_client(phone)
+        if not client or not client.is_connected():
+            return {"ok": False, "error": "client_not_connected", "phone": phone}
+
+        try:
+            entity = await client.get_entity(int(channel_id))
+            sent_message = await client.send_message(entity, post_text, parse_mode="html")
+            pinned = False
+            if pin_post:
+                try:
+                    await client(UpdatePinnedMessageRequest(
+                        peer=entity,
+                        id=sent_message.id,
+                        silent=True,
+                    ))
+                    pinned = True
+                except Exception as exc:
+                    log.debug(f"{phone}: не удалось закрепить пост: {exc}")
+
+            personal_set = False
+            if attach_personal_channel:
+                personal_set = await self.set_personal_channel(phone, entity)
+                if not personal_set and (allow_bio_fallback if allow_bio_fallback is not None else settings.PACKAGING_ALLOW_BIO_FALLBACK):
+                    channel_link = await self._get_channel_link(client, entity, entity)
+                    if channel_link:
+                        await self._update_bio_with_channel(client, phone, channel_link)
+
+            return {
+                "ok": True,
+                "phone": phone,
+                "channel_id": int(channel_id),
+                "message_id": int(sent_message.id),
+                "pinned": bool(pinned),
+                "personal_channel_set": bool(personal_set),
+            }
+        except FloodWaitError as exc:
+            return {
+                "ok": False,
+                "phone": phone,
+                "channel_id": int(channel_id),
+                "error": f"flood_wait_{exc.seconds}s",
+            }
+        except Exception as exc:
+            log.error(f"{phone}: ошибка publish_content_to_channel: {exc}")
+            return {
+                "ok": False,
+                "phone": phone,
+                "channel_id": int(channel_id),
+                "error": str(exc),
+            }
+
     async def create_redirect_channel(
         self,
         phone: str,
@@ -467,6 +594,8 @@ class ChannelSetup:
                 "success": False,
                 "channel_title": "",
                 "channel_link": "",
+                "personal_channel_set": False,
+                "bio_fallback_used": False,
                 "error": "Клиент не подключён",
             }
 
@@ -534,9 +663,17 @@ class ChannelSetup:
             personal_set = await self.set_personal_channel(phone, entity)
 
             # ─── Шаг 7: Обновляем bio (без ссылки на канал, если виджет установлен) ───
+            bio_fallback_used = False
             if not personal_set:
-                # Фоллбэк: если персональный канал не удалось — ставим ссылку в bio
-                await self._update_bio_with_channel(client, phone, channel_link)
+                if settings.PACKAGING_ALLOW_BIO_FALLBACK:
+                    # Фоллбэк: если персональный канал не удалось — ставим ссылку в bio
+                    await self._update_bio_with_channel(client, phone, channel_link)
+                    bio_fallback_used = True
+                else:
+                    log.warning(
+                        f"{phone}: personal channel не установлен, "
+                        "bio fallback отключён (PACKAGING_ALLOW_BIO_FALLBACK=false)"
+                    )
 
             if channel_link:
                 # Сохранить ссылку в БД (per-account, а не global)
@@ -547,6 +684,8 @@ class ChannelSetup:
                 "success": True,
                 "channel_title": channel_title,
                 "channel_link": channel_link,
+                "personal_channel_set": bool(personal_set),
+                "bio_fallback_used": bio_fallback_used,
                 "error": None,
             }
 
@@ -557,6 +696,8 @@ class ChannelSetup:
                 "success": False,
                 "channel_title": channel_title,
                 "channel_link": "",
+                "personal_channel_set": False,
+                "bio_fallback_used": False,
                 "error": f"FloodWait {e.seconds}с",
             }
 
@@ -567,6 +708,8 @@ class ChannelSetup:
                 "success": False,
                 "channel_title": channel_title,
                 "channel_link": "",
+                "personal_channel_set": False,
+                "bio_fallback_used": False,
                 "error": str(exc),
             }
 

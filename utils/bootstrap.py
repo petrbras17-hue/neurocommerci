@@ -1,12 +1,12 @@
 """
-Bootstrap — восстановление данных из переменных окружения при старте на Railway.
+Bootstrap — восстановление данных из переменных окружения при старте в чистом окружении.
 
-При деплое на Railway файлы data/sessions/*.session и data/proxies.txt
-не попадают в репозиторий (в .gitignore). Решение:
+Когда файлы data/sessions/*.session и data/proxies.txt не примонтированы,
+можно восстановить их через env:
   - SESSIONS_DATA: base64-encoded tar.gz архив с .session и .json файлами
   - PROXY_DATA: содержимое proxies.txt (одна или несколько строк через ;)
 
-При локальной работе эти переменные не нужны — файлы уже на месте.
+При обычной работе эти переменные не нужны — файлы уже на месте.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import tarfile
 from pathlib import Path
 
 from utils.logger import log
+from utils.session_topology import discover_session_assets
 
 
 def restore_sessions(sessions_dir: Path) -> int:
@@ -112,7 +113,8 @@ def bootstrap():
     proxies_ok = restore_proxies(proxies_path)
 
     # Статус
-    existing_sessions = list(sessions_dir.glob("*.session")) if sessions_dir.exists() else []
+    discovery = discover_session_assets(sessions_dir, known_user_ids=None)
+    existing_sessions = list(discovery.assets.values())
     proxies_exist = proxies_path.exists() and proxies_path.stat().st_size > 0
 
     log.info(

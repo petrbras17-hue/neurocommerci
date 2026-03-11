@@ -1,6 +1,6 @@
 ---
 name: telegram-debugger
-description: Debug Telegram account issues — frozen, banned, flood wait, connection errors, proxy problems. Use proactively when encountering Telegram account issues.
+description: "[LEGACY Telegram runtime] Debug historical Telegram account issues in the old runtime. Do not use as the default agent for SaaS sprint work."
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

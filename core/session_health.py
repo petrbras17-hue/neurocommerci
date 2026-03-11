@@ -38,6 +38,7 @@ class SessionHealthMonitor:
         self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._last_cycle = {"alive": 0, "dead": 0, "total": 0}
+        self._error_streaks: dict[str, int] = {}
 
     async def start(self) -> None:
         """Запустить фоновый мониторинг."""
@@ -157,6 +158,59 @@ class SessionHealthMonitor:
         except Exception as exc:
             log.debug(f"Ошибка обновления health_status для {phone}: {exc}")
 
+    async def _escalate_health_issue(self, phone: str) -> None:
+        """Escalate repeated health issues: active -> cooldown -> restricted."""
+        streak = self._error_streaks.get(phone, 0) + 1
+        self._error_streaks[phone] = streak
+        try:
+            from storage.sqlite_db import async_session
+            from storage.models import Account, AccountStageEvent
+            from sqlalchemy import update, select
+
+            async with async_session() as session:
+                result = await session.execute(select(Account).where(Account.phone == phone))
+                account = result.scalar_one_or_none()
+                if account is None:
+                    return
+                old_stage = account.lifecycle_stage
+
+                if streak >= 3:
+                    await session.execute(
+                        update(Account)
+                        .where(Account.phone == phone)
+                        .values(
+                            status="error",
+                            health_status="restricted",
+                            lifecycle_stage="restricted",
+                            restriction_reason="health_error_streak",
+                            last_health_check=utcnow(),
+                        )
+                    )
+                    if old_stage != "restricted":
+                        session.add(
+                            AccountStageEvent(
+                                account_id=account.id,
+                                phone=phone,
+                                from_stage=old_stage,
+                                to_stage="restricted",
+                                actor="session_health",
+                                reason=f"error_streak={streak}",
+                            )
+                        )
+                else:
+                    await session.execute(
+                        update(Account)
+                        .where(Account.phone == phone)
+                        .values(
+                            status="cooldown",
+                            health_status="unknown",
+                            last_health_check=utcnow(),
+                        )
+                    )
+                await session.commit()
+        except Exception as exc:
+            log.debug(f"Ошибка health escalation для {phone}: {exc}")
+
     async def _monitor_loop(self) -> None:
         """Фоновый цикл: проверять все аккаунты каждые N часов."""
         interval = settings.SESSION_HEALTH_CHECK_HOURS * 3600
@@ -178,10 +232,13 @@ class SessionHealthMonitor:
                 for phone in phones:
                     status = await self.check_one(phone)
                     if status == "alive":
+                        self._error_streaks[phone] = 0
                         cycle_alive += 1
                         await self._update_health_status(phone, "alive")
                     elif status in ("dead", "banned"):
                         cycle_dead += 1
+                    elif status in ("error", "disconnected"):
+                        await self._escalate_health_issue(phone)
                     # Задержка между проверками
                     await asyncio.sleep(random.uniform(3, 8))
 

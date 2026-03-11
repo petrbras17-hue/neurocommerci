@@ -58,7 +58,7 @@ def main():
             print(f"     • {w}")
         print()
 
-    # Bootstrap: восстановить данные из env vars (Railway)
+    # Bootstrap: восстановить данные из env vars при старте в чистом окружении
     bootstrap()
 
     if "--cli" in sys.argv:
@@ -77,7 +77,8 @@ def main():
         print("  🚀 NEURO COMMENTING")
         print("  ━━━━━━━━━━━━━━━━━━")
         print("  Запуск Telegram-бота...")
-        print(f"  AI: {settings.GEMINI_MODEL}")
+        print(f"  AI primary: {settings.GEMINI_MODEL}")
+        print(f"  AI fallback: {settings.GEMINI_FLASH_MODEL}")
         print(f"  Product: {settings.PRODUCT_NAME} ({settings.PRODUCT_BOT_LINK})")
         print()
         print("  Ctrl+C для graceful shutdown")

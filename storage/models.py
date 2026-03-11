@@ -557,6 +557,13 @@ class AIRequest(Base):
     estimated_cost_usd = Column(Float, default=0.0)
     fallback_used = Column(Boolean, default=False)
     reason_code = Column(String(64), nullable=True)
+    json_parse_failed = Column(Boolean, default=False)
+    json_repair_applied = Column(Boolean, default=False)
+    json_repair_strategy = Column(String(64), nullable=True)
+    parsed_without_repair = Column(Boolean, default=False)
+    downgraded_by_budget_policy = Column(Boolean, default=False)
+    blocked_by_budget_policy = Column(Boolean, default=False)
+    quality_score = Column(Float, nullable=True)
     quality_flags = Column(JSONType, nullable=True)
     meta = Column(JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
@@ -585,6 +592,10 @@ class AIRequestAttempt(Base):
     estimated_cost_usd = Column(Float, default=0.0)
     fallback_used = Column(Boolean, default=False)
     reason_code = Column(String(64), nullable=True)
+    json_parse_failed = Column(Boolean, default=False)
+    json_repair_applied = Column(Boolean, default=False)
+    json_repair_strategy = Column(String(64), nullable=True)
+    parsed_without_repair = Column(Boolean, default=False)
     response_meta = Column(JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
@@ -677,6 +688,288 @@ class AIAgentRun(Base):
     status = Column(String(32), default="pending")
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow)
+
+
+class AppJob(Base):
+    """Фоновая задача продуктового слоя (assistant/context/creative)."""
+    __tablename__ = "app_jobs"
+    __table_args__ = (
+        Index("ix_app_jobs_tenant_id", "tenant_id"),
+        Index("ix_app_jobs_workspace_id", "workspace_id"),
+        Index("ix_app_jobs_job_type", "job_type"),
+        Index("ix_app_jobs_status", "status"),
+        Index("ix_app_jobs_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    job_type = Column(String(64), nullable=False)
+    queue_name = Column(String(64), nullable=False)
+    status = Column(String(20), default="queued")  # queued, running, succeeded, failed
+    payload = Column(JSONType, nullable=True)
+    result = Column(JSONType, nullable=True)
+    result_summary = Column(JSONType, nullable=True)
+    error_code = Column(String(64), nullable=True)
+    attempt_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class FarmConfig(Base):
+    """Конфигурация фермы — многопоточный commenting farm."""
+    __tablename__ = "farm_configs"
+    __table_args__ = (
+        Index("ix_farm_configs_tenant_id", "tenant_id"),
+        Index("ix_farm_configs_workspace_id", "workspace_id"),
+        Index("ix_farm_configs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    status = Column(String(20), default="stopped")  # stopped, running, paused
+    mode = Column(String(20), default="multithread")  # multithread, standard
+    max_threads = Column(Integer, default=50)
+    comment_prompt = Column(Text, nullable=True)
+    comment_tone = Column(String(50), default="neutral")  # neutral, hater, flirt, native, custom
+    comment_language = Column(String(10), default="auto")
+    comment_all_posts = Column(Boolean, default=True)
+    comment_percentage = Column(Integer, default=100)
+    delay_before_comment_min = Column(Integer, default=30)
+    delay_before_comment_max = Column(Integer, default=120)
+    delay_before_join_min = Column(Integer, default=60)
+    delay_before_join_max = Column(Integer, default=300)
+    ai_protection_mode = Column(String(20), default="aggressive")  # off, aggressive, conservative
+    auto_responder_enabled = Column(Boolean, default=False)
+    auto_responder_prompt = Column(Text, nullable=True)
+    auto_responder_redirect_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class FarmThread(Base):
+    """Поток фермы (1 поток = 1 аккаунт)."""
+    __tablename__ = "farm_threads"
+    __table_args__ = (
+        Index("ix_farm_threads_tenant_id", "tenant_id"),
+        Index("ix_farm_threads_farm_id", "farm_id"),
+        Index("ix_farm_threads_account_id", "account_id"),
+        Index("ix_farm_threads_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("farm_configs.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    thread_index = Column(Integer, nullable=False)
+    status = Column(String(30), default="idle")
+    # idle, subscribing, monitoring, commenting, cooldown, quarantine, error, stopped
+    assigned_channels = Column(JSONType, nullable=True)
+    folder_invite_link = Column(Text, nullable=True)
+    stats_comments_sent = Column(Integer, default=0)
+    stats_comments_failed = Column(Integer, default=0)
+    stats_reactions_sent = Column(Integer, default=0)
+    stats_last_comment_at = Column(DateTime, nullable=True)
+    stats_last_error = Column(Text, nullable=True)
+    health_score = Column(Integer, default=100)
+    quarantine_until = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class ChannelDatabase(Base):
+    """База каналов для таргетинга."""
+    __tablename__ = "channel_databases"
+    __table_args__ = (
+        Index("ix_channel_databases_tenant_id", "tenant_id"),
+        Index("ix_channel_databases_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    source = Column(String(20), default="manual")  # manual, parsed, map
+    status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ChannelEntry(Base):
+    """Канал в базе каналов."""
+    __tablename__ = "channel_entries"
+    __table_args__ = (
+        Index("ix_channel_entries_tenant_id", "tenant_id"),
+        Index("ix_channel_entries_database_id", "database_id"),
+        Index("ix_channel_entries_blacklisted", "blacklisted"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    database_id = Column(Integer, ForeignKey("channel_databases.id"), nullable=False)
+    telegram_id = Column(BigInteger, nullable=True)
+    username = Column(String(100), nullable=True)
+    title = Column(String(300), nullable=True)
+    member_count = Column(Integer, nullable=True)
+    has_comments = Column(Boolean, default=True)
+    language = Column(String(10), nullable=True)
+    category = Column(String(100), nullable=True)
+    last_post_at = Column(DateTime, nullable=True)
+    blacklisted = Column(Boolean, default=False)
+    success_rate = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ParsingJob(Base):
+    """Задача парсинга каналов/пользователей."""
+    __tablename__ = "parsing_jobs"
+    __table_args__ = (
+        Index("ix_parsing_jobs_tenant_id", "tenant_id"),
+        Index("ix_parsing_jobs_workspace_id", "workspace_id"),
+        Index("ix_parsing_jobs_status", "status"),
+        Index("ix_parsing_jobs_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    job_type = Column(String(20), nullable=False)  # channels, users
+    status = Column(String(20), default="pending")  # pending, running, completed, failed
+    keywords = Column(JSONType, nullable=True)
+    filters = Column(JSONType, nullable=True)
+    max_results = Column(Integer, default=50)
+    results_count = Column(Integer, default=0)
+    target_database_id = Column(Integer, ForeignKey("channel_databases.id"), nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ProfileTemplate(Base):
+    """Шаблон AI-профиля для массовой генерации."""
+    __tablename__ = "profile_templates"
+    __table_args__ = (
+        Index("ix_profile_templates_tenant_id", "tenant_id"),
+        Index("ix_profile_templates_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=True)
+    gender = Column(String(10), nullable=True)  # male, female, any
+    geo = Column(String(50), nullable=True)
+    bio_template = Column(Text, nullable=True)
+    channel_name_template = Column(Text, nullable=True)
+    channel_description_template = Column(Text, nullable=True)
+    channel_first_post_template = Column(Text, nullable=True)
+    avatar_style = Column(String(50), nullable=True)  # ai_generated, library, custom
+    avatar_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class FarmEvent(Base):
+    """Лог событий фермы для real-time стриминга."""
+    __tablename__ = "farm_events"
+    __table_args__ = (
+        Index("ix_farm_events_tenant_id", "tenant_id"),
+        Index("ix_farm_events_farm_id", "farm_id"),
+        Index("ix_farm_events_thread_id", "thread_id"),
+        Index("ix_farm_events_created_at", "created_at"),
+        Index("ix_farm_events_severity", "severity"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("farm_configs.id"), nullable=False)
+    thread_id = Column(Integer, ForeignKey("farm_threads.id"), nullable=True)
+    event_type = Column(String(50), nullable=False)
+    # thread_started, thread_stopped, comment_sent, comment_failed,
+    # channel_joined, channel_left, quarantine_entered, quarantine_lifted,
+    # mute_detected, flood_wait, error, health_change
+    severity = Column(String(10), default="info")  # info, warn, error
+    message = Column(Text, nullable=True)
+    event_metadata = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class WarmupConfig(Base):
+    """Конфигурация автопрогрева аккаунтов."""
+    __tablename__ = "warmup_configs"
+    __table_args__ = (
+        Index("ix_warmup_configs_tenant_id", "tenant_id"),
+        Index("ix_warmup_configs_workspace_id", "workspace_id"),
+        Index("ix_warmup_configs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    status = Column(String(20), default="stopped")  # stopped, running, paused
+    mode = Column(String(20), default="conservative")  # conservative, moderate, aggressive
+    safety_limit_actions_per_hour = Column(Integer, default=5)
+    active_hours_start = Column(Integer, default=9)
+    active_hours_end = Column(Integer, default=23)
+    warmup_duration_minutes = Column(Integer, default=30)
+    interval_between_sessions_hours = Column(Integer, default=6)
+    enable_reactions = Column(Boolean, default=True)
+    enable_read_channels = Column(Boolean, default=True)
+    enable_dialogs_between_accounts = Column(Boolean, default=True)
+    target_channels = Column(JSONType, nullable=True)  # list of channel usernames
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class WarmupSession(Base):
+    """Индивидуальная сессия прогрева одного аккаунта."""
+    __tablename__ = "warmup_sessions"
+    __table_args__ = (
+        Index("ix_warmup_sessions_tenant_id", "tenant_id"),
+        Index("ix_warmup_sessions_warmup_id", "warmup_id"),
+        Index("ix_warmup_sessions_account_id", "account_id"),
+        Index("ix_warmup_sessions_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    warmup_id = Column(Integer, ForeignKey("warmup_configs.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    status = Column(String(20), default="pending")  # pending, running, completed, failed
+    actions_performed = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    next_session_at = Column(DateTime, nullable=True)
+
+
+class AccountHealthScore(Base):
+    """Health and survivability scoring per account per tenant."""
+    __tablename__ = "account_health_scores"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "account_id", name="uq_account_health_scores_tenant_account"),
+        Index("ix_account_health_scores_tenant_id", "tenant_id"),
+        Index("ix_account_health_scores_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    health_score = Column(Integer, default=100)       # 0-100 current operational stability
+    survivability_score = Column(Integer, default=100)  # 0-100 predicted longevity
+    flood_wait_count = Column(Integer, default=0)
+    spam_block_count = Column(Integer, default=0)
+    successful_actions = Column(Integer, default=0)
+    hours_without_error = Column(Integer, default=0)
+    profile_completeness = Column(Integer, default=0)  # 0-100
+    account_age_days = Column(Integer, default=0)
+    last_calculated_at = Column(DateTime, nullable=True)
+    factors = Column(JSONType, nullable=True)  # detailed factor breakdown
 
 
 class ContentTemplate(Base):
@@ -793,3 +1086,231 @@ class Comment(Base):
 
     account = relationship("Account", back_populates="comments")
     post = relationship("Post", back_populates="comments")
+
+
+class ReactionJob(Base):
+    """Задача массового выставления реакций на посты."""
+    __tablename__ = "reaction_jobs"
+    __table_args__ = (
+        Index("ix_reaction_jobs_tenant_id", "tenant_id"),
+        Index("ix_reaction_jobs_status", "status"),
+        Index("ix_reaction_jobs_farm_id", "farm_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    farm_id = Column(Integer, ForeignKey("farm_configs.id"), nullable=True)
+    channel_username = Column(String(200), nullable=False)
+    post_id = Column(Integer, nullable=True)  # specific post or null for latest
+    reaction_type = Column(String(20), default="random")  # random, thumbs_up, fire, heart, etc.
+    account_ids = Column(JSONType, nullable=True)  # list of account IDs to react with
+    status = Column(String(20), default="pending")  # pending, running, completed, failed
+    total_reactions = Column(Integer, default=0)
+    successful_reactions = Column(Integer, default=0)
+    failed_reactions = Column(Integer, default=0)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class ChattingConfig(Base):
+    """Конфигурация автоматического чатинга в каналах."""
+    __tablename__ = "chatting_configs"
+    __table_args__ = (
+        Index("ix_chatting_configs_tenant_id", "tenant_id"),
+        Index("ix_chatting_configs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    status = Column(String(20), default="stopped")  # stopped, running, paused
+    mode = Column(String(20), default="conservative")  # conservative, moderate, aggressive
+    target_channels = Column(JSONType, nullable=True)  # channels where chatting happens
+    prompt_template = Column(Text, nullable=True)  # AI prompt for generating chat messages
+    max_messages_per_hour = Column(Integer, default=5)
+    min_delay_seconds = Column(Integer, default=120)
+    max_delay_seconds = Column(Integer, default=600)
+    account_ids = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class DialogConfig(Base):
+    """Конфигурация диалогов между аккаунтами (прогрев, вовлечение, поддержка)."""
+    __tablename__ = "dialog_configs"
+    __table_args__ = (
+        Index("ix_dialog_configs_tenant_id", "tenant_id"),
+        Index("ix_dialog_configs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    status = Column(String(20), default="stopped")  # stopped, running, paused
+    dialog_type = Column(String(30), default="warmup")  # warmup, engagement, support
+    account_pairs = Column(JSONType, nullable=True)  # pairs of account IDs for dialogs
+    prompt_template = Column(Text, nullable=True)
+    messages_per_session = Column(Integer, default=5)
+    session_interval_hours = Column(Integer, default=4)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class UserParsingResult(Base):
+    """Результат парсинга пользователей из каналов."""
+    __tablename__ = "user_parsing_results"
+    __table_args__ = (
+        Index("ix_user_parsing_results_tenant_id", "tenant_id"),
+        Index("ix_user_parsing_results_channel_username", "channel_username"),
+        Index("ix_user_parsing_results_user_telegram_id", "user_telegram_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    job_id = Column(Integer, nullable=True)  # ref to parsing job
+    channel_username = Column(String(200), nullable=True)
+    user_telegram_id = Column(BigInteger, nullable=True)
+    username = Column(String(200), nullable=True)
+    first_name = Column(String(200), nullable=True)
+    last_name = Column(String(200), nullable=True)
+    bio = Column(Text, nullable=True)
+    is_premium = Column(Boolean, default=False)
+    last_seen = Column(DateTime, nullable=True)
+    parsed_at = Column(DateTime, default=utcnow)
+
+
+class TelegramFolder(Base):
+    """Telegram папка (folder) с каналами, привязанная к аккаунту."""
+    __tablename__ = "telegram_folders"
+    __table_args__ = (
+        Index("ix_telegram_folders_tenant_id", "tenant_id"),
+        Index("ix_telegram_folders_account_id", "account_id"),
+        Index("ix_telegram_folders_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    folder_name = Column(String(200), nullable=False)
+    folder_id = Column(Integer, nullable=True)  # Telegram folder ID
+    invite_link = Column(String(500), nullable=True)
+    channel_usernames = Column(JSONType, nullable=True)  # list of channels in folder
+    status = Column(String(20), default="active")  # active, archived
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8 — Intelligence & Scale
+# ---------------------------------------------------------------------------
+
+
+class ChannelMapEntry(Base):
+    """Глобальный индекс Telegram-каналов для поиска и таргетинга."""
+    __tablename__ = "channel_map_entries"
+    __table_args__ = (
+        Index("ix_channel_map_entries_tenant_id", "tenant_id"),
+        Index("ix_channel_map_entries_category", "category"),
+        Index("ix_channel_map_entries_language", "language"),
+        Index("ix_channel_map_entries_member_count", "member_count"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    telegram_id = Column(BigInteger, nullable=True)
+    username = Column(String(200), nullable=True)
+    title = Column(String(500), nullable=True)
+    category = Column(String(100), nullable=True)       # tech, crypto, marketing, ecom, edtech …
+    subcategory = Column(String(100), nullable=True)
+    language = Column(String(10), nullable=True)
+    member_count = Column(Integer, default=0)
+    has_comments = Column(Boolean, default=False)
+    avg_post_reach = Column(Integer, nullable=True)
+    engagement_rate = Column(Float, nullable=True)
+    last_indexed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class Campaign(Base):
+    """Рекламная кампания: настройки, бюджет, тип активности."""
+    __tablename__ = "campaigns"
+    __table_args__ = (
+        Index("ix_campaigns_tenant_id", "tenant_id"),
+        Index("ix_campaigns_status", "status"),
+        Index("ix_campaigns_campaign_type", "campaign_type"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    name = Column(String(200), nullable=False)
+    status = Column(String(20), default="draft")        # draft, active, paused, completed, archived
+    campaign_type = Column(String(30), default="commenting")  # commenting, reactions, chatting, mixed
+    account_ids = Column(JSONType, nullable=True)        # list[int] — assigned account PKs
+    channel_database_id = Column(Integer, ForeignKey("channel_databases.id"), nullable=True)
+    comment_prompt = Column(Text, nullable=True)
+    comment_tone = Column(String(50), nullable=True)
+    comment_language = Column(String(10), default="ru")
+    schedule_type = Column(String(20), default="continuous")  # continuous, scheduled, burst
+    schedule_config = Column(JSONType, nullable=True)   # {start_time, end_time, days_of_week, burst_count}
+    budget_daily_actions = Column(Integer, default=100)
+    budget_total_actions = Column(Integer, nullable=True)
+    total_actions_performed = Column(Integer, default=0)
+    total_comments_sent = Column(Integer, default=0)
+    total_reactions_sent = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class CampaignRun(Base):
+    """Один цикл запуска кампании: счётчики, лог ошибок."""
+    __tablename__ = "campaign_runs"
+    __table_args__ = (
+        Index("ix_campaign_runs_tenant_id", "tenant_id"),
+        Index("ix_campaign_runs_campaign_id", "campaign_id"),
+        Index("ix_campaign_runs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    status = Column(String(20), default="pending")      # pending, running, completed, failed
+    actions_performed = Column(Integer, default=0)
+    comments_sent = Column(Integer, default=0)
+    reactions_sent = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    run_log = Column(JSONType, nullable=True)           # [{timestamp, action, result}]
+
+
+class AnalyticsEvent(Base):
+    """Поток событий аналитики: комменты, реакции, блокировки, старт кампаний."""
+    __tablename__ = "analytics_events"
+    __table_args__ = (
+        Index("ix_analytics_events_tenant_id", "tenant_id"),
+        Index("ix_analytics_events_event_type", "event_type"),
+        Index("ix_analytics_events_account_id", "account_id"),
+        Index("ix_analytics_events_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    # comment_sent, reaction_sent, flood_wait, spam_block, account_frozen, campaign_started …
+    event_type = Column(String(50), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    campaign_id = Column(Integer, nullable=True)        # soft ref — no FK to avoid cascade issues
+    channel_username = Column(String(200), nullable=True)
+    event_data = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+

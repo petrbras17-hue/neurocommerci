@@ -1,6 +1,7 @@
-import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./layout/AppShell";
 import { useAuth } from "./auth";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfileCompletionPage } from "./pages/ProfileCompletionPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -8,7 +9,12 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { ContextPage } from "./pages/ContextPage";
 import { CreativePage } from "./pages/CreativePage";
+import { ChannelMapPage } from "./pages/ChannelMapPage";
+import { CampaignsPage } from "./pages/CampaignsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { FarmPage } from "./pages/FarmPage";
+import { ParserPage } from "./pages/ParserPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -25,40 +31,44 @@ function ProtectedRoute() {
 }
 
 export default function App() {
+  const location = useLocation();
   return (
-    <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/complete-profile" element={<ProfileCompletionPage />} />
-      <Route element={<ProtectedRoute />}>
-        <Route element={<AppShell />}>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/accounts" element={<AccountsPage />} />
-          <Route path="/assistant" element={<AssistantPage />} />
-          <Route path="/context" element={<ContextPage />} />
-          <Route path="/creative" element={<CreativePage />} />
-          <Route
-            path="/campaigns"
-            element={<PlaceholderPage title="Кампании" description="Сущности кампаний и approval flows придут в следующем спринте роста." />}
-          />
-          <Route
-            path="/parser"
-            element={<PlaceholderPage title="Парсер" description="Parser dashboard, discovery и сохранённые поиски будут усилены после assistant layer." />}
-          />
-          <Route
-            path="/analytics"
-            element={<PlaceholderPage title="Аналитика" description="Usage dashboards и activation metrics будут расширены отдельным аналитическим спринтом." />}
-          />
-          <Route
-            path="/billing"
-            element={<PlaceholderPage title="Биллинг" description="Биллинг вынесен после assistant/value layer, когда продуктовая ценность уже доказана." />}
-          />
-          <Route
-            path="/settings"
-            element={<PlaceholderPage title="Настройки" description="Workspace settings, роли и повторный onboarding будут расширены после stabilisation sprint." />}
-          />
+    <ErrorBoundary locationKey={location.pathname}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/complete-profile" element={<ProfileCompletionPage />} />
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppShell />}>
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/assistant" element={<AssistantPage />} />
+            <Route path="/context" element={<ContextPage />} />
+            <Route path="/creative" element={<CreativePage />} />
+            <Route path="/farm" element={<FarmPage />} />
+            <Route path="/warmup" element={<PlaceholderPage title="Прогрев" description="Автоматический прогрев аккаунтов перед запуском — имитация живого поведения." />} />
+            <Route path="/health" element={<PlaceholderPage title="Здоровье" description="Мониторинг здоровья аккаунтов — scoring, карантин, автоматические апелляции." />} />
+            <Route path="/reactions" element={<PlaceholderPage title="Реакции" description="Массовая расстановка реакций на посты в целевых каналах." />} />
+            <Route path="/chatting" element={<PlaceholderPage title="Нейрочаттинг" description="ИИ-чаттинг в комментариях — контекстные ответы на посты." />} />
+            <Route path="/dialogs" element={<PlaceholderPage title="Нейродиалоги" description="Симуляция живых диалогов между аккаунтами для прогрева." />} />
+            <Route path="/user-parser" element={<PlaceholderPage title="Парсер юзеров" description="Парсинг аудитории каналов — сбор метаданных пользователей." />} />
+            <Route path="/folders" element={<PlaceholderPage title="Папки" description="Управление Telegram-папками для организации каналов." />} />
+            <Route path="/channel-map" element={<ChannelMapPage />} />
+            <Route path="/parser" element={<ParserPage />} />
+            <Route path="/profiles" element={<PlaceholderPage title="Фабрика профилей" description="ИИ-генерация профилей — аватары, имена, биографии, каналы." />} />
+            <Route path="/campaigns" element={<CampaignsPage />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route
+              path="/billing"
+              element={<PlaceholderPage title="Биллинг" description="Биллинг вынесен после assistant/value layer, когда продуктовая ценность уже доказана." />}
+            />
+            <Route
+              path="/settings"
+              element={<PlaceholderPage title="Настройки" description="Workspace settings, роли и повторный onboarding будут расширены после stabilisation sprint." />}
+            />
+          </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </ErrorBoundary>
   );
 }

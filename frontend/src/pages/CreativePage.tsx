@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "../api";
+import { motion } from "framer-motion";
+import { Palette, Sparkles, Check, Loader, FileText } from "lucide-react";
+import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
 type CreativeItem = {
@@ -16,6 +18,20 @@ type CreativeItem = {
 type CreativeResponse = {
   total: number;
   items: CreativeItem[];
+};
+
+type QualitySummary = {
+  latest_by_task: Record<
+    string,
+    {
+      provider: string | null;
+      model: string | null;
+      quality_score: number;
+      fallback_used: boolean;
+      repair_applied: boolean;
+      latency_ms: number | null;
+    }
+  >;
 };
 
 const DRAFT_TYPES = [
@@ -38,12 +54,27 @@ function normalizeVariant(variant: string | { title?: string; content?: string }
   };
 }
 
+const container = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: { staggerChildren: 0.07 },
+  },
+};
+
+const cardAnim = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as const } },
+};
+
 export function CreativePage() {
   const { accessToken } = useAuth();
   const [creative, setCreative] = useState<CreativeResponse>({ total: 0, items: [] });
   const [draftType, setDraftType] = useState("post");
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [jobState, setJobState] = useState<JobStatusResponse | null>(null);
+  const [quality, setQuality] = useState<QualitySummary | null>(null);
 
   const loadCreative = async () => {
     if (!accessToken) {
@@ -53,8 +84,17 @@ export function CreativePage() {
     setCreative(payload);
   };
 
+  const loadQuality = async () => {
+    if (!accessToken) {
+      return;
+    }
+    const payload = await apiFetch<QualitySummary>("/v1/ai/quality-summary", { accessToken });
+    setQuality(payload);
+  };
+
   useEffect(() => {
     void loadCreative().catch(() => setCreative({ total: 0, items: [] }));
+    void loadQuality().catch(() => setQuality(null));
   }, [accessToken]);
 
   const generate = async () => {
@@ -64,13 +104,28 @@ export function CreativePage() {
     setBusy(true);
     setStatusMessage("");
     try {
-      await apiFetch("/v1/creative/generate", {
+      const queued = await apiFetch<{ job_id: number; status: string }>("/v1/creative/generate", {
         method: "POST",
         accessToken,
         json: { draft_type: draftType, variant_count: 3 },
       });
+      setJobState({
+        id: queued.job_id,
+        job_type: "creative_generate",
+        status: "queued",
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        error_code: null,
+        result_summary: {},
+      });
+      const job = await pollJob(accessToken, queued.job_id, { timeoutMs: 45000, intervalMs: 1200 });
+      setJobState(job);
+      if (job.status === "failed") {
+        throw new Error(job.error_code || "creative_generate_failed");
+      }
       setStatusMessage("Черновик создан. Проверьте варианты и утвердите только то, что отражает реальный бизнес-контекст.");
-      await loadCreative();
+      await Promise.all([loadCreative(), loadQuality()]);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "creative_generate_failed");
     } finally {
@@ -99,60 +154,178 @@ export function CreativePage() {
     }
   };
 
+  const qualityItem = quality?.latest_by_task?.["creative_variants"];
+
   return (
     <div className="page-grid">
-      <section className="two-column-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Creative flow</div>
-              <h2>Что делает система</h2>
-            </div>
-          </div>
-          <ul className="bullet-list">
-            <li>Генерирует черновики постов, комментариев, ad copy и image prompts из утверждённого контекста.</li>
-            <li>Даёт несколько вариантов, чтобы оператор не зависел от одного ответа модели.</li>
-            <li>Хранит approved assets отдельно от обычных draft-ов.</li>
-          </ul>
-        </article>
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Creative flow</div>
-              <h2>Что делает оператор</h2>
-            </div>
-          </div>
-          <ul className="bullet-list">
-            <li>Проверяет смысл, тональность и корректность обещаний.</li>
-            <li>Выбирает конкретный вариант, который действительно подходит бренду.</li>
-            <li>Не отправляет черновик дальше, пока он не выглядит как реальный рабочий материал.</li>
-          </ul>
-        </article>
-      </section>
+      {/* Hero */}
+      <motion.section
+        className="hero-panel"
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <Palette size={20} color="var(--accent)" />
+          <span className="eyebrow">Creative studio</span>
+        </div>
+        <h1>Черновики и креативы</h1>
+        <p className="muted" style={{ marginTop: 8 }}>
+          Генерация постов, комментариев, ad copy и image prompts из утверждённого контекста.
+        </p>
+      </motion.section>
 
-      <section className="panel">
+      {/* Quality stat bar */}
+      <motion.section
+        className="dash-status-bar"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.1 }}
+      >
+        <div className="dash-status-item">
+          <FileText size={14} color="var(--accent)" />
+          <span>Всего: {creative.total}</span>
+        </div>
+        {qualityItem ? (
+          <>
+            <div className="dash-status-sep" />
+            <div className="dash-status-item">
+              <span style={{ color: "var(--muted)", marginRight: 4, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>Provider</span>
+              <span>{qualityItem.provider || "—"}</span>
+            </div>
+            <div className="dash-status-sep" />
+            <div className="dash-status-item">
+              <span style={{ color: "var(--muted)", marginRight: 4, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>Model</span>
+              <span>{qualityItem.model || "—"}</span>
+            </div>
+            <div className="dash-status-sep" />
+            <div className="dash-status-item">
+              <span style={{ color: "var(--muted)", marginRight: 4, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>Score</span>
+              <span style={{ color: qualityItem.quality_score >= 7 ? "var(--accent)" : qualityItem.quality_score >= 4 ? "var(--warning)" : "var(--danger)" }}>
+                {qualityItem.quality_score ?? 0}
+              </span>
+            </div>
+            {qualityItem.fallback_used ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item"><span className="pill warning">fallback</span></div>
+              </>
+            ) : null}
+            {qualityItem.repair_applied ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item"><span className="pill info">repair</span></div>
+              </>
+            ) : null}
+            {qualityItem.latency_ms ? (
+              <>
+                <div className="dash-status-sep" />
+                <div className="dash-status-item"><span>{qualityItem.latency_ms}ms</span></div>
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </motion.section>
+
+      {/* Status message */}
+      {statusMessage ? (
+        <motion.div
+          className="status-banner"
+          initial={{ opacity: 0, scale: 0.97 }}
+          animate={{ opacity: 1, scale: 1 }}
+        >
+          {statusMessage}
+        </motion.div>
+      ) : null}
+
+      {/* Generate section */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.15 }}
+      >
         <div className="panel-header">
           <div>
             <div className="eyebrow">Generate</div>
             <h2>Сгенерировать новый черновик</h2>
           </div>
         </div>
-        {statusMessage ? <div className="status-banner">{statusMessage}</div> : null}
-        <div className="actions-row">
-          <select value={draftType} onChange={(event) => setDraftType(event.target.value)}>
-            {DRAFT_TYPES.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
+        <div className="actions-row" style={{ alignItems: "center" }}>
+          {/* Segmented control / selector */}
+          <div className="crv-type-selector">
+            {DRAFT_TYPES.map((dt) => (
+              <button
+                key={dt.value}
+                type="button"
+                className={`crv-type-option ${draftType === dt.value ? "crv-type-option--active" : ""}`}
+                onClick={() => setDraftType(dt.value)}
+              >
+                {dt.label}
+              </button>
             ))}
-          </select>
-          <button className="primary-button" type="button" disabled={busy} onClick={() => void generate()}>
-            {busy ? "Генерируем…" : "Сгенерировать 3 варианта"}
+          </div>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => void generate()}
+            style={busy ? {} : { boxShadow: "0 0 24px rgba(0, 255, 136, 0.25)" }}
+          >
+            {busy ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Loader size={14} style={{ animation: "pulse 1.2s ease-in-out infinite" }} />
+                Генерируем...
+              </span>
+            ) : (
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Sparkles size={14} />
+                Сгенерировать 3 варианта
+              </span>
+            )}
           </button>
         </div>
-      </section>
+      </motion.section>
 
-      <section className="panel wide">
+      {/* Job state */}
+      {jobState ? (
+        <motion.div
+          className="dash-status-bar"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace", fontSize: 12 }}
+        >
+          <div className="dash-status-item">
+            {jobState.status === "queued" || jobState.status === "running"
+              ? <Loader size={14} color="var(--accent)" style={{ animation: "pulse 1.2s ease-in-out infinite" }} />
+              : jobState.status === "succeeded"
+                ? <Check size={14} color="var(--accent)" />
+                : <Palette size={14} color="var(--danger)" />
+            }
+            <span>Job #{jobState.id}</span>
+          </div>
+          <div className="dash-status-sep" />
+          <div className="dash-status-item">
+            <span>{jobState.status}</span>
+          </div>
+          {jobState.error_code ? (
+            <>
+              <div className="dash-status-sep" />
+              <div className="dash-status-item">
+                <span style={{ color: "var(--danger)" }}>{jobState.error_code}</span>
+              </div>
+            </>
+          ) : null}
+        </motion.div>
+      ) : null}
+
+      {/* Draft cards */}
+      <motion.section
+        className="panel"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.25 }}
+      >
         <div className="panel-header">
           <div>
             <div className="eyebrow">Draft registry</div>
@@ -162,32 +335,68 @@ export function CreativePage() {
             <span className="pill">Всего: {creative.total}</span>
           </div>
         </div>
-        <div className="creative-list">
-          {creative.items.length ? (
-            creative.items.map((item) => (
-              <div className="creative-item" key={item.id}>
-                <div className="thread-meta">
-                  <strong>{item.title}</strong>
-                  <span>{item.status}</span>
-                  <span>{item.created_at || "—"}</span>
+
+        {creative.items.length ? (
+          <motion.div
+            className="crv-draft-list"
+            variants={container}
+            initial="hidden"
+            animate="show"
+          >
+            {creative.items.map((draft) => (
+              <motion.div className="crv-draft-card" key={draft.id} variants={cardAnim}>
+                {/* Draft header */}
+                <div className="crv-draft-header">
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <FileText size={16} color="var(--accent)" />
+                    <strong>{draft.title}</strong>
+                  </div>
+                  <div className="badge-row">
+                    <span className={`pill ${draft.status === "approved" ? "" : "warning"}`}>
+                      {draft.status}
+                    </span>
+                    <span className="pill info">{draft.draft_type || "draft"}</span>
+                  </div>
                 </div>
-                <p>{item.content_text}</p>
-                {(item.variants || []).length ? (
-                  <div className="field-list">
-                    {item.variants.map((variant, index) => {
+
+                {/* Draft body text */}
+                {draft.content_text ? (
+                  <p className="muted" style={{ margin: 0, fontSize: 13 }}>{draft.content_text}</p>
+                ) : null}
+
+                {/* Variants as numbered terminal output blocks */}
+                {(draft.variants || []).length ? (
+                  <div className="crv-variants">
+                    {draft.variants.map((variant, index) => {
                       const normalized = normalizeVariant(variant, index);
+                      const isSelected = draft.status === "approved" && draft.selected_variant === index;
                       return (
-                        <div className="info-block" key={`${item.id}-${index}`}>
-                          <strong>{normalized.title}</strong>
-                          <p className="muted">{normalized.content}</p>
-                          <div className="actions-row">
+                        <div
+                          className={`crv-variant-block ${isSelected ? "crv-variant-block--selected" : ""}`}
+                          key={`${draft.id}-${index}`}
+                        >
+                          <div className="crv-variant-header">
+                            <span className="crv-variant-number">{String(index + 1).padStart(2, "0")}</span>
+                            <span className="crv-variant-title">{normalized.title}</span>
+                            {isSelected ? <Check size={14} color="var(--accent)" /> : null}
+                          </div>
+                          <pre className="crv-variant-content">{normalized.content}</pre>
+                          <div style={{ marginTop: 8 }}>
                             <button
-                              className="ghost-button"
+                              className={isSelected ? "pill" : "crv-approve-btn"}
                               type="button"
-                              disabled={busy || item.status === "approved"}
-                              onClick={() => void approve(item.id, index)}
+                              disabled={busy || draft.status === "approved"}
+                              onClick={() => void approve(draft.id, index)}
                             >
-                              {item.status === "approved" && item.selected_variant === index ? "Утверждён" : "Утвердить вариант"}
+                              {isSelected ? (
+                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <Check size={12} /> Утверждён
+                                </span>
+                              ) : (
+                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <Check size={12} /> Утвердить
+                                </span>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -195,13 +404,20 @@ export function CreativePage() {
                     })}
                   </div>
                 ) : null}
-              </div>
-            ))
-          ) : (
-            <p className="muted">Пока нет черновиков. Сначала соберите context, затем сгенерируйте первый draft.</p>
-          )}
-        </div>
-      </section>
+
+                {/* Meta */}
+                <div className="thread-meta">
+                  <span>{draft.created_at || "—"}</span>
+                </div>
+              </motion.div>
+            ))}
+          </motion.div>
+        ) : (
+          <div className="dash-empty">
+            // Пока нет черновиков. Соберите context, затем сгенерируйте первый draft.
+          </div>
+        )}
+      </motion.section>
     </div>
   );
 }

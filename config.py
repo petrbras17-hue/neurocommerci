@@ -91,9 +91,34 @@ class Settings(BaseSettings):
     DARTVPN_CHANNEL_LINK: str = Field(default="")
     DARTVPN_AVATAR_PATH: str = Field(default="")
 
+    # --- Warmup API ---
+    WARMUP_DEFAULT_MODE: str = Field(default="conservative")
+    WARMUP_MAX_CONFIGS_PER_TENANT: int = Field(default=10)
+
+    # --- Farm Orchestrator ---
+    FARM_MAX_THREADS_PER_FARM: int = Field(default=50)
+    FARM_DEFAULT_DELAY_COMMENT_MIN_SEC: int = Field(default=30)
+    FARM_DEFAULT_DELAY_COMMENT_MAX_SEC: int = Field(default=120)
+    FARM_DEFAULT_DELAY_JOIN_MIN_SEC: int = Field(default=60)
+    FARM_DEFAULT_DELAY_JOIN_MAX_SEC: int = Field(default=300)
+    FARM_DEFAULT_AI_PROTECTION: str = Field(default="aggressive")  # off | aggressive | conservative
+    FARM_MONITOR_POLL_INTERVAL_SEC: int = Field(default=60)
+    FARM_THREAD_STOP_TIMEOUT_SEC: int = Field(default=30)
+    FARM_EVENTS_RETENTION_DAYS: int = Field(default=30)
+    FARM_HEALTH_RECALC_INTERVAL_SEC: int = Field(default=300)  # 5 min
+
     # --- Warm-up (14-дневный прогрев новых аккаунтов) ---
     WARMUP_LIGHT_LIMIT: int = Field(default=3)      # Дни 5-7: 1-3 коммента
     WARMUP_MODERATE_LIMIT: int = Field(default=8)    # Дни 8-14: 5-8 комментов
+
+    # --- Sprint 6: Warmup Engine ---
+    WARMUP_DEFAULT_MODE: str = Field(default="conservative")  # conservative | moderate | aggressive
+    WARMUP_DEFAULT_ACTIONS_PER_HOUR: int = Field(default=5)
+    WARMUP_DEFAULT_SESSION_MINUTES: int = Field(default=30)
+    WARMUP_DEFAULT_INTERVAL_HOURS: int = Field(default=6)
+    WARMUP_ACTIVE_HOURS_START: int = Field(default=9)
+    WARMUP_ACTIVE_HOURS_END: int = Field(default=23)
+    HEALTH_RECALC_INTERVAL_SEC: int = Field(default=300)  # 5 min
 
     # --- Session Health & Keep-Alive ---
     SESSION_HEALTH_CHECK_HOURS: int = Field(default=4)  # Проверка авторизации
@@ -362,3 +387,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_critical_secrets(s: "Settings") -> None:
+    """Raise RuntimeError if critical secrets are missing in non-test environments."""
+    if s.APP_ENV == "test":
+        return
+    missing = []
+    if not s.JWT_ACCESS_SECRET:
+        missing.append("JWT_ACCESS_SECRET")
+    if not s.JWT_REFRESH_SECRET:
+        missing.append("JWT_REFRESH_SECRET")
+    if not s.OPS_API_TOKEN:
+        missing.append("OPS_API_TOKEN")
+    if missing:
+        raise RuntimeError(
+            f"Critical secrets are not set: {', '.join(missing)}. "
+            "Set these environment variables before starting the application."
+        )

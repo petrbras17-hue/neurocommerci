@@ -14,6 +14,7 @@ from google import genai
 from google.genai import types
 
 from config import settings
+from core.gemini_models import get_text_model_candidates
 from comments.templates import (
     SCENARIO_A_PROMPT,
     PERSONA_STYLES,
@@ -34,6 +35,15 @@ class CommentGenerator:
         self._client: Optional[genai.Client] = None
         self._initialized = False
         self._recent_comments: deque[str] = deque(maxlen=100)  # Дедупликация
+        self._last_model_used: str = ""
+
+    @staticmethod
+    def _model_candidates() -> list[str]:
+        """Primary + Flash fallback (deduplicated, preserving order)."""
+        return get_text_model_candidates(
+            settings.GEMINI_MODEL,
+            settings.GEMINI_FLASH_MODEL,
+        )
 
     def _init_client(self):
         """Инициализация Gemini клиента (ленивая)."""
@@ -47,7 +57,10 @@ class CommentGenerator:
 
         self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self._initialized = True
-        log.info(f"Gemini клиент инициализирован: {settings.GEMINI_MODEL}")
+        log.info(
+            "Gemini клиент инициализирован: "
+            f"primary={settings.GEMINI_MODEL}, fallback={settings.GEMINI_FLASH_MODEL}"
+        )
 
     async def generate(
         self,
@@ -112,48 +125,53 @@ class CommentGenerator:
             # Сценарий B: промпт строится динамически с актуальным bot mention
             prompt = get_scenario_b_prompt(truncated_post, style_description)
 
-        try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._client.models.generate_content,
-                    model=settings.GEMINI_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=get_system_prompt(),
-                        temperature=0.9,
-                        top_p=0.95,
-                        max_output_tokens=300,
+        models = self._model_candidates()
+        if not models:
+            return None
+
+        for model_name in models:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._client.models.generate_content,
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=get_system_prompt(),
+                            temperature=0.9,
+                            top_p=0.95,
+                            max_output_tokens=300,
+                        ),
                     ),
-                ),
-                timeout=30.0,  # 30 секунд макс на Gemini API
-            )
+                    timeout=30.0,  # 30 секунд макс на попытку
+                )
 
-            if not response or not response.text:
-                log.warning("Gemini вернул пустой ответ")
-                return None
+                if not response or not response.text:
+                    log.warning(f"Gemini вернул пустой ответ (model={model_name})")
+                    continue
 
-            text = self._clean_comment(response.text)
+                text = self._clean_comment(response.text)
 
-            # Валидация
-            if not self._validate(text, scenario):
-                log.warning(f"Комментарий не прошёл валидацию: {text[:100]}")
-                return None
+                # Валидация
+                if not self._validate(text, scenario):
+                    log.warning(f"Комментарий не прошёл валидацию (model={model_name}): {text[:100]}")
+                    continue
 
-            # Дедупликация
-            if self._is_duplicate(text):
-                log.debug("Дубль комментария, повтор генерации")
-                return None
+                # Дедупликация
+                if self._is_duplicate(text):
+                    log.debug(f"Дубль комментария (model={model_name}), повтор генерации")
+                    continue
 
-            self._recent_comments.append(text.lower())
+                self._recent_comments.append(text.lower())
+                self._last_model_used = model_name
+                return text
 
-            return text
+            except asyncio.TimeoutError:
+                log.warning(f"Gemini API: таймаут (model={model_name})")
+            except Exception as exc:
+                log.warning(f"Ошибка Gemini API (model={model_name}): {exc}")
 
-        except asyncio.TimeoutError:
-            log.warning("Gemini API: таймаут (30с)")
-            return None
-        except Exception as exc:
-            log.error(f"Ошибка Gemini API: {exc}")
-            return None
+        return None
 
     def _clean_comment(self, text: str) -> str:
         """Очистить текст комментария от артефактов."""
@@ -245,6 +263,8 @@ class CommentGenerator:
         """Статистика генератора."""
         return {
             "model": settings.GEMINI_MODEL,
+            "fallback_model": settings.GEMINI_FLASH_MODEL,
+            "last_model_used": self._last_model_used or "n/a",
             "ai_available": self._client is not None,
             "recent_comments": len(self._recent_comments),
             "scenarios": self.scenario_selector.get_stats(),
