@@ -421,14 +421,19 @@ def _resolve_candidates(
     filtered = [candidate for candidate in candidates if candidate and candidate.provider in allow]
 
     ordered: list[CandidateModel] = []
+    seen: set[str] = set()
     # Affinity models first (if any)
     for candidate in affinity_candidates:
-        if candidate not in ordered:
+        key = f"{candidate.provider}:{candidate.model_name}"
+        if key not in seen:
+            seen.add(key)
             ordered.append(candidate)
     # Then provider-ordered defaults
     for provider in allow:
         for candidate in filtered:
-            if candidate.provider == provider and candidate not in ordered:
+            key = f"{candidate.provider}:{candidate.model_name}"
+            if candidate.provider == provider and key not in seen:
+                seen.add(key)
                 ordered.append(candidate)
     return ordered
 

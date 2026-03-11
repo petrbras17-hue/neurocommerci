@@ -1689,17 +1689,23 @@ async def ai_quality_summary(
     )
 
 
+_ai_models_cache: dict[str, Any] | None = None
+
+
 @app.get("/v1/ai/models")
 async def ai_available_models(
     _tenant_context: TenantContext = Depends(get_tenant_context),
 ) -> dict[str, Any]:
+    global _ai_models_cache
+    if _ai_models_cache is not None:
+        return _ai_models_cache
     from core.ai_router import (
         OPENROUTER_MODEL_CATALOG,
         GEMINI_PRICING_PER_1M,
         DEFAULT_TASK_POLICIES,
         TASK_MODEL_AFFINITY,
     )
-    return {
+    _ai_models_cache = {
         "openrouter_models": {
             model_id: info for model_id, info in OPENROUTER_MODEL_CATALOG.items()
         },
@@ -1718,6 +1724,7 @@ async def ai_available_models(
         "task_model_affinity": TASK_MODEL_AFFINITY,
         "total_models": len(OPENROUTER_MODEL_CATALOG) + len(GEMINI_PRICING_PER_1M),
     }
+    return _ai_models_cache
 
 
 @app.get("/v1/internal/ai/audit")

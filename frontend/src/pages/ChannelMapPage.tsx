@@ -39,10 +39,16 @@ function langFlag(lang: string | null): string {
   return map[lang.toLowerCase()] ?? "🌐";
 }
 
-function highlight(text: string, query: string): string {
-  if (!query.trim()) return text;
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.replace(new RegExp(`(${escaped})`, "gi"), "<mark>$1</mark>");
+function buildHighlightRe(query: string): RegExp | null {
+  const q = query.trim();
+  if (!q) return null;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(${escaped})`, "gi");
+}
+
+function highlight(text: string, re: RegExp | null): string {
+  if (!re) return text;
+  return text.replace(re, "<mark>$1</mark>");
 }
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -212,11 +218,11 @@ function CategoryCard({
 
 function ChannelCard({
   ch,
-  query,
+  highlightRe,
   onAddToCampaign,
 }: {
   ch: ChannelMapEntry;
-  query: string;
+  highlightRe: RegExp | null;
   onAddToCampaign?: (ch: ChannelMapEntry) => void;
 }) {
   const firstLetter = (ch.title ?? ch.username ?? "?")[0].toUpperCase();
@@ -231,8 +237,8 @@ function ChannelCard({
   const gradientIndex = (ch.id ?? 0) % gradients.length;
   const meta = ch.category ? getCategoryMeta(ch.category) : null;
 
-  const titleHtml = ch.title ? highlight(ch.title, query) : null;
-  const usernameHtml = ch.username ? highlight(`@${ch.username}`, query) : null;
+  const titleHtml = ch.title ? highlight(ch.title, highlightRe) : null;
+  const usernameHtml = ch.username ? highlight(`@${ch.username}`, highlightRe) : null;
 
   return (
     <div
@@ -457,6 +463,9 @@ export function ChannelMapPage() {
   // UI state
   const [viewMode, setViewMode] = useState<ViewMode>("cards");
 
+  // Memoize highlight regex (compiled once per query change, not per card)
+  const highlightRe = useMemo(() => buildHighlightRe(query), [query]);
+
   // ── derived stats ────────────────────────────────────────────────────────
 
   const byCategory = (stats.by_category as Record<string, number> | undefined) ?? {};
@@ -630,9 +639,10 @@ export function ChannelMapPage() {
 
   // ── render ────────────────────────────────────────────────────────────────
 
-  const allCategoryNames = [
-    ...new Set([...categories, ...Object.keys(byCategory), ...Object.keys(CATEGORY_META)]),
-  ];
+  const allCategoryNames = useMemo(
+    () => [...new Set([...categories, ...Object.keys(byCategory), ...Object.keys(CATEGORY_META)])],
+    [categories, byCategory],
+  );
 
   const maxCatCount = Math.max(
     ...allCategoryNames.map(
@@ -956,7 +966,7 @@ export function ChannelMapPage() {
             }}
           >
             {displayItems.map((ch) => (
-              <ChannelCard key={ch.id} ch={ch} query={query} />
+              <ChannelCard key={ch.id} ch={ch} highlightRe={highlightRe} />
             ))}
           </div>
         )}
