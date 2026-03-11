@@ -492,6 +492,7 @@ export type ChannelMapEntry = {
   language: string | null; member_count: number;
   has_comments: boolean; avg_post_reach: number | null;
   engagement_rate: number | null; last_indexed_at: string | null;
+  created_at: string | null;
 };
 
 export const channelMapApi = {
@@ -530,6 +531,7 @@ export type CampaignRun = {
   actions_performed: number; comments_sent: number;
   reactions_sent: number; errors: number;
   started_at: string | null; completed_at: string | null;
+  run_log: unknown | null;
 };
 
 export const campaignsApi = {
@@ -558,6 +560,9 @@ export const campaignsApi = {
 export type DashboardData = {
   total_comments: number; total_reactions: number;
   total_flood_waits: number; total_spam_blocks: number;
+  days: number;
+  active_campaigns: number;
+  recent_events: unknown[];
   daily_breakdown: Array<{date: string; comments: number; reactions: number; errors: number}>;
   top_channels: Array<{channel: string; actions: number; success_rate: number}>;
   account_activity: Array<{account_id: number; phone: string | null; actions: number; health_score: number}>;

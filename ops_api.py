@@ -1689,6 +1689,37 @@ async def ai_quality_summary(
     )
 
 
+@app.get("/v1/ai/models")
+async def ai_available_models(
+    _tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    from core.ai_router import (
+        OPENROUTER_MODEL_CATALOG,
+        GEMINI_PRICING_PER_1M,
+        DEFAULT_TASK_POLICIES,
+        TASK_MODEL_AFFINITY,
+    )
+    return {
+        "openrouter_models": {
+            model_id: info for model_id, info in OPENROUTER_MODEL_CATALOG.items()
+        },
+        "gemini_models": {
+            model: {"input_per_1m": p[0], "output_per_1m": p[1]}
+            for model, p in GEMINI_PRICING_PER_1M.items()
+        },
+        "task_policies": {
+            k: {
+                "agent_name": v.agent_name,
+                "tier": v.requested_model_tier,
+                "approval_required": v.approval_required,
+            }
+            for k, v in DEFAULT_TASK_POLICIES.items()
+        },
+        "task_model_affinity": TASK_MODEL_AFFINITY,
+        "total_models": len(OPENROUTER_MODEL_CATALOG) + len(GEMINI_PRICING_PER_1M),
+    }
+
+
 @app.get("/v1/internal/ai/audit")
 async def internal_ai_audit(
     limit: int = 50,
