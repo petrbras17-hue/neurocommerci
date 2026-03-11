@@ -1,6 +1,25 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  User,
+  Building2,
+  Layers,
+  Users,
+  Shield,
+  LogOut,
+  Monitor,
+  Smartphone,
+  Globe,
+  Trash2,
+  RefreshCw,
+  Copy,
+  Check,
+  ChevronRight,
+} from "lucide-react";
 import { useAuth } from "../auth";
 import { apiFetch } from "../api";
+
+/* ─── Types ────────────────────────────────────────────────────────────────── */
 
 type WorkspaceInfo = {
   id: number;
@@ -27,30 +46,88 @@ type SessionInfo = {
   is_current: boolean;
 };
 
-function _parseDevice(userAgent: string | null): string {
-  if (!userAgent) return "Неизвестное устройство";
-  const ua = userAgent.toLowerCase();
-  if (ua.includes("mobile") || ua.includes("android") || ua.includes("iphone")) {
-    return "Мобильное устройство";
-  }
-  if (ua.includes("mac")) return "macOS";
-  if (ua.includes("windows")) return "Windows";
-  if (ua.includes("linux")) return "Linux";
-  return "Браузер";
+/* ─── Helpers ──────────────────────────────────────────────────────────────── */
+
+function parseDevice(ua: string | null): { label: string; icon: typeof Monitor } {
+  if (!ua) return { label: "Неизвестное устройство", icon: Globe };
+  const low = ua.toLowerCase();
+  if (low.includes("mobile") || low.includes("android") || low.includes("iphone"))
+    return { label: "Мобильное", icon: Smartphone };
+  if (low.includes("mac")) return { label: "macOS", icon: Monitor };
+  if (low.includes("windows")) return { label: "Windows", icon: Monitor };
+  if (low.includes("linux")) return { label: "Linux", icon: Monitor };
+  return { label: "Браузер", icon: Globe };
 }
 
-function _parseClient(userAgent: string | null): string {
-  if (!userAgent) return "";
-  const ua = userAgent.toLowerCase();
-  if (ua.includes("chrome") && !ua.includes("chromium") && !ua.includes("edg")) return "Chrome";
-  if (ua.includes("firefox")) return "Firefox";
-  if (ua.includes("safari") && !ua.includes("chrome")) return "Safari";
-  if (ua.includes("edg")) return "Edge";
+function parseBrowser(ua: string | null): string {
+  if (!ua) return "";
+  const low = ua.toLowerCase();
+  if (low.includes("chrome") && !low.includes("chromium") && !low.includes("edg")) return "Chrome";
+  if (low.includes("firefox")) return "Firefox";
+  if (low.includes("safari") && !low.includes("chrome")) return "Safari";
+  if (low.includes("edg")) return "Edge";
   return "";
 }
 
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "только что";
+  if (mins < 60) return `${mins} мин назад`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} ч назад`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} дн назад`;
+  return new Date(iso).toLocaleDateString("ru");
+}
+
+/* ─── Animation variants ──────────────────────────────────────────────────── */
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 16 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.07, duration: 0.4, ease: [0.16, 1, 0.3, 1] as const },
+  }),
+};
+
+/* ─── Sub-components ──────────────────────────────────────────────────────── */
+
+function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{label}</span>
+      <span style={{ fontSize: mono ? 12 : 13, fontWeight: 500, fontFamily: mono ? "'JetBrains Mono Variable', 'JetBrains Mono', monospace" : "inherit" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function SectionHeader({ icon: Icon, title, count }: { icon: typeof User; title: string; count?: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <div style={{
+        width: 32, height: 32, borderRadius: 8,
+        display: "grid", placeItems: "center",
+        background: "var(--accent-glow)", color: "var(--accent)",
+      }}>
+        <Icon size={16} />
+      </div>
+      <h2 className="dash-panel-title" style={{ margin: 0, fontSize: 12 }}>{title}</h2>
+      {count !== undefined && (
+        <span className="pill" style={{ fontSize: 10, padding: "2px 8px" }}>{count}</span>
+      )}
+    </div>
+  );
+}
+
+/* ─── Main component ──────────────────────────────────────────────────────── */
+
 export function SettingsPage() {
-  const { accessToken, profile } = useAuth();
+  const { accessToken, profile, logout } = useAuth();
 
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
@@ -59,8 +136,8 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [sessionError, setSessionError] = useState("");
+  const [copiedId, setCopiedId] = useState(false);
 
-  // Profile info from auth
   const user = profile?.user as Record<string, unknown> | undefined;
   const tenant = profile?.tenant as Record<string, unknown> | undefined;
 
@@ -69,20 +146,12 @@ export function SettingsPage() {
     void (async () => {
       try {
         const ws = await apiFetch<{ items: WorkspaceInfo[] }>("/v1/me/workspace", { accessToken });
-        if (ws && ws.items && ws.items.length > 0) {
-          setWorkspace(ws.items[0]);
-        }
-      } catch {
-        /* ignore */
-      }
+        if (ws?.items?.length) setWorkspace(ws.items[0]);
+      } catch { /* ignore */ }
       try {
         const t = await apiFetch<{ items: TeamMember[] }>("/v1/me/team", { accessToken });
-        if (t && t.items) {
-          setTeam(t.items);
-        }
-      } catch {
-        /* ignore */
-      }
+        if (t?.items) setTeam(t.items);
+      } catch { /* ignore */ }
       void loadSessions();
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,12 +178,8 @@ export function SettingsPage() {
       await apiFetch(`/auth/sessions/${sessionId}`, { method: "DELETE", accessToken });
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Ошибка";
-      if (msg === "cannot_revoke_current_session") {
-        setSessionError("Нельзя завершить текущую сессию");
-      } else {
-        setSessionError("Не удалось завершить сессию");
-      }
+      const msg = err instanceof Error ? err.message : "";
+      setSessionError(msg === "cannot_revoke_current_session" ? "Нельзя завершить текущую сессию" : "Не удалось завершить сессию");
     }
   };
 
@@ -141,178 +206,249 @@ export function SettingsPage() {
     }
   };
 
-  const otherSessionsCount = sessions.filter((s) => !s.is_current).length;
+  const handleCopyId = () => {
+    const tid = String(tenant?.id || "");
+    if (!tid) return;
+    navigator.clipboard.writeText(tid);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
+  };
+
+  const otherSessions = sessions.filter((s) => !s.is_current);
+  const currentSession = sessions.find((s) => s.is_current);
 
   return (
-    <div style={{ maxWidth: 700, margin: "0 auto", padding: "24px 16px" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 24 }}>Настройки</h1>
+    <div className="dash">
+      {/* Hero */}
+      <motion.div
+        className="dash-hero"
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <h1 className="dash-hero-greeting">Настройки</h1>
+        <p className="dash-hero-date" style={{ color: "var(--text-secondary)" }}>
+          Профиль, организация, сессии и безопасность
+        </p>
+      </motion.div>
 
-      {/* Profile section */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <h2 className="terminal-header" style={{ fontSize: 13, marginBottom: 12 }}>ПРОФИЛЬ</h2>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Имя</span>
-            <span>{String(user?.first_name || "—")}</span>
+      {/* Profile + Organization — two columns */}
+      <div className="dash-columns">
+        {/* Profile */}
+        <motion.div className="dash-panel" custom={0} initial="hidden" animate="visible" variants={cardVariants}>
+          <SectionHeader icon={User} title="ПРОФИЛЬ" />
+          <div>
+            <InfoRow label="Имя" value={String(user?.first_name || "—")} />
+            <InfoRow label="Email" value={String(user?.email || "—")} />
+            <InfoRow
+              label="Telegram"
+              value={user?.telegram_username ? `@${String(user.telegram_username)}` : "—"}
+            />
+            <InfoRow label="Роль" value={String(user?.role || "owner")} />
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Email</span>
-            <span>{String(user?.email || "—")}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Telegram</span>
-            <span>{user?.telegram_username ? `@${String(user.telegram_username)}` : "—"}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Роль</span>
-            <span>{String(user?.role || "owner")}</span>
-          </div>
-        </div>
-      </section>
+        </motion.div>
 
-      {/* Tenant section */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <h2 className="terminal-header" style={{ fontSize: 13, marginBottom: 12 }}>ОРГАНИЗАЦИЯ</h2>
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Компания</span>
-            <span>{String(tenant?.company || "—")}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span className="muted">Tenant ID</span>
-            <span style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace", fontSize: 12 }}>
-              {String(tenant?.id || "—")}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Workspace section */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <h2 className="terminal-header" style={{ fontSize: 13, marginBottom: 12 }}>ПРОСТРАНСТВО</h2>
-        {workspace ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span className="muted">Название</span>
-              <span>{workspace.name}</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span className="muted">Создано</span>
-              <span>{workspace.created_at ? new Date(workspace.created_at).toLocaleDateString("ru") : "—"}</span>
+        {/* Organization */}
+        <motion.div className="dash-panel" custom={1} initial="hidden" animate="visible" variants={cardVariants}>
+          <SectionHeader icon={Building2} title="ОРГАНИЗАЦИЯ" />
+          <div>
+            <InfoRow label="Компания" value={String(tenant?.company || "—")} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>Tenant ID</span>
+              <button
+                onClick={handleCopyId}
+                className="ghost-button"
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px",
+                  fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace", fontSize: 12,
+                  borderRadius: 6, border: "1px solid var(--border)",
+                }}
+              >
+                {String(tenant?.id || "—")}
+                {copiedId ? <Check size={12} color="var(--accent)" /> : <Copy size={12} />}
+              </button>
             </div>
           </div>
-        ) : (
-          <p className="muted">Загрузка...</p>
-        )}
-      </section>
+        </motion.div>
+      </div>
 
-      {/* Team section */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <h2 className="terminal-header" style={{ fontSize: 13, marginBottom: 12 }}>КОМАНДА</h2>
-        {team.length > 0 ? (
-          <div style={{ display: "grid", gap: 6 }}>
-            {team.map((m) => (
-              <div key={m.user_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{m.first_name || m.email || `User #${m.user_id}`}</span>
-                <span className="badge badge-blue" style={{ fontSize: 11 }}>{m.role}</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">Только вы в команде.</p>
-        )}
-      </section>
-
-      {/* Active Sessions section */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 className="terminal-header" style={{ fontSize: 13, margin: 0 }}>АКТИВНЫЕ СЕССИИ</h2>
-          {otherSessionsCount > 0 && (
-            <button
-              className="btn btn-danger"
-              style={{ fontSize: 11, padding: "4px 10px" }}
-              onClick={handleRevokeAllSessions}
-            >
-              Завершить все ({otherSessionsCount})
-            </button>
+      {/* Workspace + Team — two columns */}
+      <div className="dash-columns">
+        {/* Workspace */}
+        <motion.div className="dash-panel" custom={2} initial="hidden" animate="visible" variants={cardVariants}>
+          <SectionHeader icon={Layers} title="ПРОСТРАНСТВО" />
+          {workspace ? (
+            <div>
+              <InfoRow label="Название" value={workspace.name} />
+              <InfoRow
+                label="Создано"
+                value={workspace.created_at ? new Date(workspace.created_at).toLocaleDateString("ru") : "—"}
+              />
+            </div>
+          ) : (
+            <div className="dash-empty">Загрузка...</div>
           )}
+        </motion.div>
+
+        {/* Team */}
+        <motion.div className="dash-panel" custom={3} initial="hidden" animate="visible" variants={cardVariants}>
+          <SectionHeader icon={Users} title="КОМАНДА" count={team.length} />
+          {team.length > 0 ? (
+            <div>
+              {team.map((m) => (
+                <div key={m.user_id} style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 0", borderBottom: "1px solid var(--border)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: "var(--surface-3)", display: "grid", placeItems: "center",
+                      fontSize: 12, fontWeight: 700, color: "var(--text-secondary)",
+                    }}>
+                      {(m.first_name || m.email || "U").charAt(0).toUpperCase()}
+                    </div>
+                    <span style={{ fontSize: 13 }}>{m.first_name || m.email || `User #${m.user_id}`}</span>
+                  </div>
+                  <span className="pill" style={{ fontSize: 10 }}>{m.role}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="dash-empty">Только вы в команде</div>
+          )}
+        </motion.div>
+      </div>
+
+      {/* Active Sessions — full width */}
+      <motion.div className="dash-panel" custom={4} initial="hidden" animate="visible" variants={cardVariants}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <SectionHeader icon={Shield} title="АКТИВНЫЕ СЕССИИ" count={sessions.length} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="ghost-button" onClick={() => void loadSessions()} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <RefreshCw size={13} /> Обновить
+            </button>
+            {otherSessions.length > 0 && (
+              <button className="danger-button" onClick={handleRevokeAllSessions} style={{ fontSize: 12, padding: "6px 12px" }}>
+                <Trash2 size={13} style={{ marginRight: 4, verticalAlign: "middle" }} />
+                Завершить все ({otherSessions.length})
+              </button>
+            )}
+          </div>
         </div>
 
         {sessionError && (
-          <p style={{ color: "#ff4444", fontSize: 13, marginBottom: 8 }}>{sessionError}</p>
+          <div className="form-error" style={{ fontSize: 13 }}>{sessionError}</div>
         )}
 
         {sessionsLoading ? (
-          <p className="muted">Загрузка...</p>
+          <div style={{ display: "grid", gap: 12 }}>
+            {[1, 2].map((i) => <div key={i} className="dash-skeleton" style={{ height: 72, borderRadius: 12 }} />)}
+          </div>
         ) : sessions.length === 0 ? (
-          <p className="muted">Нет активных сессий.</p>
+          <div className="dash-empty">Нет активных сессий</div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {sessions.map((s) => {
-              const device = _parseDevice(s.user_agent);
-              const client = _parseClient(s.user_agent);
-              const label = client ? `${device} — ${client}` : device;
-              const createdDate = s.created_at ? new Date(s.created_at).toLocaleString("ru") : "—";
-              const lastUsed = s.last_used_at ? new Date(s.last_used_at).toLocaleString("ru") : null;
-              return (
-                <div
-                  key={s.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    gap: 12,
-                    padding: "8px 0",
-                    borderBottom: "1px solid var(--border, #1a1a1a)",
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 500, fontSize: 13 }}>{label}</span>
-                      {s.is_current && (
-                        <span
-                          className="badge badge-green"
-                          style={{ fontSize: 10, padding: "2px 6px" }}
-                        >
-                          текущая
-                        </span>
-                      )}
-                    </div>
-                    <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
-                      {s.ip_address && <span style={{ marginRight: 8 }}>{s.ip_address}</span>}
-                      <span>Создана: {createdDate}</span>
-                      {lastUsed && <span style={{ marginLeft: 8 }}>· Использована: {lastUsed}</span>}
-                    </div>
-                  </div>
-                  {!s.is_current && (
-                    <button
-                      className="btn btn-danger"
-                      style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
-                      onClick={() => handleRevokeSession(s.id)}
-                    >
-                      Завершить
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {/* Current session first */}
+            {currentSession && (
+              <SessionCard session={currentSession} onRevoke={handleRevokeSession} />
+            )}
+            {/* Other sessions */}
+            {otherSessions.map((s) => (
+              <SessionCard key={s.id} session={s} onRevoke={handleRevokeSession} />
+            ))}
           </div>
         )}
-      </section>
+      </motion.div>
 
-      {/* Actions */}
-      <section className="dash-card" style={{ marginBottom: 20 }}>
-        <h2 className="terminal-header" style={{ fontSize: 13, marginBottom: 12 }}>ДЕЙСТВИЯ</h2>
+      {/* Danger zone */}
+      <motion.div
+        className="dash-panel"
+        custom={5}
+        initial="hidden"
+        animate="visible"
+        variants={cardVariants}
+        style={{ borderColor: "rgba(255, 68, 68, 0.2)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            display: "grid", placeItems: "center",
+            background: "rgba(255, 68, 68, 0.15)", color: "var(--danger)",
+          }}>
+            <LogOut size={16} />
+          </div>
+          <h2 className="dash-panel-title" style={{ margin: 0, fontSize: 12, color: "var(--danger)" }}>ОПАСНАЯ ЗОНА</h2>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0, lineHeight: 1.5 }}>
+          Выход из аккаунта завершит текущую сессию. Вам нужно будет войти заново.
+        </p>
+        <div style={{ marginTop: 8 }}>
+          <button
+            className="danger-button"
+            onClick={handleLogout}
+            disabled={busy}
+            style={{ width: "100%", padding: "12px 0", fontSize: 14, fontWeight: 600 }}
+          >
+            {busy ? "Выход..." : "Выйти из аккаунта"}
+          </button>
+        </div>
+        {statusMessage && <div className="form-error" style={{ marginTop: 8, fontSize: 13 }}>{statusMessage}</div>}
+      </motion.div>
+    </div>
+  );
+}
+
+/* ─── Session Card ─────────────────────────────────────────────────────────── */
+
+function SessionCard({ session, onRevoke }: { session: SessionInfo; onRevoke: (id: number) => void }) {
+  const { label: deviceLabel, icon: DeviceIcon } = parseDevice(session.user_agent);
+  const browser = parseBrowser(session.user_agent);
+  const displayName = browser ? `${deviceLabel} · ${browser}` : deviceLabel;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 14,
+      padding: "14px 16px", borderRadius: 12,
+      background: session.is_current ? "var(--accent-glow)" : "var(--surface-2)",
+      border: `1px solid ${session.is_current ? "rgba(0, 255, 136, 0.2)" : "var(--border)"}`,
+      transition: "border-color 200ms ease",
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: 10,
+        display: "grid", placeItems: "center",
+        background: session.is_current ? "rgba(0, 255, 136, 0.15)" : "var(--surface-3)",
+        color: session.is_current ? "var(--accent)" : "var(--text-secondary)",
+        flexShrink: 0,
+      }}>
+        <DeviceIcon size={18} />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{displayName}</span>
+          {session.is_current && (
+            <span className="pill" style={{ fontSize: 10, padding: "2px 8px" }}>текущая</span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: 11, color: "var(--muted)", fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace" }}>
+          {session.ip_address && <span>{session.ip_address}</span>}
+          <span>{timeAgo(session.last_used_at || session.created_at)}</span>
+        </div>
+      </div>
+
+      {!session.is_current && (
         <button
-          className="btn btn-danger"
-          onClick={handleLogout}
-          disabled={busy}
-          style={{ width: "100%" }}
+          className="danger-button"
+          onClick={() => onRevoke(session.id)}
+          style={{ fontSize: 12, padding: "6px 12px", flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}
         >
-          {busy ? "Выход..." : "Выйти из аккаунта"}
+          <Trash2 size={12} /> Завершить
         </button>
-        {statusMessage && <p style={{ color: "#ff4444", marginTop: 8, fontSize: 13 }}>{statusMessage}</p>}
-      </section>
+      )}
+      {session.is_current && (
+        <ChevronRight size={16} style={{ color: "var(--accent)", opacity: 0.4, flexShrink: 0 }} />
+      )}
     </div>
   );
 }
