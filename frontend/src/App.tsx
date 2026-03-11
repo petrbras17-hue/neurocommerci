@@ -12,7 +12,6 @@ import { CreativePage } from "./pages/CreativePage";
 import { ChannelMapPage } from "./pages/ChannelMapPage";
 import { CampaignsPage } from "./pages/CampaignsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
-import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { FarmPage } from "./pages/FarmPage";
 import { ParserPage } from "./pages/ParserPage";
 import { WarmupPage } from "./pages/WarmupPage";
@@ -24,6 +23,7 @@ import { UserParserPage } from "./pages/UserParserPage";
 import { FoldersPage } from "./pages/FoldersPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { BillingPage } from "./pages/BillingPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -70,7 +70,7 @@ export default function App() {
             <Route path="/billing" element={<BillingPage />} />
             <Route
               path="/settings"
-              element={<PlaceholderPage title="Настройки" description="Workspace settings, роли и повторный onboarding будут расширены после stabilisation sprint." />}
+              element={<SettingsPage />}
             />
           </Route>
         </Route>

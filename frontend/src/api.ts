@@ -301,8 +301,8 @@ export type WarmupConfig = {
   status: WarmupStatus;
   account_count: number;
   safety_limit_per_hour: number;
-  active_hours_start: string;
-  active_hours_end: string;
+  active_hours_start: number;
+  active_hours_end: number;
   session_duration_minutes: number;
   interval_between_sessions_hours: number;
   enable_reactions: boolean;

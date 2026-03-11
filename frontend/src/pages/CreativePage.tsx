@@ -414,7 +414,7 @@ export function CreativePage() {
           </motion.div>
         ) : (
           <div className="dash-empty">
-            // Пока нет черновиков. Соберите context, затем сгенерируйте первый draft.
+            Пока нет черновиков. Соберите context, затем сгенерируйте первый draft.
           </div>
         )}
       </motion.section>

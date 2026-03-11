@@ -410,7 +410,7 @@ export function ContextPage() {
           </div>
         ) : (
           <p className="muted" style={{ fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', monospace", fontSize: 13 }}>
-            // Качество появится после обработки brief и подтверждения контекста.
+            Качество появится после обработки brief и подтверждения контекста.
           </p>
         )}
       </motion.section>
