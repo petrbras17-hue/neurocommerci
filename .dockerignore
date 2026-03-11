@@ -1,0 +1,45 @@
+# Git / local metadata
+.git
+.gitignore
+.DS_Store
+:memory:.session
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets and env
+.env
+.env.local
+credentials.json
+token.json
+service_account.json
+
+# Runtime data that must stay outside image
+/data/
+/data/**
+!data/avatars/
+!data/avatars/.gitkeep
+!data/logs/
+!data/logs/.gitkeep
+!data/sessions/
+!data/sessions/.gitkeep
+
+# Databases / logs / backups
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# Artifacts
+artifacts/
+ops/runtime/

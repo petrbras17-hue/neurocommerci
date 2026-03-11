@@ -18,6 +18,7 @@ from telethon.tl.functions.account import CheckUsernameRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
 
 from config import settings
+from core.gemini_models import get_text_model_candidates
 from core.session_manager import SessionManager
 from utils.logger import log
 
@@ -168,6 +169,13 @@ class AccountPackager:
         if settings.GEMINI_API_KEY:
             self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+    @staticmethod
+    def _model_candidates() -> list[str]:
+        return get_text_model_candidates(
+            settings.GEMINI_MODEL,
+            settings.GEMINI_FLASH_MODEL,
+        )
+
     # ── Генерация профиля ────────────────────────────────────────────
 
     async def generate_profile(self, style: str = "casual") -> dict:
@@ -180,25 +188,23 @@ class AccountPackager:
 
         prompt = PACKAGING_PROMPT.format(style=style)
 
-        try:
-            response = await asyncio.to_thread(
-                self._client.models.generate_content,
-                model=settings.GEMINI_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.9,
-                    max_output_tokens=300,
-                ),
-            )
+        for model_name in self._model_candidates():
+            try:
+                response = await asyncio.to_thread(
+                    self._client.models.generate_content,
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.9,
+                        max_output_tokens=300,
+                    ),
+                )
+                if response and response.text:
+                    return self._parse_profile(response.text, style)
+            except Exception as exc:
+                log.warning(f"Ошибка генерации профиля (model={model_name}): {exc}")
 
-            if not response or not response.text:
-                return self._get_fallback_profile(style)
-
-            return self._parse_profile(response.text, style)
-
-        except Exception as exc:
-            log.warning(f"Ошибка генерации профиля: {exc}")
-            return self._get_fallback_profile(style)
+        return self._get_fallback_profile(style)
 
     def _parse_profile(self, text: str, style: str) -> dict:
         """Парсинг ответа AI."""

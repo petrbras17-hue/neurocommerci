@@ -106,6 +106,12 @@ async def test_route_ai_task_records_usage_with_gemini_worker(monkeypatch: pytes
             prompt_tokens=111,
             completion_tokens=37,
             estimated_cost_usd=0.0012,
+            quality_flags={
+                "json_parse_failed": False,
+                "json_repair_applied": False,
+                "json_repair_strategy": None,
+                "parsed_without_repair": True,
+            },
         )
 
     monkeypatch.setattr("core.ai_router._call_gemini_json", fake_gemini)
@@ -128,10 +134,19 @@ async def test_route_ai_task_records_usage_with_gemini_worker(monkeypatch: pytes
             assert result.executed_tier == TIER_MANAGER
 
         requests = (await session.execute(select(AIRequest))).scalars().all()
+        attempts = (await session.execute(select(AIRequestAttempt))).scalars().all()
         counters = (await session.execute(select(AIBudgetCounter))).scalars().all()
         assert len(requests) == 1
         assert requests[0].prompt_tokens == 111
         assert requests[0].estimated_cost_usd == pytest.approx(0.0012)
+        assert requests[0].json_parse_failed is False
+        assert requests[0].json_repair_applied is False
+        assert requests[0].parsed_without_repair is True
+        assert requests[0].fallback_used is False
+        assert requests[0].quality_score == pytest.approx(1.0)
+        assert len(attempts) == 1
+        assert attempts[0].json_parse_failed is False
+        assert attempts[0].parsed_without_repair is True
         assert len(counters) == 2  # daily + monthly
 
 
@@ -173,6 +188,12 @@ async def test_boss_budget_downgrades_to_manager(monkeypatch: pytest.MonkeyPatch
             prompt_tokens=10,
             completion_tokens=20,
             estimated_cost_usd=0.01,
+            quality_flags={
+                "json_parse_failed": False,
+                "json_repair_applied": True,
+                "json_repair_strategy": "trimmed_wrapper",
+                "parsed_without_repair": False,
+            },
         )
 
     monkeypatch.setattr("core.ai_router._call_gemini_json", fake_gemini)
@@ -194,6 +215,19 @@ async def test_boss_budget_downgrades_to_manager(monkeypatch: pytest.MonkeyPatch
             assert result.outcome == OUTCOME_DOWNGRADED
             assert result.executed_tier == TIER_MANAGER
             assert result.provider == PROVIDER_GEMINI
+
+        saved = (
+            await session.execute(
+                select(AIRequest)
+                .where(AIRequest.task_type == "campaign_strategy_summary")
+                .order_by(AIRequest.id.desc())
+                .limit(1)
+            )
+        ).scalars().one()
+        assert saved.downgraded_by_budget_policy is True
+        assert saved.json_repair_applied is True
+        assert saved.json_repair_strategy == "trimmed_wrapper"
+        assert saved.quality_score == pytest.approx(0.5)
 
 
 @pytest.mark.asyncio
@@ -272,6 +306,12 @@ async def test_openrouter_fallback_executes_when_gemini_fails(monkeypatch: pytes
             prompt_tokens=50,
             completion_tokens=60,
             estimated_cost_usd=0.12,
+            quality_flags={
+                "json_parse_failed": False,
+                "json_repair_applied": False,
+                "json_repair_strategy": None,
+                "parsed_without_repair": True,
+            },
         )
 
     monkeypatch.setattr("core.ai_router._call_gemini_json", fail_gemini)
@@ -292,6 +332,19 @@ async def test_openrouter_fallback_executes_when_gemini_fails(monkeypatch: pytes
             assert result.ok is True
             assert result.provider == "openrouter"
             assert result.fallback_used is True
+
+        saved = (
+            await session.execute(
+                select(AIRequest)
+                .where(AIRequest.task_type == "assistant_reply")
+                .order_by(AIRequest.id.desc())
+                .limit(1)
+            )
+        ).scalars().one()
+        assert saved.fallback_used is True
+        assert saved.executed_provider == "openrouter"
+        assert saved.json_parse_failed is False
+        assert saved.quality_score == pytest.approx(0.85)
 
 
 def test_extract_json_dict_repairs_common_model_noise() -> None:

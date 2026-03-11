@@ -8,6 +8,19 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { ContextPage } from "./pages/ContextPage";
 import { CreativePage } from "./pages/CreativePage";
+import { FarmPage } from "./pages/FarmPage";
+import { ParserPage } from "./pages/ParserPage";
+import { ProfilesPage } from "./pages/ProfilesPage";
+import { WarmupPage } from "./pages/WarmupPage";
+import { HealthPage } from "./pages/HealthPage";
+import { ReactionsPage } from "./pages/ReactionsPage";
+import { ChattingPage } from "./pages/ChattingPage";
+import { DialogsPage } from "./pages/DialogsPage";
+import { UserParserPage } from "./pages/UserParserPage";
+import { FoldersPage } from "./pages/FoldersPage";
+import { ChannelMapPage } from "./pages/ChannelMapPage";
+import { CampaignsPage } from "./pages/CampaignsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 
 function ProtectedRoute() {
@@ -37,18 +50,19 @@ export default function App() {
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/context" element={<ContextPage />} />
           <Route path="/creative" element={<CreativePage />} />
-          <Route
-            path="/campaigns"
-            element={<PlaceholderPage title="Кампании" description="Сущности кампаний и approval flows придут в следующем спринте роста." />}
-          />
-          <Route
-            path="/parser"
-            element={<PlaceholderPage title="Парсер" description="Parser dashboard, discovery и сохранённые поиски будут усилены после assistant layer." />}
-          />
-          <Route
-            path="/analytics"
-            element={<PlaceholderPage title="Аналитика" description="Usage dashboards и activation metrics будут расширены отдельным аналитическим спринтом." />}
-          />
+          <Route path="/farm" element={<FarmPage />} />
+          <Route path="/warmup" element={<WarmupPage />} />
+          <Route path="/health" element={<HealthPage />} />
+          <Route path="/reactions" element={<ReactionsPage />} />
+          <Route path="/chatting" element={<ChattingPage />} />
+          <Route path="/dialogs" element={<DialogsPage />} />
+          <Route path="/user-parser" element={<UserParserPage />} />
+          <Route path="/folders" element={<FoldersPage />} />
+          <Route path="/channel-map" element={<ChannelMapPage />} />
+          <Route path="/parser" element={<ParserPage />} />
+          <Route path="/profiles" element={<ProfilesPage />} />
+          <Route path="/campaigns" element={<CampaignsPage />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route
             path="/billing"
             element={<PlaceholderPage title="Биллинг" description="Биллинг вынесен после assistant/value layer, когда продуктовая ценность уже доказана." />}

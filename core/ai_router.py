@@ -84,6 +84,7 @@ class ProviderCallResult:
     estimated_cost_usd: float = 0.0
     reason_code: str | None = None
     response_meta: dict[str, Any] | None = None
+    quality_flags: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,18 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
     "parser_query_suggestions": TaskPolicy(
         task_type="parser_query_suggestions",
         agent_name="Research & Parser Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "farm_comment": TaskPolicy(
+        task_type="farm_comment",
+        agent_name="Farm Commenting Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "profile_generation": TaskPolicy(
+        task_type="profile_generation",
+        agent_name="Profile Factory Agent",
         requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
@@ -251,33 +264,95 @@ def _estimate_gemini_cost(model_name: str, prompt_tokens: int, completion_tokens
     return round(((prompt_tokens / 1_000_000) * in_price) + ((completion_tokens / 1_000_000) * out_price), 6)
 
 
-def _extract_json_dict(text: str) -> dict[str, Any] | None:
+def _extract_json_dict_with_meta(text: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     raw = str(text or "").strip()
     if not raw:
-        return None
+        return None, {
+            "json_parse_failed": True,
+            "json_repair_applied": False,
+            "json_repair_strategy": None,
+            "parsed_without_repair": False,
+        }
     cleaned = raw.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
     cleaned = re.sub(r"```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
-    candidates = [cleaned]
+    candidates: list[tuple[str, str | None, bool]] = [(raw, None, False)]
+    if cleaned != raw:
+        candidates.append((cleaned, "normalized_quotes_or_fences", True))
     first = cleaned.find("{")
     last = cleaned.rfind("}")
     if first != -1 and last != -1 and last > first:
-        candidates.append(cleaned[first : last + 1])
-    for candidate in candidates:
-        candidate = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        sliced = cleaned[first : last + 1]
+        if sliced != cleaned:
+            candidates.append((sliced, "object_slice", True))
+    seen: set[str] = set()
+    for candidate, strategy, repaired in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        sanitized = re.sub(r",(\s*[}\]])", r"\1", candidate)
+        repair_strategy = strategy
+        repair_applied = repaired
+        if sanitized != candidate:
+            repair_strategy = "+".join(filter(None, [repair_strategy, "trailing_commas_removed"]))
+            repair_applied = True
         try:
-            parsed = json.loads(candidate)
+            parsed = json.loads(sanitized)
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            return parsed
+            return parsed, {
+                "json_parse_failed": False,
+                "json_repair_applied": bool(repair_applied),
+                "json_repair_strategy": repair_strategy,
+                "parsed_without_repair": not repair_applied,
+            }
         try:
-            parsed = ast.literal_eval(candidate)
+            parsed = ast.literal_eval(sanitized)
         except (ValueError, SyntaxError):
             parsed = None
         if isinstance(parsed, dict):
-            return parsed
-    return None
+            repair_strategy = "+".join(filter(None, [repair_strategy, "literal_eval"]))
+            return parsed, {
+                "json_parse_failed": False,
+                "json_repair_applied": True,
+                "json_repair_strategy": repair_strategy,
+                "parsed_without_repair": False,
+            }
+    return None, {
+        "json_parse_failed": True,
+        "json_repair_applied": False,
+        "json_repair_strategy": None,
+        "parsed_without_repair": False,
+    }
+
+
+def _extract_json_dict(text: str) -> dict[str, Any] | None:
+    parsed, _ = _extract_json_dict_with_meta(text)
+    return parsed
+
+
+def _quality_score(
+    *,
+    ok: bool,
+    json_parse_failed: bool,
+    json_repair_applied: bool,
+    fallback_used: bool,
+    downgraded_by_budget_policy: bool,
+    blocked_by_budget_policy: bool,
+) -> float:
+    if blocked_by_budget_policy:
+        return 0.0
+    if not ok:
+        return 0.2 if json_parse_failed else 0.1
+    score = 1.0
+    if json_repair_applied:
+        score -= 0.2
+    if fallback_used:
+        score -= 0.15
+    if downgraded_by_budget_policy:
+        score -= 0.15
+    return round(max(0.0, score), 3)
 
 
 def _json_contract_instruction(system_instruction: str) -> str:
@@ -557,7 +632,7 @@ async def _call_gemini_json(
         or getattr(usage, "output_token_count", 0)
         or 0
     )
-    parsed = _extract_json_dict(text)
+    parsed, parse_meta = _extract_json_dict_with_meta(text)
     latency_ms = max(1, int((utcnow() - started).total_seconds() * 1000))
     return ProviderCallResult(
         ok=parsed is not None,
@@ -571,6 +646,7 @@ async def _call_gemini_json(
         estimated_cost_usd=_estimate_gemini_cost(model_name, prompt_tokens, completion_tokens),
         reason_code=None if parsed is not None else "json_parse_failed",
         response_meta={"usage_metadata_present": usage is not None},
+        quality_flags=parse_meta,
     )
 
 
@@ -649,7 +725,7 @@ async def _call_openrouter_json(
     content = message.get("content") or ""
     if isinstance(content, list):
         content = "\n".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-    parsed = _extract_json_dict(str(content))
+    parsed, parse_meta = _extract_json_dict_with_meta(str(content))
     usage = data.get("usage") or {}
     prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
@@ -672,6 +748,7 @@ async def _call_openrouter_json(
             "provider": data.get("provider"),
             "id": data.get("id"),
         },
+        quality_flags=parse_meta,
     )
 
 
@@ -731,6 +808,10 @@ async def _record_attempt(
             estimated_cost_usd=result.estimated_cost_usd or 0.0,
             fallback_used=fallback_used,
             reason_code=result.reason_code,
+            json_parse_failed=bool((result.quality_flags or {}).get("json_parse_failed")),
+            json_repair_applied=bool((result.quality_flags or {}).get("json_repair_applied")),
+            json_repair_strategy=(result.quality_flags or {}).get("json_repair_strategy"),
+            parsed_without_repair=bool((result.quality_flags or {}).get("parsed_without_repair")),
             response_meta=result.response_meta or {},
             created_at=utcnow(),
         )
@@ -862,6 +943,9 @@ async def route_ai_task(
         blocked_request.status = RESPONSE_STATUS_BLOCKED
         blocked_request.outcome = OUTCOME_BLOCKED
         blocked_request.reason_code = budget_decision.reason_code
+        blocked_request.blocked_by_budget_policy = True
+        blocked_request.downgraded_by_budget_policy = False
+        blocked_request.quality_score = 0.0
         blocked_request.completed_at = utcnow()
         blocked_request.updated_at = utcnow()
         await _record_agent_run(
@@ -935,6 +1019,16 @@ async def route_ai_task(
         ai_request.outcome = budget_decision.outcome
         ai_request.executed_model_tier = executed_tier
         ai_request.reason_code = "no_model_candidates"
+        ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+        ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+        ai_request.quality_score = _quality_score(
+            ok=False,
+            json_parse_failed=False,
+            json_repair_applied=False,
+            fallback_used=False,
+            downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+            blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+        )
         ai_request.completed_at = utcnow()
         ai_request.updated_at = utcnow()
         await _record_agent_run(
@@ -1005,9 +1099,24 @@ async def route_ai_task(
         ai_request.estimated_cost_usd = result.estimated_cost_usd
         ai_request.fallback_used = attempts > 1 or budget_decision.outcome == OUTCOME_DOWNGRADED
         ai_request.reason_code = budget_decision.reason_code
+        ai_request.json_parse_failed = bool((result.quality_flags or {}).get("json_parse_failed"))
+        ai_request.json_repair_applied = bool((result.quality_flags or {}).get("json_repair_applied"))
+        ai_request.json_repair_strategy = (result.quality_flags or {}).get("json_repair_strategy")
+        ai_request.parsed_without_repair = bool((result.quality_flags or {}).get("parsed_without_repair"))
+        ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+        ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+        ai_request.quality_score = _quality_score(
+            ok=True,
+            json_parse_failed=bool(ai_request.json_parse_failed),
+            json_repair_applied=bool(ai_request.json_repair_applied),
+            fallback_used=bool(ai_request.fallback_used),
+            downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+            blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+        )
         ai_request.quality_flags = {
             "parsed_ok": True,
             "fallback_used": ai_request.fallback_used,
+            **(result.quality_flags or {}),
         }
         ai_request.completed_at = utcnow()
         ai_request.updated_at = utcnow()
@@ -1052,6 +1161,18 @@ async def route_ai_task(
     ai_request.status = RESPONSE_STATUS_FAILED
     ai_request.outcome = budget_decision.outcome
     ai_request.reason_code = "all_provider_attempts_failed"
+    ai_request.fallback_used = attempts > 1
+    ai_request.json_parse_failed = True
+    ai_request.downgraded_by_budget_policy = budget_decision.outcome == OUTCOME_DOWNGRADED
+    ai_request.blocked_by_budget_policy = budget_decision.outcome == OUTCOME_BLOCKED
+    ai_request.quality_score = _quality_score(
+        ok=False,
+        json_parse_failed=True,
+        json_repair_applied=False,
+        fallback_used=attempts > 1,
+        downgraded_by_budget_policy=bool(ai_request.downgraded_by_budget_policy),
+        blocked_by_budget_policy=bool(ai_request.blocked_by_budget_policy),
+    )
     ai_request.quality_flags = {"parsed_ok": False, "fallback_used": attempts > 1}
     ai_request.completed_at = utcnow()
     ai_request.updated_at = utcnow()

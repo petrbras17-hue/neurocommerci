@@ -200,6 +200,8 @@ Current routing defaults:
 - `brief_extraction` -> worker
 - `assistant_reply` -> manager
 - `creative_variants` -> manager
+- `farm_comment` -> worker
+- `profile_generation` -> worker
 - `parser_query_suggestions` -> worker
 - `campaign_strategy_summary` -> boss, approval required
 - `weekly_marketing_report` -> manager
@@ -209,6 +211,68 @@ Current outcomes:
 - `executed_as_requested`
 - `downgraded_by_budget_policy`
 - `blocked_by_budget_policy`
+
+## Sprint 5 Farm Orchestrator
+
+Sprint 5 adds the multi-threaded neurocommenting farm on top of the existing platform.
+
+Protected surfaces:
+
+- `/app/farm`
+- `/app/parser`
+- `/app/profiles`
+
+Farm endpoints:
+
+- `POST /v1/farm` — create farm config
+- `GET /v1/farm` — list farms
+- `GET /v1/farm/{id}` — get farm with threads
+- `PUT /v1/farm/{id}` — update farm
+- `DELETE /v1/farm/{id}` — delete stopped farm
+- `POST /v1/farm/{id}/start` — start farm
+- `POST /v1/farm/{id}/stop` — stop farm
+- `POST /v1/farm/{id}/pause` — pause farm
+- `POST /v1/farm/{id}/resume` — resume farm
+- `GET /v1/farm/{id}/threads` — list threads with stats
+- `GET /v1/farm/{id}/events` — recent events
+
+Channel database endpoints:
+
+- `POST /v1/channel-db` — create channel database
+- `GET /v1/channel-db` — list databases
+- `GET /v1/channel-db/{id}` — get database
+- `POST /v1/channel-db/{id}/import` — import channels
+- `GET /v1/channel-db/{id}/channels` — list channels
+- `POST /v1/channel-db/{id}/channels/{cid}/blacklist` — toggle blacklist
+- `DELETE /v1/channel-db/{id}/channels/{cid}` — remove channel
+
+Parser endpoints:
+
+- `POST /v1/parser/channels` — start channel parsing
+- `GET /v1/parser/jobs` — list parsing jobs
+- `GET /v1/parser/jobs/{id}` — get job status
+
+Profile endpoints:
+
+- `POST /v1/profiles/generate` — generate AI profile
+- `POST /v1/profiles/mass-generate` — batch generate
+- `POST /v1/profiles/apply/{account_id}` — apply profile
+- `POST /v1/profiles/create-channel/{account_id}` — create + pin channel
+- `GET /v1/profiles/templates` — list templates
+- `POST /v1/profiles/templates` — create template
+
+Farm env vars:
+
+- `FARM_MAX_THREADS_PER_FARM` (default 50)
+- `FARM_DEFAULT_DELAY_COMMENT_MIN_SEC` (default 30)
+- `FARM_DEFAULT_DELAY_COMMENT_MAX_SEC` (default 120)
+- `FARM_DEFAULT_AI_PROTECTION` (default aggressive)
+- `FARM_MONITOR_POLL_INTERVAL_SEC` (default 60)
+
+New AI routing tasks:
+
+- `farm_comment` -> worker
+- `profile_generation` -> worker
 
 ## Database safety requirements
 
@@ -242,6 +306,7 @@ If your local `pg_data` volume was created before the Sprint 1 RLS change, recre
 - Sprint 3 auth + onboarding APIs: `pytest tests/test_web_auth.py tests/test_web_accounts.py`
 - Sprint 4 assistant + creative flows: `pytest tests/test_web_assistant.py`
 - AI router + budget controls: `pytest tests/test_ai_router.py`
+- Farm orchestrator + parser + profiles: `pytest tests/test_farm_core.py`
 - Existing smoke checks: `bash scripts/ci_smoke.sh`
 
 ## Auth modes

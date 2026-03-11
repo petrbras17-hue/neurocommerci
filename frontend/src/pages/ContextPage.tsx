@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "../api";
+import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
 type ContextResponse = {
@@ -25,11 +25,27 @@ type ContextResponse = {
   };
 };
 
+type QualitySummary = {
+  latest_by_task: Record<
+    string,
+    {
+      provider: string | null;
+      model: string | null;
+      quality_score: number;
+      fallback_used: boolean;
+      repair_applied: boolean;
+      latency_ms: number | null;
+    }
+  >;
+};
+
 export function ContextPage() {
   const { accessToken } = useAuth();
   const [context, setContext] = useState<ContextResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [jobState, setJobState] = useState<JobStatusResponse | null>(null);
+  const [quality, setQuality] = useState<QualitySummary | null>(null);
 
   const loadContext = async () => {
     if (!accessToken) {
@@ -39,8 +55,17 @@ export function ContextPage() {
     setContext(payload);
   };
 
+  const loadQuality = async () => {
+    if (!accessToken) {
+      return;
+    }
+    const payload = await apiFetch<QualitySummary>("/v1/ai/quality-summary", { accessToken });
+    setQuality(payload);
+  };
+
   useEffect(() => {
     void loadContext().catch(() => setContext(null));
+    void loadQuality().catch(() => setQuality(null));
   }, [accessToken]);
 
   const confirm = async () => {
@@ -50,11 +75,26 @@ export function ContextPage() {
     setBusy(true);
     setStatusMessage("");
     try {
-      const payload = await apiFetch<ContextResponse>("/v1/context/confirm", {
+      const queued = await apiFetch<{ job_id: number; status: string }>("/v1/context/confirm", {
         method: "POST",
         accessToken,
       });
-      setContext(payload);
+      setJobState({
+        id: queued.job_id,
+        job_type: "context_confirm",
+        status: "queued",
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        error_code: null,
+        result_summary: {},
+      });
+      const job = await pollJob(accessToken, queued.job_id, { timeoutMs: 45000, intervalMs: 1200 });
+      setJobState(job);
+      if (job.status === "failed") {
+        throw new Error(job.error_code || "context_confirm_failed");
+      }
+      await Promise.all([loadContext(), loadQuality()]);
       setStatusMessage("Контекст подтверждён и сохранён как основа для следующих AI-черновиков.");
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "context_confirm_failed");
@@ -105,6 +145,40 @@ export function ContextPage() {
         </div>
         <div className="inline-note">
           Не хватает: {(brief?.missing_fields || []).length ? brief!.missing_fields.join(", ") : "обязательные поля уже собраны"}
+        </div>
+        {jobState ? (
+          <div className="inline-note">
+            Последняя job: #{jobState.id} · {jobState.status}
+            {jobState.error_code ? ` · ${jobState.error_code}` : ""}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">AI quality</div>
+            <h2>Качество подтверждения контекста</h2>
+          </div>
+        </div>
+        <div className="field-list">
+          {(() => {
+            const item = quality?.latest_by_task?.["assistant_reply"];
+            if (!item) {
+              return <p className="muted">Качество появится после обработки brief и подтверждения контекста.</p>;
+            }
+            return (
+              <div className="field-row">
+                <strong>Последний assistant flow</strong>
+                <span className="field-value">
+                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
+                  {item.fallback_used ? " · fallback" : ""}
+                  {item.repair_applied ? " · repair" : ""}
+                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
+                </span>
+              </div>
+            );
+          })()}
         </div>
       </section>
 

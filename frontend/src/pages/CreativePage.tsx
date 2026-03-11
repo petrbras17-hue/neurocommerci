@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiFetch } from "../api";
+import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
 type CreativeItem = {
@@ -16,6 +16,20 @@ type CreativeItem = {
 type CreativeResponse = {
   total: number;
   items: CreativeItem[];
+};
+
+type QualitySummary = {
+  latest_by_task: Record<
+    string,
+    {
+      provider: string | null;
+      model: string | null;
+      quality_score: number;
+      fallback_used: boolean;
+      repair_applied: boolean;
+      latency_ms: number | null;
+    }
+  >;
 };
 
 const DRAFT_TYPES = [
@@ -44,6 +58,8 @@ export function CreativePage() {
   const [draftType, setDraftType] = useState("post");
   const [statusMessage, setStatusMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [jobState, setJobState] = useState<JobStatusResponse | null>(null);
+  const [quality, setQuality] = useState<QualitySummary | null>(null);
 
   const loadCreative = async () => {
     if (!accessToken) {
@@ -53,8 +69,17 @@ export function CreativePage() {
     setCreative(payload);
   };
 
+  const loadQuality = async () => {
+    if (!accessToken) {
+      return;
+    }
+    const payload = await apiFetch<QualitySummary>("/v1/ai/quality-summary", { accessToken });
+    setQuality(payload);
+  };
+
   useEffect(() => {
     void loadCreative().catch(() => setCreative({ total: 0, items: [] }));
+    void loadQuality().catch(() => setQuality(null));
   }, [accessToken]);
 
   const generate = async () => {
@@ -64,13 +89,28 @@ export function CreativePage() {
     setBusy(true);
     setStatusMessage("");
     try {
-      await apiFetch("/v1/creative/generate", {
+      const queued = await apiFetch<{ job_id: number; status: string }>("/v1/creative/generate", {
         method: "POST",
         accessToken,
         json: { draft_type: draftType, variant_count: 3 },
       });
+      setJobState({
+        id: queued.job_id,
+        job_type: "creative_generate",
+        status: "queued",
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        error_code: null,
+        result_summary: {},
+      });
+      const job = await pollJob(accessToken, queued.job_id, { timeoutMs: 45000, intervalMs: 1200 });
+      setJobState(job);
+      if (job.status === "failed") {
+        throw new Error(job.error_code || "creative_generate_failed");
+      }
       setStatusMessage("Черновик создан. Проверьте варианты и утвердите только то, что отражает реальный бизнес-контекст.");
-      await loadCreative();
+      await Promise.all([loadCreative(), loadQuality()]);
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "creative_generate_failed");
     } finally {
@@ -150,6 +190,40 @@ export function CreativePage() {
             {busy ? "Генерируем…" : "Сгенерировать 3 варианта"}
           </button>
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">AI quality</div>
+            <h2>Качество генерации</h2>
+          </div>
+        </div>
+        <div className="field-list">
+          {(() => {
+            const item = quality?.latest_by_task?.["creative_variants"];
+            if (!item) {
+              return <p className="muted">После первой генерации здесь появятся provider, quality score и fallback/repair.</p>;
+            }
+            return (
+              <div className="field-row">
+                <strong>Последний creative flow</strong>
+                <span className="field-value">
+                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
+                  {item.fallback_used ? " · fallback" : ""}
+                  {item.repair_applied ? " · repair" : ""}
+                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
+                </span>
+              </div>
+            );
+          })()}
+        </div>
+        {jobState ? (
+          <div className="inline-note">
+            Последняя job: #{jobState.id} · {jobState.status}
+            {jobState.error_code ? ` · ${jobState.error_code}` : ""}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel wide">

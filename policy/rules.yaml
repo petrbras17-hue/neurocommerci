@@ -1,0 +1,183 @@
+version: 1
+checked_at: "2026-03-06"
+description: "Compliance-by-design rules for Telegram-safe runtime"
+rules:
+  - id: TG-R001
+    event: comment_send_attempt
+    source_url: https://telegram.org/tos
+    condition:
+      comparisons:
+        - key: account.lifecycle_stage
+          op: ne
+          value: active_commenting
+    action: block
+    severity: high
+    cooldown_policy: 900
+    message: "Auto-commenting is only allowed for active_commenting accounts"
+
+  - id: TG-R002
+    event: parser_client_candidate
+    source_url: https://core.telegram.org/api/terms
+    condition:
+      any_comparisons:
+        - key: account.health_status
+          op: in
+          value: [dead, restricted, frozen]
+        - key: account.lifecycle_stage
+          op: eq
+          value: restricted
+    action: block
+    severity: high
+    cooldown_policy: 1800
+    message: "Restricted/dead accounts cannot be used for parser discovery"
+
+  - id: TG-R003
+    event: proxy_assignment
+    source_url: https://docs.telethon.dev/en/stable/quick-references/faq.html#my-account-was-deleted-limited-when-using-the-library
+    condition:
+      comparisons:
+        - key: strict_proxy
+          op: eq
+          value: true
+        - key: proxy_assigned
+          op: eq
+          value: false
+    action: block
+    severity: high
+    cooldown_policy: 600
+    message: "Strict proxy mode blocks connection when no unique proxy is available"
+
+  - id: TG-R004
+    event: session_duplicate_detected
+    source_url: https://docs.telethon.dev/en/stable/concepts/sessions.html
+    condition:
+      comparisons:
+        - key: duplicate
+          op: eq
+          value: true
+    action: quarantine
+    severity: critical
+    cooldown_policy: 7200
+    message: "Same session should not be used concurrently by multiple workers"
+
+  - id: TG-R005
+    event: action_rate_burst
+    source_url: https://core.telegram.org/api/errors#error-handling
+    condition:
+      comparisons:
+        - key: burst
+          op: eq
+          value: true
+    action: quarantine
+    severity: critical
+    cooldown_policy: 7200
+    message: "Burst rate pattern detected; quarantine account"
+
+  - id: TG-R006
+    event: floodwait_detected
+    source_url: https://core.telegram.org/api/errors#error-handling
+    condition:
+      comparisons:
+        - key: seconds
+          op: gte
+          value: 1
+    action: warn
+    severity: medium
+    cooldown_policy: 1800
+    message: "Respect FLOOD_WAIT and enforce cooldown"
+
+  - id: TG-R007
+    event: packaging_account_candidate
+    source_url: https://telegram.org/tos
+    condition:
+      any_comparisons:
+        - key: account.health_status
+          op: in
+          value: [dead, restricted, frozen]
+        - key: account.lifecycle_stage
+          op: eq
+          value: restricted
+    action: block
+    severity: high
+    cooldown_policy: 1800
+    message: "Restricted/dead account cannot be packaged"
+
+  - id: TG-R008
+    event: frozen_probe_failed
+    source_url: https://core.telegram.org/api/errors#error-handling
+    condition:
+      any_comparisons:
+        - key: reason
+          op: in
+          value: [frozen, restricted]
+        - key: capabilities.reason
+          op: in
+          value: [frozen, restricted]
+    action: quarantine
+    severity: critical
+    cooldown_policy: 7200
+    message: "Capability probe detected frozen/restricted account"
+
+  - id: TG-R009
+    event: parser_without_parser_phone
+    source_url: https://core.telegram.org/api/terms
+    condition:
+      comparisons:
+        - key: strict_parser_only
+          op: eq
+          value: true
+        - key: parser_phone_configured
+          op: eq
+          value: false
+    action: block
+    severity: high
+    cooldown_policy: 900
+    message: "Strict parser mode requires PARSER_ONLY_PHONE"
+
+  - id: TG-R010
+    event: missing_pinned_phone
+    source_url: https://docs.telethon.dev/en/stable/concepts/sessions.html
+    condition:
+      comparisons:
+        - key: required
+          op: eq
+          value: true
+        - key: pinned_phone
+          op: eq
+          value: ""
+    action: block
+    severity: high
+    cooldown_policy: 900
+    message: "Pinned worker must have PINNED_PHONE configured"
+
+  - id: TG-R011
+    event: risky_feature_enabled_in_strict
+    source_url: https://telegram.org/tos
+    condition:
+      comparisons:
+        - key: strict_mode
+          op: eq
+          value: true
+        - key: requested_enable
+          op: eq
+          value: true
+        - key: emergency_flag
+          op: eq
+          value: false
+    action: block
+    severity: high
+    cooldown_policy: 900
+    message: "Risky feature cannot be enabled in strict mode without emergency flag"
+
+  - id: TG-R012
+    event: parser_search_blocked
+    source_url: https://core.telegram.org/api/errors#error-handling
+    condition:
+      comparisons:
+        - key: blocked
+          op: eq
+          value: true
+    action: warn
+    severity: medium
+    cooldown_policy: 900
+    message: "Parser search blocked by Telegram; parser account needs investigation"

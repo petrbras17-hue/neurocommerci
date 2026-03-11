@@ -101,7 +101,17 @@ class Watchdog:
             log.warning(f"Watchdog: {len(disconnected)} клиентов отключены: {disconnected}")
             for phone in disconnected:
                 try:
-                    await self.session_mgr.connect_client(phone)
+                    user_id = self.session_mgr.get_known_user_id(phone)
+                    if user_id is None:
+                        from sqlalchemy import select
+                        from storage.models import Account
+                        from storage.sqlite_db import async_session
+
+                        async with async_session() as session:
+                            result = await session.execute(select(Account.user_id).where(Account.phone == phone))
+                            row = result.first()
+                            user_id = int(row[0]) if row and row[0] is not None else None
+                    await self.session_mgr.connect_client(phone, user_id=user_id)
                     log.info(f"Watchdog: reconnect {phone} успешен")
                 except AuthKeyUnregisteredError:
                     log.critical(f"Watchdog: {phone} — сессия мертва (AuthKeyUnregistered)")

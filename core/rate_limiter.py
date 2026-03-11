@@ -60,23 +60,48 @@ class RateLimiter:
 
     def get_daily_limit(self, days_active: int, account_age_days: int = 999) -> int:
         """
-        Прогрев с учётом возраста аккаунта:
-        0-2: readonly (0), 3-4: reactions (0), 5-7: light (3),
-        8-14: moderate (8), 15-30: full (20), 30+: veteran (35).
-        Множитель: min(1.0, account_age_days / 90) для аккаунтов <90 дней.
+        Прогрев с учётом возраста аккаунта и launch mode.
+        NEW_ACCOUNT_LAUNCH_MODE=faster_1d:
+          D0=0, D1=2, D2=4, D3-4=6, дальше обычная кривая прогрева.
+        conservative (legacy):
+          0-2=0, 3-4=0, 5-7=light, 8-14=moderate, 15-30=20, 30+=max.
+
+        Дополнительно применяется множитель возраста аккаунта:
+          min(1.0, account_age_days / 90) для аккаунтов младше 90 дней.
         """
-        if days_active < 3:
-            return 0  # readonly
-        elif days_active < 5:
-            return 0  # reactions only
-        elif days_active < 8:
-            base = settings.WARMUP_LIGHT_LIMIT
-        elif days_active < 15:
-            base = settings.WARMUP_MODERATE_LIMIT
-        elif days_active < 30:
-            base = 20  # full phase
+        mode = (settings.NEW_ACCOUNT_LAUNCH_MODE or "conservative").strip().lower()
+
+        if mode == "faster_1d":
+            day = int(days_active or 0)
+            if day < 1:
+                return 0
+            if day == 1:
+                base = 2
+            elif day == 2:
+                base = 4
+            elif day < 5:
+                base = 6
+            elif day < 8:
+                base = max(6, settings.WARMUP_LIGHT_LIMIT)
+            elif day < 15:
+                base = max(settings.WARMUP_MODERATE_LIMIT, 8)
+            elif day < 30:
+                base = 20
+            else:
+                base = settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY
         else:
-            base = settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY
+            if days_active < 3:
+                return 0  # readonly
+            elif days_active < 5:
+                return 0  # reactions only
+            elif days_active < 8:
+                base = settings.WARMUP_LIGHT_LIMIT
+            elif days_active < 15:
+                base = settings.WARMUP_MODERATE_LIMIT
+            elif days_active < 30:
+                base = 20  # full phase
+            else:
+                base = settings.MAX_COMMENTS_PER_ACCOUNT_PER_DAY
 
         # Применить множитель возраста аккаунта
         age_factor = AntibanManager.get_account_age_factor(account_age_days)

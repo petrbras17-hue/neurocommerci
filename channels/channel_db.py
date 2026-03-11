@@ -18,14 +18,21 @@ from storage.sqlite_db import async_session
 class ChannelDB:
     """Работа с каналами в SQLite."""
 
+    @staticmethod
+    def _scope_filter(user_id: int | None):
+        if user_id is None:
+            return Channel.user_id.is_(None)
+        return Channel.user_id == user_id
+
     async def add_channel(self, channel_info: Any, user_id: int = None) -> Channel:
         """Добавить канал в БД или обновить существующий по telegram_id."""
         payload = self._to_payload(channel_info)
 
         async with async_session() as session:
-            query = select(Channel).where(Channel.telegram_id == payload["telegram_id"])
-            if user_id is not None:
-                query = query.where(Channel.user_id == user_id)
+            query = select(Channel).where(
+                Channel.telegram_id == payload["telegram_id"],
+                self._scope_filter(user_id),
+            )
             result = await session.execute(query)
             existing = result.scalar_one_or_none()
 
@@ -36,6 +43,10 @@ class ChannelDB:
                 existing.topic = payload["topic"]
                 existing.comments_enabled = payload["comments_enabled"]
                 existing.discussion_group_id = payload["discussion_group_id"]
+                existing.review_state = payload["review_state"]
+                existing.publish_mode = payload["publish_mode"]
+                existing.permission_basis = payload["permission_basis"]
+                existing.review_note = payload["review_note"]
                 existing.is_active = True
                 existing.last_checked_at = utcnow()
                 channel = existing
@@ -48,6 +59,10 @@ class ChannelDB:
                     topic=payload["topic"],
                     comments_enabled=payload["comments_enabled"],
                     discussion_group_id=payload["discussion_group_id"],
+                    review_state=payload["review_state"],
+                    publish_mode=payload["publish_mode"],
+                    permission_basis=payload["permission_basis"],
+                    review_note=payload["review_note"],
                     user_id=user_id,
                     is_active=True,
                     is_blacklisted=False,
@@ -65,6 +80,24 @@ class ChannelDB:
             query = (
                 select(Channel)
                 .where(Channel.is_active.is_(True), Channel.is_blacklisted.is_(False))
+                .order_by(Channel.subscribers.desc())
+            )
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
+            return list(result.scalars().all())
+
+    async def get_publishable(self, user_id: int = None) -> list[Channel]:
+        """Каналы, разрешённые для автоматического execution path."""
+        async with async_session() as session:
+            query = (
+                select(Channel)
+                .where(
+                    Channel.is_active.is_(True),
+                    Channel.is_blacklisted.is_(False),
+                    Channel.review_state == "approved",
+                    Channel.publish_mode == "auto_allowed",
+                )
                 .order_by(Channel.subscribers.desc())
             )
             if user_id is not None:
@@ -99,14 +132,33 @@ class ChannelDB:
             return list(result.scalars().all())
 
     async def blacklist_channel(self, channel_id: int):
-        """Добавить канал в чёрный список по telegram_id."""
+        """Добавить канал в чёрный список по локальному DB id или scoped telegram_id."""
+        await self.blacklist_channel_ref(channel_id)
+
+    async def blacklist_channel_ref(self, channel_ref: int, user_id: int | None = None) -> bool:
+        """Add channel to blacklist by DB id first, then by tenant-scoped telegram_id."""
         async with async_session() as session:
+            result = await session.execute(
+                select(Channel.id).where(Channel.id == channel_ref)
+            )
+            channel_db_id = result.scalar_one_or_none()
+            if channel_db_id is None:
+                result = await session.execute(
+                    select(Channel.id).where(
+                        Channel.telegram_id == channel_ref,
+                        self._scope_filter(user_id),
+                    )
+                )
+                channel_db_id = result.scalar_one_or_none()
+            if channel_db_id is None:
+                return False
             await session.execute(
                 update(Channel)
-                .where(Channel.telegram_id == channel_id)
+                .where(Channel.id == channel_db_id)
                 .values(is_blacklisted=True, is_active=False, last_checked_at=utcnow())
             )
             await session.commit()
+            return True
 
     async def blacklist_by_db_id(self, db_id: int):
         """Добавить канал в чёрный список по локальному DB id."""
@@ -127,6 +179,100 @@ class ChannelDB:
                 .values(last_checked_at=utcnow())
             )
             await session.commit()
+
+    async def set_review_state(
+        self,
+        channel_id: int,
+        *,
+        review_state: str,
+        publish_mode: str | None = None,
+        permission_basis: str | None = None,
+        review_note: str | None = None,
+        user_id: int | None = None,
+    ):
+        """Update channel review/publish policy by telegram_id."""
+        values: dict[str, Any] = {"review_state": review_state, "last_checked_at": utcnow()}
+        if publish_mode is not None:
+            values["publish_mode"] = publish_mode
+        if permission_basis is not None:
+            values["permission_basis"] = permission_basis
+        if review_note is not None:
+            values["review_note"] = review_note
+        async with async_session() as session:
+            await session.execute(
+                update(Channel)
+                .where(
+                    Channel.telegram_id == channel_id,
+                    self._scope_filter(user_id),
+                )
+                .values(**values)
+            )
+            await session.commit()
+
+    async def set_review_state_by_db_id(
+        self,
+        channel_db_id: int,
+        *,
+        review_state: str,
+        publish_mode: str | None = None,
+        permission_basis: str | None = None,
+        review_note: str | None = None,
+        user_id: int | None = None,
+    ) -> bool:
+        """Update channel review/publish policy by local DB id."""
+        values: dict[str, Any] = {"review_state": review_state, "last_checked_at": utcnow()}
+        if publish_mode is not None:
+            values["publish_mode"] = publish_mode
+        if permission_basis is not None:
+            values["permission_basis"] = permission_basis
+        if review_note is not None:
+            values["review_note"] = review_note
+        async with async_session() as session:
+            query = select(Channel.id).where(Channel.id == channel_db_id)
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
+            found = result.scalar_one_or_none()
+            if found is None:
+                return False
+            await session.execute(
+                update(Channel).where(Channel.id == channel_db_id).values(**values)
+            )
+            await session.commit()
+            return True
+
+    async def get_by_db_id(self, channel_db_id: int, user_id: int | None = None) -> Channel | None:
+        """Fetch channel by local DB id."""
+        async with async_session() as session:
+            query = select(Channel).where(Channel.id == channel_db_id)
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
+
+    async def get_review_queue(
+        self,
+        *,
+        user_id: int | None = None,
+        states: tuple[str, ...] = ("discovered", "candidate"),
+        limit: int = 10,
+    ) -> list[Channel]:
+        """Channels waiting for manual review."""
+        async with async_session() as session:
+            query = (
+                select(Channel)
+                .where(
+                    Channel.is_active.is_(True),
+                    Channel.is_blacklisted.is_(False),
+                    Channel.review_state.in_(states),
+                )
+                .order_by(Channel.subscribers.desc(), Channel.created_at.asc())
+                .limit(max(1, limit))
+            )
+            if user_id is not None:
+                query = query.where(Channel.user_id == user_id)
+            result = await session.execute(query)
+            return list(result.scalars().all())
 
     async def get_stats(self, user_id: int = None) -> dict:
         """Сводная статистика каналов."""
@@ -160,12 +306,43 @@ class ChannelDB:
             rows = await session.execute(topic_query)
             by_topic = {topic: count for topic, count in rows.all() if topic}
 
+            review_query = (
+                select(Channel.review_state, func.count(Channel.id))
+                .where(*base_filter)
+                .group_by(Channel.review_state)
+            )
+            review_rows = await session.execute(review_query)
+            by_review = {str(state or "unknown"): int(count) for state, count in review_rows.all()}
+
+            publish_query = (
+                select(Channel.publish_mode, func.count(Channel.id))
+                .where(*base_filter)
+                .group_by(Channel.publish_mode)
+            )
+            publish_rows = await session.execute(publish_query)
+            by_publish_mode = {
+                str(mode or "unknown"): int(count) for mode, count in publish_rows.all()
+            }
+
+            publishable_filters = [
+                Channel.is_active.is_(True),
+                Channel.is_blacklisted.is_(False),
+                Channel.review_state == "approved",
+                Channel.publish_mode == "auto_allowed",
+            ] + base_filter
+            publishable = await session.scalar(
+                select(func.count(Channel.id)).where(*publishable_filters)
+            )
+
         return {
             "total": int(total or 0),
             "active": int(active or 0),
             "with_comments": int(with_comments or 0),
             "blacklisted": int(blacklisted or 0),
             "by_topic": by_topic,
+            "by_review": by_review,
+            "by_publish_mode": by_publish_mode,
+            "publishable": int(publishable or 0),
         }
 
     async def export_to_txt(self, filepath: str = "data/channels_export.txt", user_id: int = None) -> int:
@@ -212,4 +389,8 @@ class ChannelDB:
             "topic": getter("topic"),
             "comments_enabled": bool(getter("comments_enabled", False)),
             "discussion_group_id": getter("discussion_group_id"),
+            "review_state": getter("review_state", "discovered") or "discovered",
+            "publish_mode": getter("publish_mode", "research_only") or "research_only",
+            "permission_basis": getter("permission_basis", "") or "",
+            "review_note": getter("review_note"),
         }

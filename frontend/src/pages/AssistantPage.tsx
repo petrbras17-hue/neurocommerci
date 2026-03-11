@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { apiFetch } from "../api";
+import { apiFetch, JobStatusResponse, pollJob } from "../api";
 import { useAuth } from "../auth";
 
 type ThreadMessage = {
@@ -25,12 +25,34 @@ type ThreadResponse = {
   };
 };
 
+type QualitySummary = {
+  overview: {
+    total_requests: number;
+    avg_quality_score: number;
+    fallback_rate: number;
+    repair_rate: number;
+  };
+  latest_by_task: Record<
+    string,
+    {
+      provider: string | null;
+      model: string | null;
+      quality_score: number;
+      fallback_used: boolean;
+      repair_applied: boolean;
+      latency_ms: number | null;
+    }
+  >;
+};
+
 export function AssistantPage() {
   const { accessToken } = useAuth();
   const [thread, setThread] = useState<ThreadResponse | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [jobState, setJobState] = useState<JobStatusResponse | null>(null);
+  const [quality, setQuality] = useState<QualitySummary | null>(null);
 
   const loadThread = async () => {
     if (!accessToken) {
@@ -40,28 +62,59 @@ export function AssistantPage() {
     setThread(payload);
   };
 
+  const loadQuality = async () => {
+    if (!accessToken) {
+      return;
+    }
+    const payload = await apiFetch<QualitySummary>("/v1/ai/quality-summary", { accessToken });
+    setQuality(payload);
+  };
+
   useEffect(() => {
     void loadThread().catch(() => setThread(null));
+    void loadQuality().catch(() => setQuality(null));
   }, [accessToken]);
 
-  const startBrief = async () => {
+  const runQueuedAction = async (path: string, json?: unknown, successMessage?: string) => {
     if (!accessToken) {
       return;
     }
     setBusy(true);
     setStatusMessage("");
+    setJobState(null);
     try {
-      const payload = await apiFetch<ThreadResponse>("/v1/assistant/start-brief", {
+      const payload = await apiFetch<{ job_id: number; status: string }>(path, {
         method: "POST",
         accessToken,
+        json,
       });
-      setThread(payload);
-      setStatusMessage("Ассистент запустил growth-brief и ждёт вашего ответа.");
+      setJobState({
+        id: payload.job_id,
+        job_type: path,
+        status: "queued",
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+        error_code: null,
+        result_summary: {},
+      });
+      setStatusMessage("Задача поставлена в очередь. Ждём завершения фоновой обработки.");
+      const job = await pollJob(accessToken, payload.job_id, { timeoutMs: 45000, intervalMs: 1200 });
+      setJobState(job);
+      if (job.status === "failed") {
+        throw new Error(job.error_code || "job_failed");
+      }
+      await Promise.all([loadThread(), loadQuality()]);
+      setStatusMessage(successMessage || "Фоновая задача завершена успешно.");
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "assistant_start_failed");
+      setStatusMessage(error instanceof Error ? error.message : "assistant_job_failed");
     } finally {
       setBusy(false);
     }
+  };
+
+  const startBrief = async () => {
+    await runQueuedAction("/v1/assistant/start-brief", undefined, "Ассистент запустил growth-brief и обновил следующий шаг.");
   };
 
   const sendMessage = async (event: FormEvent) => {
@@ -70,22 +123,8 @@ export function AssistantPage() {
       setStatusMessage("Введите сообщение для ассистента.");
       return;
     }
-    setBusy(true);
-    setStatusMessage("");
-    try {
-      const payload = await apiFetch<ThreadResponse>("/v1/assistant/message", {
-        method: "POST",
-        accessToken,
-        json: { message },
-      });
-      setThread(payload);
-      setMessage("");
-      setStatusMessage("Ответ сохранён. Ассистент обновил контекст и следующий шаг.");
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "assistant_message_failed");
-    } finally {
-      setBusy(false);
-    }
+    await runQueuedAction("/v1/assistant/message", { message }, "Ответ обработан. Ассистент обновил контекст и рекомендации.");
+    setMessage("");
   };
 
   return (
@@ -138,6 +177,54 @@ export function AssistantPage() {
         </div>
         <div className="inline-note">
           Не хватает: {(thread?.brief?.missing_fields || []).length ? (thread?.brief?.missing_fields || []).join(", ") : "brief уже достаточно заполнен"}
+        </div>
+        {jobState ? (
+          <div className="inline-note">
+            Последняя job: #{jobState.id} · {jobState.status}
+            {jobState.error_code ? ` · ${jobState.error_code}` : ""}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">AI quality</div>
+            <h2>Качество последней генерации</h2>
+          </div>
+        </div>
+        <div className="status-grid">
+          <div className="info-block">
+            <strong>Средний score</strong>
+            <span>{quality?.overview?.avg_quality_score ?? 0}</span>
+          </div>
+          <div className="info-block">
+            <strong>Fallback rate</strong>
+            <span>{Math.round(Number(quality?.overview?.fallback_rate || 0) * 100)}%</span>
+          </div>
+          <div className="info-block">
+            <strong>Repair rate</strong>
+            <span>{Math.round(Number(quality?.overview?.repair_rate || 0) * 100)}%</span>
+          </div>
+        </div>
+        <div className="field-list">
+          {["brief_extraction", "assistant_reply"].map((task) => {
+            const item = quality?.latest_by_task?.[task];
+            if (!item) {
+              return null;
+            }
+            return (
+              <div className="field-row" key={task}>
+                <strong>{task}</strong>
+                <span className="field-value">
+                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
+                  {item.fallback_used ? " · fallback" : ""}
+                  {item.repair_applied ? " · repair" : ""}
+                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </section>
 

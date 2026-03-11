@@ -29,12 +29,33 @@ type CreativeResponse = {
   items: Array<{ status: string }>;
 };
 
+type QualitySummary = {
+  overview: {
+    total_requests: number;
+    avg_quality_score: number;
+    fallback_rate: number;
+    repair_rate: number;
+  };
+  latest_by_task: Record<
+    string,
+    {
+      provider: string | null;
+      model: string | null;
+      quality_score: number;
+      fallback_used: boolean;
+      repair_applied: boolean;
+      latency_ms: number | null;
+    }
+  >;
+};
+
 export function DashboardPage() {
   const { accessToken, profile } = useAuth();
   const [accounts, setAccounts] = useState<AccountsResponse | null>(null);
   const [proxies, setProxies] = useState<ProxiesResponse | null>(null);
   const [context, setContext] = useState<ContextResponse | null>(null);
   const [creative, setCreative] = useState<CreativeResponse | null>(null);
+  const [aiQuality, setAiQuality] = useState<QualitySummary | null>(null);
 
   useEffect(() => {
     if (!accessToken) {
@@ -45,18 +66,21 @@ export function DashboardPage() {
       apiFetch<ProxiesResponse>("/v1/web/proxies/available", { accessToken }),
       apiFetch<ContextResponse>("/v1/context", { accessToken }),
       apiFetch<CreativeResponse>("/v1/creative/drafts", { accessToken }),
+      apiFetch<QualitySummary>("/v1/ai/quality-summary", { accessToken }),
     ])
-      .then(([accountsPayload, proxiesPayload, contextPayload, creativePayload]) => {
+      .then(([accountsPayload, proxiesPayload, contextPayload, creativePayload, aiQualityPayload]) => {
         setAccounts(accountsPayload);
         setProxies(proxiesPayload);
         setContext(contextPayload);
         setCreative(creativePayload);
+        setAiQuality(aiQualityPayload);
       })
       .catch(() => {
         setAccounts(null);
         setProxies(null);
         setContext(null);
         setCreative(null);
+        setAiQuality(null);
       });
   }, [accessToken]);
 
@@ -79,8 +103,11 @@ export function DashboardPage() {
       draftCount: creative?.total || 0,
       approvedDrafts,
       approvedAssets: Number(context?.brief?.assets_count || 0),
+      avgQualityScore: Number(aiQuality?.overview?.avg_quality_score || 0),
+      fallbackRatePct: Math.round(Number(aiQuality?.overview?.fallback_rate || 0) * 100),
+      repairRatePct: Math.round(Number(aiQuality?.overview?.repair_rate || 0) * 100),
     };
-  }, [accounts, proxies, context, creative, profile]);
+  }, [accounts, proxies, context, creative, aiQuality, profile]);
 
   return (
     <div className="page-grid">
@@ -130,6 +157,25 @@ export function DashboardPage() {
         <article className="stat-card">
           <span>Подтверждённых assets</span>
           <strong>{metrics.approvedAssets}</strong>
+        </article>
+      </section>
+
+      <section className="card-grid">
+        <article className="stat-card">
+          <span>AI quality score</span>
+          <strong>{metrics.avgQualityScore.toFixed(2)}</strong>
+        </article>
+        <article className="stat-card">
+          <span>Fallback rate</span>
+          <strong>{metrics.fallbackRatePct}%</strong>
+        </article>
+        <article className="stat-card">
+          <span>Repair rate</span>
+          <strong>{metrics.repairRatePct}%</strong>
+        </article>
+        <article className="stat-card">
+          <span>AI запросов</span>
+          <strong>{Number(aiQuality?.overview?.total_requests || 0)}</strong>
         </article>
       </section>
 
@@ -193,6 +239,32 @@ export function DashboardPage() {
             <li>Подтверждает бизнес-контекст и approved creative assets.</li>
           </ul>
         </article>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">AI quality</div>
+            <h2>Последние quality-сигналы</h2>
+          </div>
+        </div>
+        <div className="field-list">
+          {Object.entries(aiQuality?.latest_by_task || {}).length ? (
+            Object.entries(aiQuality?.latest_by_task || {}).map(([task, item]) => (
+              <div className="field-row" key={task}>
+                <strong>{task}</strong>
+                <span className="field-value">
+                  {item.provider || "—"} / {item.model || "—"} · score {item.quality_score ?? 0}
+                  {item.fallback_used ? " · fallback" : ""}
+                  {item.repair_applied ? " · repair" : ""}
+                  {item.latency_ms ? ` · ${item.latency_ms}ms` : ""}
+                </span>
+              </div>
+            ))
+          ) : (
+            <p className="muted">После первых assistant/context/creative job здесь появятся provider, latency, fallback и repair сигналы.</p>
+          )}
+        </div>
       </section>
     </div>
   );

@@ -28,6 +28,8 @@ from core.session_backup import SessionBackupManager
 from core.activity_simulator import ActivitySimulator
 from channels.monitor import ChannelMonitor
 from comments.poster import CommentPoster
+from core.task_queue import task_queue
+from core.policy_engine import policy_engine
 from utils.anti_ban import AntibanManager
 from utils.channel_subscriber import ChannelSubscriber
 from utils.passive_actions import PassiveActionsManager
@@ -73,6 +75,7 @@ class CommentingEngine:
         self._user_tasks: dict[int, dict[str, asyncio.Task]] = {}
         self._stats = {
             "comments_sent": 0,
+            "queued_tasks": 0,
             "warmup_actions": 0,
             "health_checks": 0,
             "errors": 0,
@@ -100,23 +103,39 @@ class CommentingEngine:
         log.info("=== ЗАПУСК ДВИЖКА НЕЙРОКОММЕНТИРОВАНИЯ ===")
 
         try:
+            if settings.DISTRIBUTED_QUEUE_MODE and settings.MAX_ACCOUNTS_PER_WORKER <= 0:
+                raise RuntimeError(
+                    "Distributed mode включён, но MAX_ACCOUNTS_PER_WORKER<=0. "
+                    "Увеличьте лимит worker claim перед запуском."
+                )
             # Загрузить счётчики из БД
             await self.rate_limiter.load_from_db()
 
             # Запустить мониторинг каналов
             await self.monitor.start()
 
-            # Запустить параллельные циклы
-            self._tasks = [
-                asyncio.create_task(self._comment_loop(), name="comment_loop"),
-                asyncio.create_task(self._warmup_loop(), name="warmup_loop"),
-                asyncio.create_task(self._health_check_loop(), name="health_check"),
-                asyncio.create_task(self._auto_recover_loop(), name="auto_recover"),
-            ]
+            if settings.DISTRIBUTED_QUEUE_MODE:
+                await task_queue.connect()
+                log.info("Distributed queue mode: enabled")
 
-            # Запустить session survival модули
-            await self.health_monitor.start()
-            await self.activity_sim.start()
+            if settings.DISTRIBUTED_QUEUE_MODE:
+                self._tasks = [
+                    asyncio.create_task(self._distributed_idle_loop(), name="distributed_idle"),
+                ]
+            else:
+                # Локальный режим оставляем только в щадящем варианте без
+                # старых цикличных warmup/activity/SpamBot сценариев.
+                self._tasks = [
+                    asyncio.create_task(self._comment_loop(), name="comment_loop"),
+                ]
+                if not settings.HUMAN_GATED_COMMENTS:
+                    self._tasks.extend([
+                        asyncio.create_task(self._warmup_loop(), name="warmup_loop"),
+                        asyncio.create_task(self._health_check_loop(), name="health_check"),
+                        asyncio.create_task(self._auto_recover_loop(), name="auto_recover"),
+                    ])
+                    await self.health_monitor.start()
+                    await self.activity_sim.start()
 
             # Флаг только после успешного создания задач
             self._running = True
@@ -137,32 +156,48 @@ class CommentingEngine:
             return
 
         log.info(f"=== ЗАПУСК ДВИЖКА ДЛЯ USER {user_id} ===")
+        if settings.DISTRIBUTED_QUEUE_MODE and settings.MAX_ACCOUNTS_PER_WORKER <= 0:
+            raise RuntimeError(
+                "Distributed mode включён, но MAX_ACCOUNTS_PER_WORKER<=0. "
+                "Увеличьте лимит worker claim перед запуском."
+            )
         await self.rate_limiter.load_from_db(user_id=user_id)
+        if settings.DISTRIBUTED_QUEUE_MODE:
+            await task_queue.connect()
+            self._user_tasks[user_id] = {
+                "idle": asyncio.create_task(
+                    self._distributed_idle_loop(user_id=user_id),
+                    name=f"distributed_idle_u{user_id}",
+                ),
+            }
+        else:
+            self._user_tasks[user_id] = {
+                "comment": asyncio.create_task(
+                    self._comment_loop(user_id=user_id),
+                    name=f"comment_loop_u{user_id}",
+                ),
+            }
+            if not settings.HUMAN_GATED_COMMENTS:
+                self._user_tasks[user_id].update({
+                    "warmup": asyncio.create_task(
+                        self._warmup_loop(user_id=user_id),
+                        name=f"warmup_loop_u{user_id}",
+                    ),
+                    "health": asyncio.create_task(
+                        self._health_check_loop(user_id=user_id),
+                        name=f"health_check_u{user_id}",
+                    ),
+                    "recover": asyncio.create_task(
+                        self._auto_recover_loop(user_id=user_id),
+                        name=f"auto_recover_u{user_id}",
+                    ),
+                })
 
-        self._user_tasks[user_id] = {
-            "comment": asyncio.create_task(
-                self._comment_loop(user_id=user_id),
-                name=f"comment_loop_u{user_id}",
-            ),
-            "warmup": asyncio.create_task(
-                self._warmup_loop(user_id=user_id),
-                name=f"warmup_loop_u{user_id}",
-            ),
-            "health": asyncio.create_task(
-                self._health_check_loop(user_id=user_id),
-                name=f"health_check_u{user_id}",
-            ),
-            "recover": asyncio.create_task(
-                self._auto_recover_loop(user_id=user_id),
-                name=f"auto_recover_u{user_id}",
-            ),
-        }
-
-        # Session survival modules (start once, shared across users)
-        if not self.health_monitor.is_running:
-            await self.health_monitor.start()
-        if not self.activity_sim.is_running:
-            await self.activity_sim.start()
+                # Session survival modules (start once, shared across users)
+                if not self.health_monitor.is_running:
+                    await self.health_monitor.start()
+                if not self.activity_sim.is_running:
+                    await self.activity_sim.start()
 
         # Set global running flag if any user is running
         self._running = True
@@ -190,8 +225,10 @@ class CommentingEngine:
         log.info("=== ОСТАНОВКА ДВИЖКА ===")
 
         # Остановить session survival модули
-        await self.health_monitor.stop()
-        await self.activity_sim.stop()
+        if self.health_monitor.is_running:
+            await self.health_monitor.stop()
+        if self.activity_sim.is_running:
+            await self.activity_sim.stop()
 
         # Остановить мониторинг
         await self.monitor.stop()
@@ -210,6 +247,9 @@ class CommentingEngine:
         # Дождаться завершения pending swap задач
         await self.poster.shutdown()
 
+        if settings.DISTRIBUTED_QUEUE_MODE:
+            await task_queue.close()
+
         await notifier.send("Движок остановлен")
         log.info("Движок остановлен")
 
@@ -220,6 +260,11 @@ class CommentingEngine:
     async def _comment_loop(self, user_id: int = None) -> None:
         """Основной цикл: берём пост из очереди → генерируем коммент → отправляем."""
         log.info(f"Comment loop запущен (user_id={user_id})")
+
+        if settings.DISTRIBUTED_QUEUE_MODE:
+            while self._should_run(user_id):
+                await asyncio.sleep(300)
+            return
 
         while self._should_run(user_id):
             try:
@@ -234,13 +279,17 @@ class CommentingEngine:
                     await asyncio.sleep(30)  # Ждём новых постов
                     continue
 
-                # Обработать один пост
-                result = await self.poster.process_queue()
-
-                if result == 1:
-                    self._stats["comments_sent"] += 1
-                elif result == -1:
-                    self._stats["errors"] += 1
+                # Обработать один пост (локально) или отправить задачу в Redis-очередь.
+                if settings.DISTRIBUTED_QUEUE_MODE:
+                    result = await self._enqueue_comment_task(user_id=user_id)
+                    if result == -1:
+                        self._stats["errors"] += 1
+                else:
+                    result = await self.poster.process_queue()
+                    if result == 1:
+                        self._stats["comments_sent"] += 1
+                    elif result == -1:
+                        self._stats["errors"] += 1
 
                 # Задержка между комментариями (Gaussian)
                 delay = self.rate_limiter.get_next_delay()
@@ -257,6 +306,48 @@ class CommentingEngine:
                 self._stats["errors"] += 1
                 log.error(f"Ошибка в comment_loop: {exc}")
                 await asyncio.sleep(60)
+
+    async def _distributed_idle_loop(self, user_id: int = None) -> None:
+        """Control-plane loop for distributed mode; workers consume Redis tasks directly."""
+        log.info(f"Distributed idle loop запущен (user_id={user_id})")
+        while self._should_run(user_id):
+            await asyncio.sleep(300)
+
+    async def _enqueue_comment_task(self, user_id: int = None) -> int:
+        """Move one discovered post from in-memory queue to Redis queue for workers."""
+        post_data = await self.monitor.queue.pop()
+        if not post_data:
+            return 0
+
+        decision = await policy_engine.check(
+            "comment_enqueue_attempt",
+            {
+                "queue_size": self.monitor.queue.size,
+                "post_channel": post_data.get("channel_title"),
+            },
+        )
+        if decision.action in {"block", "quarantine"}:
+            await self.monitor.queue.add(post_data)
+            log.warning(f"Policy blocked enqueue ({decision.rule_id})")
+            return -1
+
+        payload = {
+            "post_data": post_data,
+            "user_id": user_id,
+        }
+        try:
+            await task_queue.enqueue("comments", payload)
+            self._stats["queued_tasks"] += 1
+            log.debug(
+                f"Queued comment task: channel={post_data.get('channel_title')} "
+                f"post={post_data.get('telegram_post_id')}"
+            )
+            return 1
+        except Exception as exc:
+            # Do not lose task on transient Redis issues.
+            await self.monitor.queue.add(post_data)
+            log.warning(f"Не удалось поставить задачу в Redis, пост возвращён в очередь: {exc}")
+            return -1
 
     # ─────────────────────────────────────────────
     # Цикл прогрева (14-дневный)
@@ -474,11 +565,13 @@ class CommentingEngine:
 
     def get_stats(self) -> dict:
         """Полная статистика движка."""
+        queue_size = 0 if settings.DISTRIBUTED_QUEUE_MODE else self.monitor.queue.size
         return {
             "running": self._running,
+            "distributed_mode": settings.DISTRIBUTED_QUEUE_MODE,
             "engine": self._stats,
             "poster": self.poster.get_stats(),
-            "queue_size": self.monitor.queue.size,
+            "queue_size": queue_size,
             "monitor_running": self.monitor.is_running,
             "pool": self.session_mgr.pool_stats,
             "active_users": len(self._user_tasks),

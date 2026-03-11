@@ -1,8 +1,9 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
@@ -13,7 +14,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write",
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
             "type": "command",
@@ -39,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'CRITICAL REMINDERS after compaction:\n- NEVER call send_code_request on purchased sessions\n- NEVER connect multiple accounts from same IP (1 IP = 1 account)\n- NEVER change profile immediately after connecting\n- SetTypingRequest BEFORE every send_message\n- Active hours: 8:00-23:00 MSK only\n- 14-day warmup: readonly(0-2) → reactions(3-4) → light/3(5-7) → moderate/8(8-14) → full/35(15+)\n- Claude = orchestrator (analyze posts, review comments), Gemini = executor (generate text)\n- User language: Russian. Main interface: Telegram bot (not CLI)'"
+            "command": "echo 'SESSION REMINDERS after compaction:\n- Read CLAUDE.md and imported Scrum files first\n- Current safe VPS baseline: db, redis, ops_api, bot\n- Default stack for SaaS sprints: Python + FastAPI + Alembic + PostgreSQL + Redis\n- Stay within sprint scope; do not add future sprint features\n- Use the change register to keep branch/commit/VPS state current\n- For sprint work prefer the new SaaS agents, commands, and sprint-context skill\n- User language: Russian'"
           }
         ]
       }

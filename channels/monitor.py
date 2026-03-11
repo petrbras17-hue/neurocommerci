@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
@@ -18,10 +18,17 @@ from channels.channel_db import ChannelDB
 from core.session_manager import SessionManager
 from core.account_manager import AccountManager
 from core.proxy_manager import ProxyManager
-from storage.models import Channel, Post
+from core.task_queue import task_queue
+from storage.models import Account, Channel, Post
 from storage.sqlite_db import async_session
 from utils.helpers import utcnow
 from utils.logger import log
+from utils.proxy_bindings import get_bound_proxy_config
+
+
+def _normalize_phone(raw_phone: str | None) -> str:
+    digits = "".join(ch for ch in str(raw_phone or "") if ch.isdigit())
+    return f"+{digits}" if digits else ""
 
 
 class PostQueue:
@@ -107,6 +114,8 @@ class ChannelMonitor:
         if self._running:
             log.warning("Мониторинг уже запущен")
             return
+        if settings.DISTRIBUTED_QUEUE_MODE:
+            await task_queue.connect()
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
         log.info("Мониторинг каналов запущен")
@@ -129,9 +138,9 @@ class ChannelMonitor:
 
     async def check_channels_once(self, user_id: int = None) -> int:
         """Проверить все каналы один раз. Возвращает кол-во новых постов."""
-        channels = await self.channel_db.get_all_active(user_id=user_id)
+        channels = await self.channel_db.get_publishable(user_id=user_id)
         if not channels:
-            log.debug("Нет активных каналов для мониторинга")
+            log.debug("Нет publishable каналов для мониторинга")
             return 0
 
         client = await self._get_working_client(user_id=user_id)
@@ -162,7 +171,10 @@ class ChannelMonitor:
             try:
                 new_count = await self.check_channels_once()
                 if new_count:
-                    log.info(f"Очередь: {self.queue.size} постов ожидают комментария")
+                    if settings.DISTRIBUTED_QUEUE_MODE:
+                        log.info(f"Поставлено задач комментариев: {new_count}")
+                    else:
+                        log.info(f"Очередь: {self.queue.size} постов ожидают комментария")
                 consecutive_errors = 0  # Сброс при успехе
             except asyncio.CancelledError:
                 raise
@@ -209,7 +221,7 @@ class ChannelMonitor:
             # Сохраняем пост в БД
             post_data = await self._save_post(channel, message)
             if post_data:
-                added = await self.queue.add(post_data)
+                added = await self._stage_post(post_data, user_id=channel.user_id)
                 if added:
                     new_count += 1
 
@@ -234,6 +246,7 @@ class ChannelMonitor:
         """Сохранить пост в БД и вернуть данные для очереди."""
         text = message.text or ""
         posted_at = message.date.replace(tzinfo=None) if message.date else utcnow()
+        existing_comments_count = self._extract_reply_count(message)
 
         try:
             async with async_session() as session:
@@ -259,10 +272,20 @@ class ChannelMonitor:
                     "telegram_post_id": message.id,
                     "text": text[:4000],
                     "posted_at": posted_at,
+                    "existing_comments_count": existing_comments_count,
                 }
         except Exception as exc:
             log.warning(f"Ошибка сохранения поста {message.id} из {channel.title}: {exc}")
             return None
+
+    @staticmethod
+    def _extract_reply_count(message: Message) -> int:
+        replies = getattr(message, "replies", None)
+        count = getattr(replies, "replies", 0) if replies is not None else 0
+        try:
+            return int(count or 0)
+        except Exception:
+            return 0
 
     async def _update_last_checked(self, channel: Channel):
         """Обновить last_post_checked и last_checked_at для канала."""
@@ -287,26 +310,93 @@ class ChannelMonitor:
                 )
                 await session.commit()
 
+    async def _stage_post(self, post_data: dict, *, user_id: int | None = None) -> bool:
+        """Stage discovered post either in local queue or distributed task queue."""
+        if settings.DISTRIBUTED_QUEUE_MODE:
+            payload = {
+                "post_data": post_data,
+                "user_id": user_id,
+            }
+            try:
+                await task_queue.connect()
+                await task_queue.enqueue("comment_tasks", payload)
+                return True
+            except Exception as exc:
+                log.warning(
+                    f"Не удалось поставить post_data в distributed queue "
+                    f"(channel={post_data.get('channel_title')} post={post_data.get('telegram_post_id')}): {exc}"
+                )
+                return False
+        return await self.queue.add(post_data)
+
     async def _get_working_client(self, user_id: int = None) -> Optional[TelegramClient]:
         """Получить любой подключённый Telethon клиент."""
+        parser_phone = _normalize_phone(settings.PARSER_ONLY_PHONE)
+        if settings.STRICT_PARSER_ONLY and parser_phone:
+            client = self.session_mgr.get_client(parser_phone)
+            if client and client.is_connected():
+                return client
+            parser_accounts = await self._monitor_candidate_accounts(phones_subset=[parser_phone])
+            if not parser_accounts:
+                log.warning(
+                    f"Parser account {parser_phone} is not eligible for monitor client "
+                    "(status/health/lifecycle/proxy/session blocker)"
+                )
+                return None
+            return await self._connect_monitor_account(parser_accounts[0])
+
         connected = self.session_mgr.get_connected_phones(user_id=user_id)
-        for phone in connected:
-            client = self.session_mgr.get_client(phone)
+        connected_accounts = await self._monitor_candidate_accounts(
+            user_id=user_id,
+            phones_subset=connected,
+        )
+        for account in connected_accounts:
+            client = self.session_mgr.get_client(account.phone)
             if client and client.is_connected():
                 return client
 
-        # Попробовать подключить аккаунт
-        accounts = await self.account_mgr.load_accounts(user_id=user_id)
+        accounts = await self._monitor_candidate_accounts(user_id=user_id)
         for account in accounts:
-            proxy = None
-            if self.proxy_mgr:
-                proxy = self.proxy_mgr.get_for_account(account.phone) or \
-                        self.proxy_mgr.assign_to_account(account.phone)
-            client = await self.session_mgr.connect_client(account.phone, proxy)
+            client = await self._connect_monitor_account(account)
             if client:
                 return client
 
         return None
+
+    async def _monitor_candidate_accounts(
+        self,
+        *,
+        user_id: int | None = None,
+        phones_subset: list[str] | None = None,
+    ) -> list[Account]:
+        if phones_subset is not None and not phones_subset:
+            return []
+        async with async_session() as session:
+            query = select(Account).where(
+                Account.status == "active",
+                Account.lifecycle_stage.in_(("warming_up", "gate_review", "active_commenting", "execution_ready")),
+                or_(
+                    Account.health_status.is_(None),
+                    Account.health_status.notin_(list(AccountManager.BLOCKED_HEALTH_STATUSES)),
+                ),
+            )
+            if settings.STRICT_PROXY_PER_ACCOUNT:
+                query = query.where(Account.proxy_id.is_not(None))
+            if user_id is not None:
+                query = query.where(Account.user_id == user_id)
+            if phones_subset is not None:
+                query = query.where(Account.phone.in_(phones_subset))
+            result = await session.execute(query.order_by(Account.last_active_at.desc(), Account.id.asc()))
+            return list(result.scalars().all())
+
+    async def _connect_monitor_account(self, account: Account) -> Optional[TelegramClient]:
+        proxy = await get_bound_proxy_config(account.phone)
+        if proxy is None and self.proxy_mgr and not settings.STRICT_PROXY_PER_ACCOUNT:
+            proxy = self.proxy_mgr.get_for_account(account.phone) or self.proxy_mgr.assign_to_account(account.phone)
+        if settings.STRICT_PROXY_PER_ACCOUNT and proxy is None:
+            log.warning(f"Monitor client skipped {account.phone}: no proxy binding in strict mode")
+            return None
+        return await self.session_mgr.connect_client(account.phone, proxy, user_id=account.user_id)
 
     async def scan_old_posts(self, max_posts_per_channel: int = 50, user_id: int = None) -> int:
         """
@@ -362,13 +452,14 @@ class ChannelMonitor:
                                 "telegram_post_id": message.id,
                                 "text": message.text[:4000],
                                 "posted_at": message.date.replace(tzinfo=None) if message.date else utcnow(),
+                                "existing_comments_count": self._extract_reply_count(message),
                             }
                     else:
                         post_data = await self._save_post(channel, message)
                         if not post_data:
                             continue
 
-                    if await self.queue.add(post_data):
+                    if await self._stage_post(post_data, user_id=channel.user_id):
                         added += 1
 
             except Exception as exc:
@@ -382,6 +473,7 @@ class ChannelMonitor:
         """Статистика мониторинга."""
         return {
             "running": self._running,
-            "queue_size": self.queue.size,
+            "queue_size": 0 if settings.DISTRIBUTED_QUEUE_MODE else self.queue.size,
             "total_seen": self.queue.total_seen,
+            "distributed_mode": settings.DISTRIBUTED_QUEUE_MODE,
         }
