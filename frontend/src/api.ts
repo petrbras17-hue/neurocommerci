@@ -491,26 +491,50 @@ export const foldersApi = {
 // --- Channel Map API ---
 export type ChannelMapEntry = {
   id: number; telegram_id: number | null; username: string | null;
-  title: string | null; category: string | null; subcategory: string | null;
-  language: string | null; member_count: number;
-  has_comments: boolean; avg_post_reach: number | null;
-  engagement_rate: number | null; last_indexed_at: string | null;
-  created_at: string | null;
+  title: string | null; description: string | null;
+  category: string | null; subcategory: string | null;
+  language: string | null; region: string | null; member_count: number;
+  has_comments: boolean; comments_enabled: boolean;
+  avg_comments_per_post: number | null;
+  avg_post_reach: number | null; engagement_rate: number | null;
+  post_frequency_daily: number | null; verified: boolean;
+  source: string | null;
+  last_indexed_at: string | null; created_at: string | null;
+};
+
+export type ChannelMapListParams = {
+  category?: string; language?: string; region?: string;
+  min_members?: number; max_members?: number;
+  has_comments?: boolean; search?: string;
+  limit?: number; offset?: number;
+};
+
+export type ChannelMapStats = {
+  total_channels: number; total: number;
+  by_category: Record<string, number>;
+  by_language: Record<string, number>;
+  by_region: Record<string, number>;
 };
 
 export const channelMapApi = {
-  list: (token: string, params?: {category?: string; language?: string; min_members?: number}) => {
+  list: (token: string, params?: ChannelMapListParams) => {
     const q = new URLSearchParams();
     if (params?.category) q.set("category", params.category);
     if (params?.language) q.set("language", params.language);
+    if (params?.region) q.set("region", params.region);
     if (params?.min_members) q.set("min_members", String(params.min_members));
+    if (params?.max_members) q.set("max_members", String(params.max_members));
+    if (params?.has_comments != null) q.set("has_comments", String(params.has_comments));
+    if (params?.search) q.set("search", params.search);
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.offset) q.set("offset", String(params.offset));
     const qs = q.toString();
-    return apiFetch<{items: ChannelMapEntry[]; total: number}>(`/v1/channel-map${qs ? `?${qs}` : ""}`, {accessToken: token});
+    return apiFetch<{items: ChannelMapEntry[]; total: number; limit: number; offset: number}>(`/v1/channel-map${qs ? `?${qs}` : ""}`, {accessToken: token});
   },
   search: (token: string, data: {query?: string; category?: string; language?: string; min_members?: number; limit?: number}) =>
     apiFetch<{items: ChannelMapEntry[]; total: number}>("/v1/channel-map/search", {method: "POST", accessToken: token, json: data}),
   categories: (token: string) => apiFetch<{categories: string[]}>("/v1/channel-map/categories", {accessToken: token}),
-  stats: (token: string) => apiFetch<Record<string, unknown>>("/v1/channel-map/stats", {accessToken: token}),
+  stats: (token: string) => apiFetch<ChannelMapStats>("/v1/channel-map/stats", {accessToken: token}),
 };
 
 // --- Campaigns API ---
