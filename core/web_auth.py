@@ -628,6 +628,11 @@ async def logout_web_session(session: AsyncSession, refresh_token: str | None) -
     except TelegramAuthError:
         return
     token_hash = _refresh_token_hash(refresh_token)
+    await apply_session_rls_context(
+        session,
+        tenant_id=int(payload["tenant_id"]),
+        user_id=int(payload["sub"]),
+    )
     result = await session.execute(
         select(RefreshToken).where(
             RefreshToken.token_hash == token_hash,

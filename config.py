@@ -387,3 +387,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def validate_critical_secrets(s: "Settings") -> None:
+    """Raise RuntimeError if critical secrets are missing in non-test environments."""
+    if s.APP_ENV == "test":
+        return
+    missing = []
+    if not s.JWT_ACCESS_SECRET:
+        missing.append("JWT_ACCESS_SECRET")
+    if not s.JWT_REFRESH_SECRET:
+        missing.append("JWT_REFRESH_SECRET")
+    if not s.OPS_API_TOKEN:
+        missing.append("OPS_API_TOKEN")
+    if missing:
+        raise RuntimeError(
+            f"Critical secrets are not set: {', '.join(missing)}. "
+            "Set these environment variables before starting the application."
+        )

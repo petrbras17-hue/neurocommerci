@@ -201,7 +201,7 @@ export const channelDbApi = {
     apiFetch<{ items: ChannelDatabase[]; total: number }>("/v1/channel-db", { accessToken: token }),
 
   get: (token: string, id: number) =>
-    apiFetch<{ database: ChannelDatabase; channels: ChannelEntry[]; total: number }>(`/v1/channel-db/${id}`, { accessToken: token }),
+    apiFetch<ChannelDatabase>(`/v1/channel-db/${id}`, { accessToken: token }),
 
   create: (token: string, name: string) =>
     apiFetch<ChannelDatabase>("/v1/channel-db", { method: "POST", accessToken: token, json: { name } }),
@@ -210,7 +210,7 @@ export const channelDbApi = {
     apiFetch<{ imported: number; skipped: number }>(`/v1/channel-db/${id}/import`, {
       method: "POST",
       accessToken: token,
-      json: { links },
+      json: { channels: links.map(link => ({ username: link.replace(/^.*\//, "").replace(/^@/, "") })) },
     }),
 
   blacklistChannel: (token: string, dbId: number, channelId: number, blacklisted: boolean) =>

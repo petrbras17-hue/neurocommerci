@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import settings
+from config import settings, validate_critical_secrets
 from core.ai_audit import get_tenant_ai_quality_summary, list_internal_ai_audit
 from core.assistant_jobs import (
     ASSISTANT_QUEUE_NAMES,
@@ -1046,6 +1046,7 @@ async def tenant_session(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_critical_secrets(settings)
     await init_db()
     stop_event = asyncio.Event()
     worker_tasks: list[asyncio.Task[Any]] = []
@@ -1080,8 +1081,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.WEBAPP_DEV_ORIGIN, "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 if FRONTEND_ASSETS_DIR.exists():
@@ -1436,13 +1437,15 @@ async def sitemap_xml(request: Request) -> Response:
 
 
 @app.get("/v1/accounts")
-async def list_accounts(_: None = Depends(require_internal_token)) -> dict[str, object]:
+async def list_accounts(
+    tenant_id: Optional[int] = Query(default=None),
+    _: None = Depends(require_internal_token),
+) -> dict[str, object]:
     async with async_session() as session:
-        rows = (
-            await session.execute(
-                select(Account).order_by(Account.id)
-            )
-        ).scalars().all()
+        stmt = select(Account).order_by(Account.id)
+        if tenant_id is not None:
+            stmt = stmt.where(Account.tenant_id == tenant_id)
+        rows = (await session.execute(stmt)).scalars().all()
 
     items = [
         {
@@ -1822,7 +1825,10 @@ async def app_job_cancel(
     await session.flush()
     job = (
         await session.execute(
-            select(AppJob).where(AppJob.id == job_id)
+            select(AppJob).where(
+                AppJob.id == job_id,
+                AppJob.tenant_id == tenant_context.tenant_id,
+            )
         )
     ).scalar_one()
     return _job_response(job)
@@ -1911,6 +1917,8 @@ async def app_shell(path: str) -> Response:
     normalized = str(path or "").strip()
     if normalized.startswith("assets/") and FRONTEND_ASSETS_DIR.exists():
         asset_path = FRONTEND_DIST_DIR / normalized
+        if not asset_path.resolve().is_relative_to(FRONTEND_DIST_DIR.resolve()):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_asset_path")
         if asset_path.exists() and asset_path.is_file():
             return FileResponse(asset_path)
     if _frontend_ready():
@@ -2513,28 +2521,30 @@ async def channel_db_list(
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    rows = (
-        await session.execute(
-            select(ChannelDatabase)
-            .where(
-                ChannelDatabase.tenant_id == tenant_context.tenant_id,
-                ChannelDatabase.workspace_id == int(tenant_context.workspace_id or 0),
-            )
-            .order_by(ChannelDatabase.id.desc())
+    # Single query with subquery for counts instead of N+1
+    count_subq = (
+        select(
+            ChannelEntry.database_id,
+            func.count().label("channel_count"),
         )
-    ).scalars().all()
+        .group_by(ChannelEntry.database_id)
+        .subquery()
+    )
+    stmt = (
+        select(ChannelDatabase, count_subq.c.channel_count)
+        .outerjoin(count_subq, ChannelDatabase.id == count_subq.c.database_id)
+        .where(
+            ChannelDatabase.tenant_id == tenant_context.tenant_id,
+            ChannelDatabase.workspace_id == int(tenant_context.workspace_id or 0),
+        )
+        .order_by(ChannelDatabase.id.desc())
+    )
+    rows = (await session.execute(stmt)).all()
 
-    items = []
-    for db_row in rows:
-        count = (
-            await session.execute(
-                select(func.count()).select_from(ChannelEntry).where(
-                    ChannelEntry.database_id == int(db_row.id)
-                )
-            )
-        ).scalar_one()
-        items.append(_serialize_channel_db(db_row, channel_count=count))
-
+    items = [
+        _serialize_channel_db(db_row, channel_count=int(count or 0))
+        for db_row, count in rows
+    ]
     return {"items": items, "total": len(items)}
 
 
