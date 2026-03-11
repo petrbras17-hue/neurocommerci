@@ -23,6 +23,7 @@ import { DialogsPage } from "./pages/DialogsPage";
 import { UserParserPage } from "./pages/UserParserPage";
 import { FoldersPage } from "./pages/FoldersPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
+import { BillingPage } from "./pages/BillingPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -66,10 +67,7 @@ export default function App() {
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route
-              path="/billing"
-              element={<PlaceholderPage title="Биллинг" description="Биллинг вынесен после assistant/value layer, когда продуктовая ценность уже доказана." />}
-            />
+            <Route path="/billing" element={<BillingPage />} />
             <Route
               path="/settings"
               element={<PlaceholderPage title="Настройки" description="Workspace settings, роли и повторный onboarding будут расширены после stabilisation sprint." />}

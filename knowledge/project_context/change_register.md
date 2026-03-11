@@ -41,6 +41,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | 2026-03-11 | Sprint 4 hardening | `sprint/3-telegram-first-auth-shell` | `working-tree` | API pagination, job cancel, rate limiting, health endpoint | Added limit/offset pagination to GET /v1/web/accounts, /v1/creative/drafts, /v1/assistant/thread, /v1/channel-map; added DELETE /v1/jobs/{job_id} cancellation (queued/processing only); added in-memory rate limiter (auth: 10/min/IP, api: 60/min/tenant, public: 30/min/IP, bypassed in dev/test); added GET /health with real DB and Redis probes; added RequestValidationError handler; added TaskQueue.ping(). All 13 tests pass. | Green | Not deployed | Commit and deploy to VPS. |
 
+| 2026-03-11 | Email/password auth | `sprint/3-telegram-first-auth-shell` | `working-tree` | Email/password registration and login | Added `password_hash` column to `auth_users` (migration 20260311_14), `hash_password`/`verify_password`/`register_with_email`/`login_with_email` in `core/web_auth.py`, `POST /auth/register` (5/min rate limit, 201) and `POST /auth/login` (10/min, 200) in `ops_api.py`, updated `auth.tsx` with `loginWithEmail`/`registerWithEmail`, replaced `LoginPage.tsx` with dual-mode login+register form with Telegram as optional fallback, added auth form CSS. All 20 tests pass, `tsc --noEmit` clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`, smoke-test `/auth/register` and `/auth/login`. |
+
 ## Update Rules
 
 After each sprint or major VPS change:

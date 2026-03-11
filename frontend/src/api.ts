@@ -601,6 +601,32 @@ export const analyticsApi = {
   roi: (token: string) => apiFetch<Record<string, unknown>>("/v1/analytics/roi", {accessToken: token}),
 };
 
+// --- Billing API ---
+export type PlanInfo = {
+  id: number; slug: string; name: string;
+  price_monthly_rub: number | null;
+  price_yearly_rub: number | null;
+  max_accounts: number | null; max_channels: number | null;
+  max_comments_per_day: number | null; max_campaigns: number | null;
+  features: Record<string, unknown>;
+};
+
+export type SubscriptionInfo = {
+  id: number; status: string;
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancelled_at: string | null;
+  payment_provider: string | null;
+};
+
+export const billingApi = {
+  plans: () =>
+    apiFetch<{items: PlanInfo[]}>("/v1/plans"),
+  subscription: (token: string) =>
+    apiFetch<{subscription: SubscriptionInfo | null; plan: PlanInfo | null}>("/v1/billing/subscription", {accessToken: token}),
+};
+
 // ─── Job polling ──────────────────────────────────────────────────────────────
 
 export async function pollJob(

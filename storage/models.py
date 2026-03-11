@@ -1322,3 +1322,66 @@ class AnalyticsEvent(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Billing & Subscriptions
+# ---------------------------------------------------------------------------
+
+
+class Plan(Base):
+    """Subscription plan definition."""
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    slug = Column(String(50), unique=True, nullable=False)   # starter, growth, enterprise
+    name = Column(String(100), nullable=False)
+    price_monthly_rub = Column(Integer, default=0)
+    price_yearly_rub = Column(Integer, default=0)
+    max_accounts = Column(Integer, default=1)
+    max_channels = Column(Integer, default=10)
+    max_comments_per_day = Column(Integer, default=50)
+    max_campaigns = Column(Integer, default=1)
+    features = Column(JSONType, nullable=True)               # {"ai_assistant": true, "analytics": true, ...}
+    is_active = Column(Boolean, default=True)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class Subscription(Base):
+    """Tenant subscription to a plan."""
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        Index("ix_subscriptions_tenant_id", "tenant_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    plan_id = Column(Integer, ForeignKey("plans.id"), nullable=False)
+    status = Column(String(30), default="trial")             # trial, active, past_due, cancelled, expired
+    trial_ends_at = Column(DateTime, nullable=True)
+    current_period_start = Column(DateTime, nullable=True)
+    current_period_end = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    payment_provider = Column(String(30), nullable=True)     # yookassa, stripe, manual
+    external_subscription_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PaymentEvent(Base):
+    """Payment event log for audit trail."""
+    __tablename__ = "payment_events"
+    __table_args__ = (
+        Index("ix_payment_events_tenant_id", "tenant_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    subscription_id = Column(Integer, ForeignKey("subscriptions.id"), nullable=True)
+    event_type = Column(String(50), nullable=False)          # payment_succeeded, payment_failed, trial_started, ...
+    amount_rub = Column(Integer, default=0)
+    payment_provider = Column(String(30), nullable=True)
+    external_payment_id = Column(String(255), nullable=True)
+    event_meta = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+

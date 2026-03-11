@@ -4935,6 +4935,68 @@ async def analytics_roi(
 
 
 # ---------------------------------------------------------------------------
+# Billing & Plans endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/plans")
+async def plans_list() -> dict[str, Any]:
+    """Public endpoint — list all active plans."""
+    from storage.models import Plan
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(Plan).where(Plan.is_active == True).order_by(Plan.sort_order)
+        )).scalars().all()
+        return {"items": [
+            {
+                "id": p.id, "slug": p.slug, "name": p.name,
+                "price_monthly_rub": p.price_monthly_rub,
+                "price_yearly_rub": p.price_yearly_rub,
+                "max_accounts": p.max_accounts, "max_channels": p.max_channels,
+                "max_comments_per_day": p.max_comments_per_day,
+                "max_campaigns": p.max_campaigns,
+                "features": p.features or {},
+            }
+            for p in rows
+        ]}
+
+
+@app.get("/v1/billing/subscription")
+async def billing_subscription(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Get current tenant subscription."""
+    from storage.models import Plan, Subscription
+    row = (await session.execute(
+        select(Subscription)
+        .where(Subscription.tenant_id == tenant_context.tenant_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if not row:
+        return {"subscription": None, "plan": None}
+    plan = (await session.execute(
+        select(Plan).where(Plan.id == row.plan_id)
+    )).scalar_one_or_none()
+    return {
+        "subscription": {
+            "id": row.id, "status": row.status,
+            "trial_ends_at": row.trial_ends_at.isoformat() if row.trial_ends_at else None,
+            "current_period_start": row.current_period_start.isoformat() if row.current_period_start else None,
+            "current_period_end": row.current_period_end.isoformat() if row.current_period_end else None,
+            "cancelled_at": row.cancelled_at.isoformat() if row.cancelled_at else None,
+            "payment_provider": row.payment_provider,
+        },
+        "plan": {
+            "id": plan.id, "slug": plan.slug, "name": plan.name,
+            "price_monthly_rub": plan.price_monthly_rub,
+            "features": plan.features or {},
+        } if plan else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Exception handlers
 # ---------------------------------------------------------------------------
 

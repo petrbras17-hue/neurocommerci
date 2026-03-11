@@ -295,6 +295,33 @@ async def _bootstrap_membership(
     return tenant, workspace, membership
 
 
+async def _ensure_trial_subscription(session: AsyncSession, *, tenant_id: int) -> None:
+    """Create a 14-day trial subscription for the tenant if none exists."""
+    from storage.models import Plan, Subscription
+    existing = (await session.execute(
+        select(Subscription).where(Subscription.tenant_id == tenant_id).limit(1)
+    )).scalar_one_or_none()
+    if existing is not None:
+        return
+    trial_plan = (await session.execute(
+        select(Plan).where(Plan.slug == "trial")
+    )).scalar_one_or_none()
+    if trial_plan is None:
+        return
+    from datetime import timedelta
+    now = utcnow()
+    sub = Subscription(
+        tenant_id=tenant_id,
+        plan_id=trial_plan.id,
+        status="trialing",
+        trial_ends_at=now + timedelta(days=14),
+        current_period_start=now,
+        current_period_end=now + timedelta(days=14),
+    )
+    session.add(sub)
+    await session.flush()
+
+
 async def _build_onboarding_state(session: AsyncSession, *, tenant_id: int, workspace_id: int) -> dict[str, Any]:
     accounts_result = await session.execute(
         select(Account).where(Account.tenant_id == tenant_id, Account.workspace_id == workspace_id).order_by(Account.id.asc())
@@ -728,6 +755,9 @@ async def complete_profile(
         tenant.name = str(auth_user.company or "").strip()[:255] or tenant.name
     if workspace.name == "Основное пространство":
         workspace.name = f"{str(auth_user.company or '').strip()[:220]} — workspace"
+
+    # Auto-create trial subscription if none exists
+    await _ensure_trial_subscription(session, tenant_id=tenant.id)
 
     access_token = make_access_token(
         user_id=auth_user.id,
