@@ -17,13 +17,48 @@ type TeamMember = {
   joined_at: string | null;
 };
 
+type SessionInfo = {
+  id: number;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+  is_current: boolean;
+};
+
+function _parseDevice(userAgent: string | null): string {
+  if (!userAgent) return "Неизвестное устройство";
+  const ua = userAgent.toLowerCase();
+  if (ua.includes("mobile") || ua.includes("android") || ua.includes("iphone")) {
+    return "Мобильное устройство";
+  }
+  if (ua.includes("mac")) return "macOS";
+  if (ua.includes("windows")) return "Windows";
+  if (ua.includes("linux")) return "Linux";
+  return "Браузер";
+}
+
+function _parseClient(userAgent: string | null): string {
+  if (!userAgent) return "";
+  const ua = userAgent.toLowerCase();
+  if (ua.includes("chrome") && !ua.includes("chromium") && !ua.includes("edg")) return "Chrome";
+  if (ua.includes("firefox")) return "Firefox";
+  if (ua.includes("safari") && !ua.includes("chrome")) return "Safari";
+  if (ua.includes("edg")) return "Edge";
+  return "";
+}
+
 export function SettingsPage() {
   const { accessToken, profile } = useAuth();
 
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
+  const [sessionError, setSessionError] = useState("");
 
   // Profile info from auth
   const user = profile?.user as Record<string, unknown> | undefined;
@@ -48,8 +83,51 @@ export function SettingsPage() {
       } catch {
         /* ignore */
       }
+      void loadSessions();
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
+
+  const loadSessions = async () => {
+    if (!accessToken) return;
+    setSessionsLoading(true);
+    setSessionError("");
+    try {
+      const data = await apiFetch<{ items: SessionInfo[] }>("/auth/sessions", { accessToken });
+      setSessions(data.items || []);
+    } catch {
+      setSessionError("Не удалось загрузить сессии");
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: number) => {
+    if (!accessToken) return;
+    setSessionError("");
+    try {
+      await apiFetch(`/auth/sessions/${sessionId}`, { method: "DELETE", accessToken });
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Ошибка";
+      if (msg === "cannot_revoke_current_session") {
+        setSessionError("Нельзя завершить текущую сессию");
+      } else {
+        setSessionError("Не удалось завершить сессию");
+      }
+    }
+  };
+
+  const handleRevokeAllSessions = async () => {
+    if (!accessToken) return;
+    setSessionError("");
+    try {
+      await apiFetch("/auth/sessions", { method: "DELETE", accessToken });
+      await loadSessions();
+    } catch {
+      setSessionError("Не удалось завершить другие сессии");
+    }
+  };
 
   const handleLogout = async () => {
     setBusy(true);
@@ -62,6 +140,8 @@ export function SettingsPage() {
       setBusy(false);
     }
   };
+
+  const otherSessionsCount = sessions.filter((s) => !s.is_current).length;
 
   return (
     <div style={{ maxWidth: 700, margin: "0 auto", padding: "24px 16px" }}>
@@ -140,6 +220,83 @@ export function SettingsPage() {
           </div>
         ) : (
           <p className="muted">Только вы в команде.</p>
+        )}
+      </section>
+
+      {/* Active Sessions section */}
+      <section className="dash-card" style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h2 className="terminal-header" style={{ fontSize: 13, margin: 0 }}>АКТИВНЫЕ СЕССИИ</h2>
+          {otherSessionsCount > 0 && (
+            <button
+              className="btn btn-danger"
+              style={{ fontSize: 11, padding: "4px 10px" }}
+              onClick={handleRevokeAllSessions}
+            >
+              Завершить все ({otherSessionsCount})
+            </button>
+          )}
+        </div>
+
+        {sessionError && (
+          <p style={{ color: "#ff4444", fontSize: 13, marginBottom: 8 }}>{sessionError}</p>
+        )}
+
+        {sessionsLoading ? (
+          <p className="muted">Загрузка...</p>
+        ) : sessions.length === 0 ? (
+          <p className="muted">Нет активных сессий.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {sessions.map((s) => {
+              const device = _parseDevice(s.user_agent);
+              const client = _parseClient(s.user_agent);
+              const label = client ? `${device} — ${client}` : device;
+              const createdDate = s.created_at ? new Date(s.created_at).toLocaleString("ru") : "—";
+              const lastUsed = s.last_used_at ? new Date(s.last_used_at).toLocaleString("ru") : null;
+              return (
+                <div
+                  key={s.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    gap: 12,
+                    padding: "8px 0",
+                    borderBottom: "1px solid var(--border, #1a1a1a)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 500, fontSize: 13 }}>{label}</span>
+                      {s.is_current && (
+                        <span
+                          className="badge badge-green"
+                          style={{ fontSize: 10, padding: "2px 6px" }}
+                        >
+                          текущая
+                        </span>
+                      )}
+                    </div>
+                    <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+                      {s.ip_address && <span style={{ marginRight: 8 }}>{s.ip_address}</span>}
+                      <span>Создана: {createdDate}</span>
+                      {lastUsed && <span style={{ marginLeft: 8 }}>· Использована: {lastUsed}</span>}
+                    </div>
+                  </div>
+                  {!s.is_current && (
+                    <button
+                      className="btn btn-danger"
+                      style={{ fontSize: 11, padding: "4px 10px", flexShrink: 0 }}
+                      onClick={() => handleRevokeSession(s.id)}
+                    >
+                      Завершить
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </section>
 

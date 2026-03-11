@@ -1240,8 +1240,11 @@ class ChannelMapEntry(Base):
     engagement_rate = Column(Float, nullable=True)
     post_frequency_daily = Column(Float, nullable=True)  # avg posts per day
     verified = Column(Boolean, default=False)
-    source = Column(String(50), nullable=True)           # manual, tgstat, parser, seed
+    source = Column(String(50), nullable=True)           # manual, tgstat, parser, seed, stub
     last_indexed_at = Column(DateTime, nullable=True)
+    last_refreshed_at = Column(DateTime, nullable=True)  # last time live data was fetched
+    topic_tags = Column(JSONType, nullable=True)         # AI-generated topic tags list[str]
+    spam_score = Column(Float, nullable=True)            # AI spam suitability score 0-10
     created_at = Column(DateTime, default=utcnow)
 
 

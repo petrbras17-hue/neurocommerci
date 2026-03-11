@@ -920,6 +920,94 @@ async def get_me_payload(
     }
 
 
+async def list_user_sessions(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    tenant_id: int,
+    current_token_hash: str | None,
+) -> list[dict[str, Any]]:
+    """Return all active (non-expired, non-revoked) refresh tokens for the user."""
+    now = utcnow()
+    result = await session.execute(
+        select(RefreshToken)
+        .where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.tenant_id == tenant_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+        .order_by(RefreshToken.created_at.desc())
+    )
+    rows = list(result.scalars().all())
+    items = []
+    for row in rows:
+        items.append(
+            {
+                "id": row.id,
+                "user_agent": row.user_agent,
+                "ip_address": row.ip_address,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
+                "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+                "is_current": (current_token_hash is not None and row.token_hash == current_token_hash),
+            }
+        )
+    return items
+
+
+async def revoke_session_by_id(
+    session: AsyncSession,
+    *,
+    session_id: int,
+    user_id: int,
+    tenant_id: int,
+    current_token_hash: str | None,
+) -> None:
+    """Revoke a single session by its DB id. Refuses to revoke the current session."""
+    result = await session.execute(
+        select(RefreshToken).where(
+            RefreshToken.id == session_id,
+            RefreshToken.user_id == user_id,
+            RefreshToken.tenant_id == tenant_id,
+        )
+    )
+    token_row = result.scalar_one_or_none()
+    if token_row is None:
+        raise TelegramAuthError("session_not_found")
+    if current_token_hash is not None and token_row.token_hash == current_token_hash:
+        raise TelegramAuthError("cannot_revoke_current_session")
+    if token_row.revoked_at is None:
+        token_row.revoked_at = utcnow()
+
+
+async def revoke_all_other_sessions(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    tenant_id: int,
+    current_token_hash: str | None,
+) -> int:
+    """Revoke all active sessions except the current one. Returns revoked count."""
+    now = utcnow()
+    result = await session.execute(
+        select(RefreshToken).where(
+            RefreshToken.user_id == user_id,
+            RefreshToken.tenant_id == tenant_id,
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+    )
+    rows = list(result.scalars().all())
+    revoked = 0
+    for row in rows:
+        if current_token_hash is not None and row.token_hash == current_token_hash:
+            continue
+        row.revoked_at = now
+        revoked += 1
+    return revoked
+
+
 async def get_team_payload(
     session: AsyncSession,
     *,

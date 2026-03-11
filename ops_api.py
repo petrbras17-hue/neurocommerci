@@ -57,13 +57,17 @@ from core.web_auth import (
     EmailAuthError,
     TelegramAuthError,
     WebAuthBundle,
+    _refresh_token_hash,
     complete_profile,
     get_me_payload,
     get_team_payload,
+    list_user_sessions,
     login_with_email,
     logout_web_session,
     refresh_web_session,
     register_with_email,
+    revoke_all_other_sessions,
+    revoke_session_by_id,
     verify_telegram_login,
 )
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
@@ -508,6 +512,21 @@ class WorkspaceSummaryPayload(BaseModel):
     name: str
     settings: dict[str, Any]
     created_at: Optional[str]
+
+
+class SessionInfoItem(BaseModel):
+    id: int
+    user_agent: Optional[str]
+    ip_address: Optional[str]
+    created_at: Optional[str]
+    last_used_at: Optional[str]
+    expires_at: Optional[str]
+    is_current: bool
+
+
+class SessionListResponse(BaseModel):
+    items: list[SessionInfoItem]
+    total: int
 
 
 # ---------------------------------------------------------------------------
@@ -1487,6 +1506,70 @@ async def auth_me(
         tenant_id=tenant_context.tenant_id,
         workspace_id=int(tenant_context.workspace_id or 0),
     )
+
+
+@app.get("/auth/sessions", response_model=SessionListResponse)
+async def auth_sessions_list(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+    refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
+) -> dict[str, Any]:
+    """List all active sessions for the current user."""
+    current_hash = _refresh_token_hash(refresh_token) if refresh_token else None
+    items = await list_user_sessions(
+        session,
+        user_id=tenant_context.user_id,
+        tenant_id=tenant_context.tenant_id,
+        current_token_hash=current_hash,
+    )
+    return {"items": items, "total": len(items)}
+
+
+@app.delete("/auth/sessions/{session_id}", status_code=status.HTTP_200_OK)
+async def auth_sessions_revoke_one(
+    session_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+    refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
+) -> dict[str, Any]:
+    """Revoke a specific session by id (cannot revoke the current session)."""
+    current_hash = _refresh_token_hash(refresh_token) if refresh_token else None
+    try:
+        await revoke_session_by_id(
+            session,
+            session_id=session_id,
+            user_id=tenant_context.user_id,
+            tenant_id=tenant_context.tenant_id,
+            current_token_hash=current_hash,
+        )
+    except TelegramAuthError as exc:
+        code = str(exc)
+        if code == "session_not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=code) from exc
+        if code == "cannot_revoke_current_session":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=code) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=code) from exc
+    return {"ok": True}
+
+
+@app.delete("/auth/sessions", status_code=status.HTTP_200_OK)
+async def auth_sessions_revoke_all(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+    refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
+) -> dict[str, Any]:
+    """Revoke all sessions except the current one."""
+    current_hash = _refresh_token_hash(refresh_token) if refresh_token else None
+    revoked = await revoke_all_other_sessions(
+        session,
+        user_id=tenant_context.user_id,
+        tenant_id=tenant_context.tenant_id,
+        current_token_hash=current_hash,
+    )
+    return {"ok": True, "revoked": revoked}
 
 
 @app.get("/v1/me/workspace", response_model=WorkspaceSummaryPayload)
@@ -4437,6 +4520,169 @@ async def channel_map_stats(
 
 
 # ---------------------------------------------------------------------------
+# Channel Map — indexing / refresh / export (admin / internal)
+# ---------------------------------------------------------------------------
+
+
+class ChannelMapIndexPayload(BaseModel):
+    """Payload for POST /v1/channel-map/index."""
+
+    usernames: list[str]
+
+
+class ChannelMapRefreshPayload(BaseModel):
+    """Payload for POST /v1/channel-map/refresh."""
+
+    max_age_days: int = Field(default=7, ge=1, le=365)
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
+@app.post("/v1/channel-map/index", status_code=status.HTTP_202_ACCEPTED)
+async def channel_map_index(
+    payload: ChannelMapIndexPayload,
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Trigger indexing of specific channels by username (admin/internal).
+
+    Requires OPS_API_TOKEN bearer auth.
+    Returns immediately after enqueueing; indexing runs synchronously for
+    small batches (<=200 usernames) and returns results.
+    """
+    if not payload.usernames:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="usernames list must not be empty",
+        )
+    if len(payload.usernames) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="usernames list exceeds maximum of 200",
+        )
+
+    from core.channel_indexer import ChannelIndexer
+
+    session_manager = getattr(app.state, "session_manager", None)
+    indexer = ChannelIndexer(session_manager=session_manager)
+
+    indexed: list[dict] = []
+    async with async_session() as session:
+        async with session.begin():
+            for username in payload.usernames:
+                try:
+                    entry = await indexer.index_channel(username.lstrip("@"), session)
+                    indexed.append({"username": entry.username, "id": entry.id, "status": "ok"})
+                except Exception as exc:
+                    indexed.append({"username": username, "id": None, "status": f"error: {exc}"})
+
+    return {
+        "requested": len(payload.usernames),
+        "indexed": len([r for r in indexed if r["status"] == "ok"]),
+        "results": indexed,
+    }
+
+
+@app.post("/v1/channel-map/refresh", status_code=status.HTTP_202_ACCEPTED)
+async def channel_map_refresh(
+    payload: ChannelMapRefreshPayload = ChannelMapRefreshPayload(),
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Refresh stale platform catalog entries (admin/internal).
+
+    Re-fetches live Telegram metadata for channels older than max_age_days.
+    Requires OPS_API_TOKEN bearer auth.
+    """
+    from core.channel_indexer import ChannelIndexer
+
+    session_manager = getattr(app.state, "session_manager", None)
+    indexer = ChannelIndexer(session_manager=session_manager)
+
+    async with async_session() as session:
+        async with session.begin():
+            refreshed = await indexer.refresh_stale(
+                max_age_days=payload.max_age_days,
+                limit=payload.limit,
+                session=session,
+            )
+    return {"refreshed": refreshed, "max_age_days": payload.max_age_days, "limit": payload.limit}
+
+
+@app.get("/v1/channel-map/export")
+async def channel_map_export(
+    category: Optional[str] = Query(default=None),
+    language: Optional[str] = Query(default=None),
+    region: Optional[str] = Query(default=None),
+    min_members: Optional[int] = Query(default=None, ge=0),
+    max_members: Optional[int] = Query(default=None),
+    has_comments: Optional[bool] = Query(default=None),
+    min_spam_score: Optional[float] = Query(default=None, ge=0.0, le=10.0),
+    max_spam_score: Optional[float] = Query(default=None, ge=0.0, le=10.0),
+    source: Optional[str] = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Export filtered channels as JSON.
+
+    Supports all standard channel-map filters plus spam_score range and source.
+    Returns up to 5000 rows per request.
+    """
+    from sqlalchemy import or_
+
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(ChannelMapEntry).where(tf)
+
+    if category is not None:
+        q = q.where(ChannelMapEntry.category == category)
+    if language is not None:
+        q = q.where(ChannelMapEntry.language == language)
+    if region is not None:
+        q = q.where(ChannelMapEntry.region == region)
+    if min_members is not None:
+        q = q.where(ChannelMapEntry.member_count >= min_members)
+    if max_members is not None:
+        q = q.where(ChannelMapEntry.member_count <= max_members)
+    if has_comments is not None:
+        q = q.where(ChannelMapEntry.comments_enabled == has_comments)
+    if min_spam_score is not None:
+        q = q.where(ChannelMapEntry.spam_score >= min_spam_score)
+    if max_spam_score is not None:
+        q = q.where(ChannelMapEntry.spam_score <= max_spam_score)
+    if source is not None:
+        q = q.where(ChannelMapEntry.source == source)
+
+    q = q.order_by(ChannelMapEntry.member_count.desc()).limit(limit)
+    rows = (await session.execute(q)).scalars().all()
+
+    def _serialize_export(entry: ChannelMapEntry) -> dict[str, Any]:
+        base = _serialize_channel_map_entry(entry)
+        base["topic_tags"] = getattr(entry, "topic_tags", None)
+        base["spam_score"] = getattr(entry, "spam_score", None)
+        base["last_refreshed_at"] = (
+            entry.last_refreshed_at.isoformat()
+            if getattr(entry, "last_refreshed_at", None)
+            else None
+        )
+        return base
+
+    return {
+        "total": len(rows),
+        "limit": limit,
+        "filters": {
+            "category": category,
+            "language": language,
+            "region": region,
+            "min_members": min_members,
+            "max_members": max_members,
+            "has_comments": has_comments,
+            "min_spam_score": min_spam_score,
+            "max_spam_score": max_spam_score,
+            "source": source,
+        },
+        "items": [_serialize_export(r) for r in rows],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Sprint 8 — Campaign endpoints
 # ---------------------------------------------------------------------------
 
@@ -4993,6 +5239,80 @@ async def billing_subscription(
             "price_monthly_rub": plan.price_monthly_rub,
             "features": plan.features or {},
         } if plan else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Smart Commenting Engine endpoints
+# ---------------------------------------------------------------------------
+
+
+class CommentingPreviewPayload(BaseModel):
+    """Payload для предпросмотра комментария без публикации."""
+    post_text: str
+    channel_title: str = ""
+    channel_username: str = ""
+    channel_category: str = ""
+    existing_comments: list[str] = []
+    tone: str = "positive"
+    language: str = "auto"
+    frequency: str = "all"
+    keywords: list[str] = []
+    min_existing_comments: int = 1
+    custom_prompt: str = ""
+
+
+@app.post("/v1/commenting/preview")
+async def commenting_preview(
+    payload: CommentingPreviewPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """
+    Предпросмотр комментария: анализирует пост, оценивает контекст
+    и генерирует комментарий без реальной публикации в Telegram.
+
+    Полезно для отладки и настройки конфигурации фермы.
+    """
+    from core.smart_commenter import build_orchestrator
+
+    orchestrator = build_orchestrator(
+        tenant_id=tenant_context.tenant_id,
+        farm_id=0,           # preview не привязан к конкретной ферме
+        thread_id=None,
+        tone=payload.tone,
+        language=payload.language,
+        frequency=payload.frequency,
+        keywords=payload.keywords,
+        min_existing_comments=payload.min_existing_comments,
+        custom_prompt=payload.custom_prompt,
+    )
+
+    channel_info = {
+        "title": payload.channel_title,
+        "username": payload.channel_username,
+        "category": payload.channel_category,
+    }
+
+    result = await orchestrator.preview_comment(
+        post_text=payload.post_text,
+        channel_info=channel_info,
+        existing_comments=payload.existing_comments,
+    )
+    return result
+
+
+@app.get("/v1/commenting/strategies")
+async def commenting_strategies(
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """
+    Возвращает список доступных стратегий и тональностей для Smart Commenting Engine.
+    """
+    from core.smart_commenter import list_strategies, list_tones
+
+    return {
+        "strategies": list_strategies(),
+        "tones": list_tones(),
     }
 
 
