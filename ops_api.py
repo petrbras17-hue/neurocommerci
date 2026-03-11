@@ -4208,16 +4208,29 @@ def _serialize_channel_map_entry(entry: ChannelMapEntry) -> dict[str, Any]:
         "telegram_id": entry.telegram_id,
         "username": entry.username,
         "title": entry.title,
+        "description": getattr(entry, "description", None),
         "category": entry.category,
         "subcategory": entry.subcategory,
         "language": entry.language,
+        "region": getattr(entry, "region", None),
         "member_count": entry.member_count,
         "has_comments": entry.has_comments,
+        "comments_enabled": getattr(entry, "comments_enabled", False),
+        "avg_comments_per_post": getattr(entry, "avg_comments_per_post", None),
         "avg_post_reach": entry.avg_post_reach,
         "engagement_rate": entry.engagement_rate,
+        "post_frequency_daily": getattr(entry, "post_frequency_daily", None),
+        "verified": getattr(entry, "verified", False),
+        "source": getattr(entry, "source", None),
         "last_indexed_at": entry.last_indexed_at.isoformat() if entry.last_indexed_at else None,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
+
+
+def _channel_map_tenant_filter(tenant_id: int):
+    """Return filter for platform catalog (tenant_id IS NULL) + tenant's own channels."""
+    from sqlalchemy import or_
+    return or_(ChannelMapEntry.tenant_id.is_(None), ChannelMapEntry.tenant_id == tenant_id)
 
 
 def _serialize_campaign(campaign: Campaign) -> dict[str, Any]:
@@ -4283,23 +4296,47 @@ def _serialize_analytics_event(event: AnalyticsEvent) -> dict[str, Any]:
 async def channel_map_list(
     category: Optional[str] = Query(default=None),
     language: Optional[str] = Query(default=None),
+    region: Optional[str] = Query(default=None),
     min_members: Optional[int] = Query(default=None, ge=0),
+    max_members: Optional[int] = Query(default=None),
+    has_comments: Optional[bool] = Query(default=None),
+    search: Optional[str] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    q = select(ChannelMapEntry).where(ChannelMapEntry.tenant_id == tenant_context.tenant_id)
+    from sqlalchemy import or_
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(ChannelMapEntry).where(tf)
+    count_q = select(func.count()).select_from(ChannelMapEntry).where(tf)
     if category is not None:
         q = q.where(ChannelMapEntry.category == category)
+        count_q = count_q.where(ChannelMapEntry.category == category)
     if language is not None:
         q = q.where(ChannelMapEntry.language == language)
+        count_q = count_q.where(ChannelMapEntry.language == language)
+    if region is not None:
+        q = q.where(ChannelMapEntry.region == region)
+        count_q = count_q.where(ChannelMapEntry.region == region)
     if min_members is not None:
         q = q.where(ChannelMapEntry.member_count >= min_members)
-    total_q = select(func.count()).select_from(ChannelMapEntry).where(
-        ChannelMapEntry.tenant_id == tenant_context.tenant_id
-    )
-    total = (await session.execute(total_q)).scalar_one()
+        count_q = count_q.where(ChannelMapEntry.member_count >= min_members)
+    if max_members is not None:
+        q = q.where(ChannelMapEntry.member_count <= max_members)
+        count_q = count_q.where(ChannelMapEntry.member_count <= max_members)
+    if has_comments is not None:
+        q = q.where(ChannelMapEntry.comments_enabled == has_comments)
+        count_q = count_q.where(ChannelMapEntry.comments_enabled == has_comments)
+    if search:
+        search_filter = or_(
+            ChannelMapEntry.username.ilike(f"%{search}%"),
+            ChannelMapEntry.title.ilike(f"%{search}%"),
+            ChannelMapEntry.description.ilike(f"%{search}%"),
+        )
+        q = q.where(search_filter)
+        count_q = count_q.where(search_filter)
+    total = (await session.execute(count_q)).scalar_one()
     q = q.order_by(ChannelMapEntry.member_count.desc()).offset(offset).limit(limit)
     rows = (await session.execute(q)).scalars().all()
     return {"items": [_serialize_channel_map_entry(r) for r in rows], "total": total, "limit": limit, "offset": offset}
@@ -4313,7 +4350,8 @@ async def channel_map_search(
 ) -> dict[str, Any]:
     from sqlalchemy import or_
 
-    q = select(ChannelMapEntry).where(ChannelMapEntry.tenant_id == tenant_context.tenant_id)
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(ChannelMapEntry).where(tf)
     if payload.category is not None:
         q = q.where(ChannelMapEntry.category == payload.category)
     if payload.language is not None:
@@ -4325,6 +4363,7 @@ async def channel_map_search(
             or_(
                 ChannelMapEntry.username.ilike(f"%{payload.query}%"),
                 ChannelMapEntry.title.ilike(f"%{payload.query}%"),
+                ChannelMapEntry.description.ilike(f"%{payload.query}%"),
             )
         )
     q = q.order_by(ChannelMapEntry.member_count.desc()).limit(payload.limit)
@@ -4339,13 +4378,11 @@ async def channel_map_categories(
 ) -> dict[str, Any]:
     from sqlalchemy import distinct
 
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
     rows = (
         await session.execute(
             select(distinct(ChannelMapEntry.category))
-            .where(
-                ChannelMapEntry.tenant_id == tenant_context.tenant_id,
-                ChannelMapEntry.category.isnot(None),
-            )
+            .where(tf, ChannelMapEntry.category.isnot(None))
             .order_by(ChannelMapEntry.category)
         )
     ).scalars().all()
@@ -4359,20 +4396,16 @@ async def channel_map_stats(
 ) -> dict[str, Any]:
     from sqlalchemy import distinct
 
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
     total = (
         await session.execute(
-            select(func.count()).select_from(ChannelMapEntry).where(
-                ChannelMapEntry.tenant_id == tenant_context.tenant_id
-            )
+            select(func.count()).select_from(ChannelMapEntry).where(tf)
         )
     ).scalar_one()
 
     cat_result = await session.execute(
         select(ChannelMapEntry.category, func.count(ChannelMapEntry.id))
-        .where(
-            ChannelMapEntry.tenant_id == tenant_context.tenant_id,
-            ChannelMapEntry.category.isnot(None),
-        )
+        .where(tf, ChannelMapEntry.category.isnot(None))
         .group_by(ChannelMapEntry.category)
         .order_by(func.count(ChannelMapEntry.id).desc())
     )
@@ -4380,20 +4413,26 @@ async def channel_map_stats(
 
     lang_result = await session.execute(
         select(ChannelMapEntry.language, func.count(ChannelMapEntry.id))
-        .where(
-            ChannelMapEntry.tenant_id == tenant_context.tenant_id,
-            ChannelMapEntry.language.isnot(None),
-        )
+        .where(tf, ChannelMapEntry.language.isnot(None))
         .group_by(ChannelMapEntry.language)
         .order_by(func.count(ChannelMapEntry.id).desc())
     )
     by_language = {row[0]: row[1] for row in lang_result.all()}
+
+    region_result = await session.execute(
+        select(ChannelMapEntry.region, func.count(ChannelMapEntry.id))
+        .where(tf, ChannelMapEntry.region.isnot(None))
+        .group_by(ChannelMapEntry.region)
+        .order_by(func.count(ChannelMapEntry.id).desc())
+    )
+    by_region = {row[0]: row[1] for row in region_result.all()}
 
     return {
         "total_channels": total,
         "total": total,
         "by_category": by_category,
         "by_language": by_language,
+        "by_region": by_region,
     }
 
 

@@ -1223,17 +1223,24 @@ class ChannelMapEntry(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=True)  # NULL = platform-level catalog
     telegram_id = Column(BigInteger, nullable=True)
-    username = Column(String(200), nullable=True)
+    username = Column(String(200), nullable=True, index=True)
     title = Column(String(500), nullable=True)
+    description = Column(String(2000), nullable=True)
     category = Column(String(100), nullable=True)       # tech, crypto, marketing, ecom, edtech …
     subcategory = Column(String(100), nullable=True)
     language = Column(String(10), nullable=True)
+    region = Column(String(10), nullable=True)           # ru, cis, eu, global
     member_count = Column(Integer, default=0)
     has_comments = Column(Boolean, default=False)
+    comments_enabled = Column(Boolean, default=False)
+    avg_comments_per_post = Column(Integer, nullable=True)
     avg_post_reach = Column(Integer, nullable=True)
     engagement_rate = Column(Float, nullable=True)
+    post_frequency_daily = Column(Float, nullable=True)  # avg posts per day
+    verified = Column(Boolean, default=False)
+    source = Column(String(50), nullable=True)           # manual, tgstat, parser, seed
     last_indexed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
