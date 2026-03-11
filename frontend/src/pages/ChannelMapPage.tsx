@@ -74,6 +74,19 @@ const CATEGORY_META: Record<string, { icon: string; color: string }> = {
   Travel:        { icon: "✈️", color: "#06b6d4" },
 };
 
+const DEFAULT_CATEGORY_META = { icon: "📌", color: "#6366f1" };
+
+function getCategoryMeta(cat: string | null | undefined): { icon: string; color: string } {
+  if (!cat) return DEFAULT_CATEGORY_META;
+  return CATEGORY_META[cat] ?? DEFAULT_CATEGORY_META;
+}
+
+const METRIC_BADGE_STYLE: React.CSSProperties = {
+  background: "rgba(242,230,212,0.45)",
+  borderRadius: 12,
+  padding: "8px 10px",
+};
+
 const LANGUAGE_OPTIONS = [
   { value: "", label: "Все языки" },
   { value: "ru", label: "Русский" },
@@ -148,7 +161,7 @@ function CategoryCard({
   selected: boolean;
   onClick: () => void;
 }) {
-  const meta = CATEGORY_META[name] ?? { icon: "📌", color: "#6366f1" };
+  const meta = getCategoryMeta(name);
   return (
     <button
       type="button"
@@ -216,7 +229,7 @@ function ChannelCard({
     "linear-gradient(135deg, #8b5cf6, #3b82f6)",
   ];
   const gradientIndex = (ch.id ?? 0) % gradients.length;
-  const meta = ch.category ? (CATEGORY_META[ch.category] ?? { icon: "📌", color: "#6366f1" }) : null;
+  const meta = ch.category ? getCategoryMeta(ch.category) : null;
 
   const titleHtml = ch.title ? highlight(ch.title, query) : null;
   const usernameHtml = ch.username ? highlight(`@${ch.username}`, query) : null;
@@ -293,25 +306,13 @@ function ChannelCard({
           gap: 8,
         }}
       >
-        <div
-          style={{
-            background: "rgba(242,230,212,0.45)",
-            borderRadius: 12,
-            padding: "8px 10px",
-          }}
-        >
+        <div style={METRIC_BADGE_STYLE}>
           <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             Подписчики
           </div>
           <div style={{ fontWeight: 700, fontSize: 16 }}>{formatNumber(ch.member_count)}</div>
         </div>
-        <div
-          style={{
-            background: "rgba(242,230,212,0.45)",
-            borderRadius: 12,
-            padding: "8px 10px",
-          }}
-        >
+        <div style={METRIC_BADGE_STYLE}>
           <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             ER
           </div>
@@ -1010,13 +1011,13 @@ export function ChannelMapPage() {
                             gap: 4,
                             padding: "3px 8px",
                             borderRadius: 999,
-                            background: `${(CATEGORY_META[ch.category] ?? { color: "#6366f1" }).color}18`,
-                            color: (CATEGORY_META[ch.category] ?? { color: "#6366f1" }).color,
+                            background: `${getCategoryMeta(ch.category).color}18`,
+                            color: getCategoryMeta(ch.category).color,
                             fontSize: 11,
                             fontWeight: 600,
                           }}
                         >
-                          {(CATEGORY_META[ch.category] ?? { icon: "📌" }).icon} {ch.category}
+                          {getCategoryMeta(ch.category).icon} {ch.category}
                           {ch.subcategory ? ` / ${ch.subcategory}` : ""}
                         </span>
                       ) : (
@@ -1083,7 +1084,7 @@ export function ChannelMapPage() {
             <HBarChart
               entries={allCategoryNames
                 .map((cat) => ({
-                  label: `${(CATEGORY_META[cat] ?? { icon: "📌" }).icon} ${cat}`,
+                  label: `${getCategoryMeta(cat).icon} ${cat}`,
                   value: categoryStats[cat]?.count ?? byCategory[cat] ?? 0,
                 }))
                 .sort((a, b) => b.value - a.value)
