@@ -54,13 +54,16 @@ from core.web_accounts import (
 )
 from core.web_auth import (
     TELEGRAM_AUTH_MAX_AGE_SECONDS,
+    EmailAuthError,
     TelegramAuthError,
     WebAuthBundle,
     complete_profile,
     get_me_payload,
     get_team_payload,
+    login_with_email,
     logout_web_session,
     refresh_web_session,
+    register_with_email,
     verify_telegram_login,
 )
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
@@ -404,6 +407,34 @@ class CompleteProfilePayload(BaseModel):
         if not normalized:
             raise ValueError("empty_company")
         return normalized
+
+
+class EmailRegisterPayload(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=8, max_length=128)
+    first_name: str = Field(min_length=1, max_length=255)
+    company: str = Field(min_length=1, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("invalid_email")
+        return value
+
+    @field_validator("first_name", "company")
+    @classmethod
+    def normalize_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("empty_field")
+        return normalized
+
+
+class EmailLoginPayload(BaseModel):
+    email: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class BindProxyPayload(BaseModel):
@@ -1267,6 +1298,69 @@ async def auth_complete_profile(payload: CompleteProfilePayload, request: Reques
         print(
             "complete profile failed:\n" + traceback.format_exc(),
             flush=True,
+        )
+        raise
+
+
+@app.post("/auth/register")
+async def auth_register(payload: EmailRegisterPayload, request: Request) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=5, window_seconds=60)
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                bundle = await register_with_email(
+                    session,
+                    email=payload.email,
+                    password=payload.password,
+                    first_name=payload.first_name,
+                    company=payload.company,
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None,
+                )
+        response = JSONResponse(status_code=status.HTTP_201_CREATED, content=_auth_bundle_payload(bundle))
+        if bundle.refresh_token:
+            _set_refresh_cookie(response, request, bundle.refresh_token)
+        return response
+    except EmailAuthError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except Exception:
+        log.exception(
+            "email register failed (email=%s ip=%s ua=%s)",
+            payload.email,
+            request.client.host if request.client else None,
+            request.headers.get("user-agent"),
+        )
+        raise
+
+
+@app.post("/auth/login")
+async def auth_login(payload: EmailLoginPayload, request: Request) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                bundle = await login_with_email(
+                    session,
+                    email=payload.email,
+                    password=payload.password,
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None,
+                )
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=_auth_bundle_payload(bundle))
+        if bundle.refresh_token:
+            _set_refresh_cookie(response, request, bundle.refresh_token)
+        return response
+    except EmailAuthError as exc:
+        code = str(exc)
+        if code == "use_telegram_login":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=code) from exc
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials") from exc
+    except Exception:
+        log.exception(
+            "email login failed (email=%s ip=%s ua=%s)",
+            payload.email,
+            request.client.host if request.client else None,
+            request.headers.get("user-agent"),
         )
         raise
 

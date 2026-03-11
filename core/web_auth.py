@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+import bcrypt
 import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,14 @@ from utils.helpers import utcnow
 
 TELEGRAM_AUTH_MAX_AGE_SECONDS = 3600
 log = logging.getLogger("uvicorn.error")
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
 class TelegramAuthError(RuntimeError):
@@ -372,6 +381,192 @@ async def _issue_refresh_record(
     )
     session.add(refresh_row)
     return refresh_token
+
+
+async def _bootstrap_membership_email(
+    session: AsyncSession,
+    *,
+    auth_user: AuthUser,
+) -> tuple[Tenant, Workspace, TeamMember]:
+    """Bootstrap tenant/workspace for email-registered users (no Telegram identity)."""
+    membership_result = await session.execute(
+        select(TeamMember, Workspace, Tenant)
+        .join(Workspace, TeamMember.workspace_id == Workspace.id)
+        .join(Tenant, TeamMember.tenant_id == Tenant.id)
+        .where(TeamMember.user_id == auth_user.id)
+        .order_by(TeamMember.id.asc())
+    )
+    existing = membership_result.first()
+    if existing is not None:
+        membership, workspace, tenant = existing
+        return tenant, workspace, membership
+
+    preferred_name = (
+        _clean_optional_text(auth_user.company, 255)
+        or _clean_optional_text(auth_user.first_name, 255)
+        or f"Tenant {auth_user.id}"
+    )
+    tenant_slug = await _ensure_unique_tenant_slug(
+        session,
+        preferred=preferred_name,
+        fallback=f"email-{auth_user.id}",
+    )
+    tenant = Tenant(
+        name=preferred_name[:255],
+        slug=tenant_slug,
+        status="active",
+    )
+    session.add(tenant)
+    await session.flush()
+
+    workspace = Workspace(
+        tenant_id=tenant.id,
+        name="Основное пространство",
+        runtime_user_id=None,
+        settings={"onboarding": {"status": "profile_complete"}},
+    )
+    session.add(workspace)
+    await session.flush()
+
+    membership = TeamMember(
+        tenant_id=tenant.id,
+        workspace_id=workspace.id,
+        user_id=auth_user.id,
+        role="owner",
+    )
+    session.add(membership)
+    await session.flush()
+    return tenant, workspace, membership
+
+
+class EmailAuthError(RuntimeError):
+    pass
+
+
+async def register_with_email(
+    session: AsyncSession,
+    *,
+    email: str,
+    password: str,
+    first_name: str,
+    company: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> WebAuthBundle:
+    if not email or len(email.strip()) < 3:
+        raise EmailAuthError("invalid_email")
+    if not password or len(password) < 8:
+        raise EmailAuthError("password_too_short")
+
+    normalized_email = email.strip().lower()
+    await apply_session_rls_context(session, bootstrap=True)
+
+    existing = await session.execute(
+        select(AuthUser).where(AuthUser.email == normalized_email)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise EmailAuthError("email_already_registered")
+
+    auth_user = AuthUser(
+        email=normalized_email,
+        first_name=_clean_optional_text(first_name, 255),
+        company=_clean_optional_text(company, 255),
+        password_hash=hash_password(password),
+        last_login_at=utcnow(),
+    )
+    session.add(auth_user)
+    await session.flush()
+
+    tenant, workspace, membership = await _bootstrap_membership_email(
+        session,
+        auth_user=auth_user,
+    )
+
+    access_token = make_access_token(
+        user_id=auth_user.id,
+        tenant_id=tenant.id,
+        workspace_id=workspace.id,
+        role=membership.role,
+    )
+    refresh_token = await _issue_refresh_record(
+        session,
+        auth_user=auth_user,
+        tenant=tenant,
+        workspace=workspace,
+        role=membership.role,
+        user_agent=user_agent,
+        ip_address=ip_address,
+    )
+    onboarding = await _build_onboarding_state(session, tenant_id=tenant.id, workspace_id=workspace.id)
+    return WebAuthBundle(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        setup_token=None,
+        status="authorized",
+        user=_user_payload(auth_user),
+        tenant=_tenant_payload(tenant, role=membership.role),
+        workspace=_workspace_payload(workspace),
+        onboarding=onboarding,
+    )
+
+
+async def login_with_email(
+    session: AsyncSession,
+    *,
+    email: str,
+    password: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> WebAuthBundle:
+    normalized_email = email.strip().lower()
+    await apply_session_rls_context(session, bootstrap=True)
+
+    result = await session.execute(
+        select(AuthUser).where(AuthUser.email == normalized_email)
+    )
+    auth_user = result.scalar_one_or_none()
+    if auth_user is None:
+        raise EmailAuthError("invalid_credentials")
+
+    if not auth_user.password_hash:
+        raise EmailAuthError("use_telegram_login")
+
+    if not verify_password(password, auth_user.password_hash):
+        raise EmailAuthError("invalid_credentials")
+
+    auth_user.last_login_at = utcnow()
+
+    tenant, workspace, membership = await _bootstrap_membership_email(
+        session,
+        auth_user=auth_user,
+    )
+
+    access_token = make_access_token(
+        user_id=auth_user.id,
+        tenant_id=tenant.id,
+        workspace_id=workspace.id,
+        role=membership.role,
+    )
+    refresh_token = await _issue_refresh_record(
+        session,
+        auth_user=auth_user,
+        tenant=tenant,
+        workspace=workspace,
+        role=membership.role,
+        user_agent=user_agent,
+        ip_address=ip_address,
+    )
+    onboarding = await _build_onboarding_state(session, tenant_id=tenant.id, workspace_id=workspace.id)
+    return WebAuthBundle(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        setup_token=None,
+        status="authorized",
+        user=_user_payload(auth_user),
+        tenant=_tenant_payload(tenant, role=membership.role),
+        workspace=_workspace_payload(workspace),
+        onboarding=onboarding,
+    )
 
 
 async def verify_telegram_login(

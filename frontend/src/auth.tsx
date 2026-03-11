@@ -33,6 +33,8 @@ export type AuthState = {
 type AuthContextValue = AuthState & {
   verifyTelegram: (payload: Record<string, unknown>) => Promise<AuthBundle>;
   completeProfile: (email: string, company: string) => Promise<AuthBundle>;
+  loginWithEmail: (email: string, password: string) => Promise<AuthBundle>;
+  registerWithEmail: (email: string, password: string, firstName: string, company: string) => Promise<AuthBundle>;
   refresh: () => Promise<AuthBundle | null>;
   logout: () => Promise<void>;
 };
@@ -209,15 +211,39 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [applyBundle]);
 
+  const loginWithEmail = useCallback(
+    async (email: string, password: string) => {
+      const bundle = await apiFetch<AuthBundle>("/auth/login", {
+        method: "POST",
+        json: { email, password }
+      });
+      return applyBundle(bundle) as AuthBundle;
+    },
+    [applyBundle]
+  );
+
+  const registerWithEmail = useCallback(
+    async (email: string, password: string, firstName: string, company: string) => {
+      const bundle = await apiFetch<AuthBundle>("/auth/register", {
+        method: "POST",
+        json: { email, password, first_name: firstName, company }
+      });
+      return applyBundle(bundle) as AuthBundle;
+    },
+    [applyBundle]
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,
       verifyTelegram,
       completeProfile,
+      loginWithEmail,
+      registerWithEmail,
       refresh,
       logout
     }),
-    [state, verifyTelegram, completeProfile, refresh, logout]
+    [state, verifyTelegram, completeProfile, loginWithEmail, registerWithEmail, refresh, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

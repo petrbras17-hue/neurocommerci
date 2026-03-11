@@ -32,6 +32,7 @@ class AuthUser(Base):
     last_name = Column(String(255), nullable=True)
     email = Column(String(255), unique=True, nullable=True)
     company = Column(String(255), nullable=True)
+    password_hash = Column(String(255), nullable=True)  # bcrypt hash, null for Telegram-only users
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
