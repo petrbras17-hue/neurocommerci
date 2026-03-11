@@ -313,28 +313,49 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: none;
 }
 
-.auth-bot-btn {
-  width: 100%;
-  padding: 12px 20px;
-  background: #0088cc;
-  border: none;
+.auth-social-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.auth-social-btn {
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
-  color: #fff;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   transition: all 0.2s;
+  min-height: 48px;
 }
-.auth-bot-btn:hover:not(:disabled) {
+
+.auth-social-btn--bot {
+  background: #0088cc;
+  color: #fff;
+  border-color: #0088cc;
+}
+.auth-social-btn--bot:hover:not(:disabled) {
   background: #0099dd;
-  box-shadow: 0 0 20px rgba(0, 136, 204, 0.4);
+  box-shadow: 0 0 16px rgba(0, 136, 204, 0.4);
 }
-.auth-bot-btn:disabled {
+.auth-social-btn--bot:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.auth-social-btn--widget {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  cursor: default;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bot-auth-hint {
