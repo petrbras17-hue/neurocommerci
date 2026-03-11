@@ -573,11 +573,28 @@ async def verify_telegram_login(
     session: AsyncSession,
     payload: dict[str, Any],
     *,
+    bot_token: str | None = None,
+    skip_hash_check: bool = False,
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> WebAuthBundle:
     await apply_session_rls_context(session, bootstrap=True)
-    telegram_identity = verify_telegram_widget_payload(payload)
+    if skip_hash_check:
+        # Bot-based auth: payload already verified by the bot process
+        try:
+            telegram_user_id = int(payload["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TelegramAuthError("invalid_telegram_user_id") from exc
+        telegram_identity = {
+            "telegram_user_id": telegram_user_id,
+            "telegram_username": _clean_optional_text(payload.get("username"), 255),
+            "first_name": _clean_optional_text(payload.get("first_name"), 255),
+            "last_name": _clean_optional_text(payload.get("last_name"), 255),
+            "photo_url": None,
+            "auth_date": int(utcnow().timestamp()),
+        }
+    else:
+        telegram_identity = verify_telegram_widget_payload(payload)
     auth_result = await session.execute(
         select(AuthUser).where(AuthUser.telegram_user_id == int(telegram_identity["telegram_user_id"]))
     )

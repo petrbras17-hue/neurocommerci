@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # --- Admin Bot (опционально) ---
     ADMIN_BOT_TOKEN: str = Field(default="")
     ADMIN_BOT_USERNAME: str = Field(default="dartvpn_neurocom_bot")
+
+    # --- Auth Bot (Telegram bot-based login) ---
+    AUTH_BOT_TOKEN: str = Field(default="")
+    AUTH_BOT_USERNAME: str = Field(default="dartvpn_neurocom_bot")
     ADMIN_TELEGRAM_ID: int = Field(default=0)
 
     # --- Google Gemini API (исполнитель — генерация текста) ---

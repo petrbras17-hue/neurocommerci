@@ -313,6 +313,42 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: none;
 }
 
+.auth-bot-btn {
+  width: 100%;
+  padding: 12px 20px;
+  background: #0088cc;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+.auth-bot-btn:hover:not(:disabled) {
+  background: #0099dd;
+  box-shadow: 0 0 20px rgba(0, 136, 204, 0.4);
+}
+.auth-bot-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.bot-auth-hint {
+  margin-top: 8px;
+  padding: 10px 14px;
+  background: rgba(0, 136, 204, 0.1);
+  border: 1px solid rgba(0, 136, 204, 0.3);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  text-align: center;
+}
+
 /* ===== Shell Layout ===== */
 
 .shell {

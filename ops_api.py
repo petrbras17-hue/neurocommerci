@@ -67,6 +67,13 @@ from core.web_auth import (
     verify_telegram_login,
 )
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
+from core.telegram_bot_auth import (
+    consume_pending_auth,
+    generate_auth_code,
+    get_pending_auth,
+    start_bot_polling,
+    stop_bot_polling,
+)
 from core.task_queue import task_queue
 from storage.models import (
     Account,
@@ -1096,6 +1103,10 @@ async def lifespan(_: FastAPI):
                 )
         except Exception as exc:  # pragma: no cover - runtime fallback
             log.warning(f"assistant worker startup skipped: {exc}")
+        try:
+            await start_bot_polling(settings.AUTH_BOT_TOKEN)
+        except Exception as exc:  # pragma: no cover
+            log.warning(f"auth bot startup skipped: {exc}")
         yield
     finally:
         stop_event.set()
@@ -1103,6 +1114,7 @@ async def lifespan(_: FastAPI):
             task.cancel()
         if worker_tasks:
             await asyncio.gather(*worker_tasks, return_exceptions=True)
+        await stop_bot_polling()
         await task_queue.close()
         await dispose_engine()
 
@@ -1362,6 +1374,66 @@ async def auth_login(payload: EmailLoginPayload, request: Request) -> JSONRespon
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
+        raise
+
+
+@app.post("/auth/telegram/bot-start")
+async def auth_telegram_bot_start(request: Request) -> JSONResponse:
+    """Generate an auth code and return the bot deep link."""
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
+    if not settings.AUTH_BOT_TOKEN:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="bot_auth_not_configured")
+    code = generate_auth_code()
+    bot_username = settings.AUTH_BOT_USERNAME
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "code": code,
+            "bot_username": bot_username,
+            "deep_link": f"https://t.me/{bot_username}?start=auth_{code}",
+        },
+    )
+
+
+@app.get("/auth/telegram/bot-check")
+async def auth_telegram_bot_check(code: str, request: Request) -> JSONResponse:
+    """Poll to check if the bot has confirmed the auth code."""
+    _check_rate_limit("auth_poll", _client_ip(request), max_calls=60, window_seconds=60)
+    pending = get_pending_auth(code)
+    if not pending:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "expired"})
+    if not pending.confirmed:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "pending"})
+
+    # Consume the auth data and create/login the user
+    tg_user = consume_pending_auth(code)
+    if not tg_user:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "expired"})
+
+    # Use existing telegram verify flow to create/login user
+    try:
+        async with async_session() as session:
+            async with session.begin():
+                bundle = await verify_telegram_login(
+                    session,
+                    payload=tg_user,
+                    bot_token=settings.AUTH_BOT_TOKEN,
+                    skip_hash_check=True,
+                    user_agent=request.headers.get("user-agent"),
+                    ip_address=request.client.host if request.client else None,
+                )
+        resp_payload = _auth_bundle_payload(bundle)
+        response = JSONResponse(status_code=status.HTTP_200_OK, content=resp_payload)
+        if bundle.refresh_token:
+            _set_refresh_cookie(response, request, bundle.refresh_token)
+        return response
+    except TelegramAuthError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "error", "detail": str(exc)},
+        )
+    except Exception:
+        log.exception("bot auth check failed for code=%s", code[:8] if code else "?")
         raise
 
 

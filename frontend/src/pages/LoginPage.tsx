@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { TelegramLoginWidget } from "../components/TelegramLoginWidget";
 import { useAuth } from "../auth";
@@ -23,6 +23,12 @@ export function LoginPage() {
   const [regPasswordConfirm, setRegPasswordConfirm] = useState("");
   const [regError, setRegError] = useState("");
   const [regBusy, setRegBusy] = useState(false);
+
+  // Bot auth state
+  const [botAuthBusy, setBotAuthBusy] = useState(false);
+  const [botAuthCode, setBotAuthCode] = useState<string | null>(null);
+  const [botAuthError, setBotAuthError] = useState("");
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   if (auth.status === "authenticated") {
     return <Navigate to="/dashboard" replace />;
@@ -78,6 +84,55 @@ export function LoginPage() {
       setRegBusy(false);
     }
   };
+
+  const handleBotAuth = async () => {
+    setBotAuthError("");
+    setBotAuthBusy(true);
+    try {
+      const result = await auth.startBotAuth();
+      setBotAuthCode(result.code);
+      // Open bot deep link in new tab
+      window.open(result.deep_link, "_blank");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "bot_auth_failed";
+      setBotAuthError(msg);
+      setBotAuthBusy(false);
+    }
+  };
+
+  // Poll for bot auth confirmation
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!botAuthCode) {
+      return;
+    }
+    const poll = setInterval(() => {
+      void auth.checkBotAuth(botAuthCode).then((bundle) => {
+        if (bundle) {
+          // Auth successful — navigation will happen via auth state change
+          clearInterval(poll);
+          setBotAuthBusy(false);
+          setBotAuthCode(null);
+        }
+      }).catch(() => {
+        // Silently retry
+      });
+    }, 2000);
+    pollRef.current = poll;
+
+    // Stop polling after 5 minutes
+    const timeout = setTimeout(() => {
+      clearInterval(poll);
+      setBotAuthBusy(false);
+      setBotAuthCode(null);
+      setBotAuthError("Время ожидания истекло. Попробуйте снова.");
+    }, 300_000);
+
+    return () => {
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
+  }, [botAuthCode, auth]);
 
   return (
     <div className="auth-screen">
@@ -204,6 +259,28 @@ export function LoginPage() {
         )}
 
         <div className="auth-divider"><span>или</span></div>
+
+        <button
+          className="auth-bot-btn"
+          type="button"
+          disabled={botAuthBusy}
+          onClick={() => void handleBotAuth()}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: 8 }}>
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+          </svg>
+          {botAuthBusy
+            ? (botAuthCode ? "Ожидаем подтверждение в боте…" : "Подключаем…")
+            : "Войти через Telegram бот"
+          }
+        </button>
+        {botAuthError ? <div className="auth-error" style={{ marginTop: 8 }}>{botAuthError}</div> : null}
+        {botAuthCode ? (
+          <div className="bot-auth-hint">
+            Нажмите START в боте @dartvpn_neurocom_bot, чтобы завершить вход.
+            <br />Авторизация произойдёт автоматически.
+          </div>
+        ) : null}
 
         <TelegramLoginWidget />
       </div>

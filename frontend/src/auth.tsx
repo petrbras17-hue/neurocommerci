@@ -30,11 +30,19 @@ export type AuthState = {
   profile: AuthBundle | null;
 };
 
+type BotAuthStart = {
+  code: string;
+  bot_username: string;
+  deep_link: string;
+};
+
 type AuthContextValue = AuthState & {
   verifyTelegram: (payload: Record<string, unknown>) => Promise<AuthBundle>;
   completeProfile: (email: string, company: string) => Promise<AuthBundle>;
   loginWithEmail: (email: string, password: string) => Promise<AuthBundle>;
   registerWithEmail: (email: string, password: string, firstName: string, company: string) => Promise<AuthBundle>;
+  startBotAuth: () => Promise<BotAuthStart>;
+  checkBotAuth: (code: string) => Promise<AuthBundle | null>;
   refresh: () => Promise<AuthBundle | null>;
   logout: () => Promise<void>;
 };
@@ -233,6 +241,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [applyBundle]
   );
 
+  const startBotAuth = useCallback(async () => {
+    return apiFetch<BotAuthStart>("/auth/telegram/bot-start", { method: "POST" });
+  }, []);
+
+  const checkBotAuth = useCallback(
+    async (code: string) => {
+      const result = await apiFetch<Record<string, unknown>>(`/auth/telegram/bot-check?code=${encodeURIComponent(code)}`);
+      const s = String(result.status || "");
+      if (s === "pending" || s === "expired" || s === "error") {
+        return null;
+      }
+      return applyBundle(result as unknown as AuthBundle) as AuthBundle;
+    },
+    [applyBundle]
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,
@@ -240,10 +264,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       completeProfile,
       loginWithEmail,
       registerWithEmail,
+      startBotAuth,
+      checkBotAuth,
       refresh,
       logout
     }),
-    [state, verifyTelegram, completeProfile, loginWithEmail, registerWithEmail, refresh, logout]
+    [state, verifyTelegram, completeProfile, loginWithEmail, registerWithEmail, startBotAuth, checkBotAuth, refresh, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
