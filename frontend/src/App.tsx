@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./layout/AppShell";
 import { useAuth } from "./auth";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -29,8 +29,9 @@ function ProtectedRoute() {
 }
 
 export default function App() {
+  const location = useLocation();
   return (
-    <ErrorBoundary>
+    <ErrorBoundary locationKey={location.pathname}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<LoginPage />} />

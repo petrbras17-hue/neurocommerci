@@ -291,18 +291,27 @@ log = logging.getLogger("uvicorn.error")
 # ---------------------------------------------------------------------------
 
 _rate_limit_buckets: dict[tuple[str, str], collections.deque] = collections.defaultdict(collections.deque)
+_rate_limit_last_gc = time.monotonic()
+_RATE_LIMIT_MAX_BUCKETS = 10_000
+_RATE_LIMIT_GC_INTERVAL = 300  # seconds
 
 
 def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_seconds: int) -> None:
-    """Raise HTTP 429 if the caller has exceeded max_calls within window_seconds.
-
-    Rate limiting is disabled in development and test environments to avoid
-    breaking test suites that call auth endpoints multiple times from the same
-    in-process address.
-    """
+    """Raise HTTP 429 if the caller has exceeded max_calls within window_seconds."""
     if str(settings.APP_ENV or "").strip().lower() in {"development", "test", "testing"}:
         return
+    global _rate_limit_last_gc
     now = time.monotonic()
+    # Periodic garbage collection of stale buckets
+    if now - _rate_limit_last_gc > _RATE_LIMIT_GC_INTERVAL:
+        _rate_limit_last_gc = now
+        cutoff_gc = now - 600  # remove buckets idle for 10 min
+        stale = [k for k, v in _rate_limit_buckets.items() if not v or v[-1] < cutoff_gc]
+        for k in stale:
+            del _rate_limit_buckets[k]
+    # Cap total buckets to prevent memory exhaustion
+    if len(_rate_limit_buckets) > _RATE_LIMIT_MAX_BUCKETS:
+        return  # degrade gracefully: skip limiting rather than OOM
     bucket = _rate_limit_buckets[(scope, identifier)]
     cutoff = now - window_seconds
     while bucket and bucket[0] < cutoff:
@@ -316,9 +325,8 @@ def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_second
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # Use direct connection IP — do not trust X-Forwarded-For to prevent spoofing.
+    # If behind a trusted reverse proxy, configure proxy middleware instead.
     return request.client.host if request.client else "unknown"
 
 
@@ -1778,27 +1786,45 @@ async def app_job_cancel(
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    """Cancel a queued or processing job that belongs to the current tenant."""
-    job = (
-        await session.execute(
-            select(AppJob).where(
-                AppJob.id == job_id,
-                AppJob.tenant_id == tenant_context.tenant_id,
-            )
+    """Cancel a queued or processing job that belongs to the current tenant.
+
+    Uses an atomic UPDATE with status filter to avoid TOCTOU race conditions.
+    """
+    from sqlalchemy import update as sa_update
+    from core.assistant_jobs import _job_response
+
+    now = utcnow()
+    result = await session.execute(
+        sa_update(AppJob)
+        .where(
+            AppJob.id == job_id,
+            AppJob.tenant_id == tenant_context.tenant_id,
+            AppJob.status.in_(("queued", "processing")),
         )
-    ).scalar_one_or_none()
-    if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
-    if job.status not in ("queued", "processing"):
+        .values(status="cancelled", completed_at=now, updated_at=now)
+    )
+    if result.rowcount == 0:
+        # Either not found or already completed/cancelled
+        job = (
+            await session.execute(
+                select(AppJob).where(
+                    AppJob.id == job_id,
+                    AppJob.tenant_id == tenant_context.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"job_cannot_be_cancelled_status_{job.status}",
         )
-    job.status = "cancelled"
-    job.completed_at = utcnow()
-    job.updated_at = utcnow()
     await session.flush()
-    from core.assistant_jobs import _job_response
+    job = (
+        await session.execute(
+            select(AppJob).where(AppJob.id == job_id)
+        )
+    ).scalar_one()
     return _job_response(job)
 
 

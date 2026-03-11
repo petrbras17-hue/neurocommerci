@@ -59,9 +59,14 @@ function buildHighlightRe(query: string): RegExp | null {
   return new RegExp(`(${escaped})`, "gi");
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function highlight(text: string, re: RegExp | null): string {
-  if (!re) return text;
-  return text.replace(re, "<mark>$1</mark>");
+  const safe = escapeHtml(text);
+  if (!re) return safe;
+  return safe.replace(re, "<mark>$1</mark>");
 }
 
 // ── constants ────────────────────────────────────────────────────────────────
