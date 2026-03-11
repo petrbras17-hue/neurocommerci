@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `2c77889` |
+| Last committed HEAD | `f3bc053` |
 | VPS safe branch | `main` |
-| VPS safe commit | `2c77889` |
+| VPS safe commit | `f3bc053` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 5 (Security + Deploy)` |
-| Next planned sprint | `Sprint 6 (Product Stability & Testing)` |
+| Current completed sprint | `Sprint 6 (Bug Fix + Unified Workers)` |
+| Next planned sprint | `Sprint 7 (Product Stability & Testing)` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -42,6 +42,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-11 | Sprint 4 hardening | `sprint/3-telegram-first-auth-shell` | `working-tree` | API pagination, job cancel, rate limiting, health endpoint | Added limit/offset pagination to GET /v1/web/accounts, /v1/creative/drafts, /v1/assistant/thread, /v1/channel-map; added DELETE /v1/jobs/{job_id} cancellation (queued/processing only); added in-memory rate limiter (auth: 10/min/IP, api: 60/min/tenant, public: 30/min/IP, bypassed in dev/test); added GET /health with real DB and Redis probes; added RequestValidationError handler; added TaskQueue.ping(). All 13 tests pass. | Green | Not deployed | Commit and deploy to VPS. |
 
 | 2026-03-11 | Email/password auth | `sprint/3-telegram-first-auth-shell` | `working-tree` | Email/password registration and login | Added `password_hash` column to `auth_users` (migration 20260311_14), `hash_password`/`verify_password`/`register_with_email`/`login_with_email` in `core/web_auth.py`, `POST /auth/register` (5/min rate limit, 201) and `POST /auth/login` (10/min, 200) in `ops_api.py`, updated `auth.tsx` with `loginWithEmail`/`registerWithEmail`, replaced `LoginPage.tsx` with dual-mode login+register form with Telegram as optional fallback, added auth form CSS. All 20 tests pass, `tsc --noEmit` clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`, smoke-test `/auth/register` and `/auth/login`. |
+
+| 2026-03-11 | Sprint 6 Bug Fix + Workers | `main` | `f3bc053` | Bug fixes + unified worker + SettingsPage | Fixed React #300 (JSX comments in CreativePage/ContextPage), warmup form active_hours_start string→int, added unified job worker for all 11 queue types in farm_jobs.py, created SettingsPage (0 placeholders left), added Scrum Master agent. All deployed to VPS. | Green | Green | Run product stability testing with DartVPN bot. |
 
 ## Update Rules
 
