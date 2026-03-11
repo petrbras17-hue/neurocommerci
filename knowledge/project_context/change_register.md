@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `f3bc053` |
+| Last committed HEAD | `80c9053` |
 | VPS safe branch | `main` |
-| VPS safe commit | `f3bc053` |
+| VPS safe commit | `80c9053` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -44,6 +44,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-11 | Email/password auth | `sprint/3-telegram-first-auth-shell` | `working-tree` | Email/password registration and login | Added `password_hash` column to `auth_users` (migration 20260311_14), `hash_password`/`verify_password`/`register_with_email`/`login_with_email` in `core/web_auth.py`, `POST /auth/register` (5/min rate limit, 201) and `POST /auth/login` (10/min, 200) in `ops_api.py`, updated `auth.tsx` with `loginWithEmail`/`registerWithEmail`, replaced `LoginPage.tsx` with dual-mode login+register form with Telegram as optional fallback, added auth form CSS. All 20 tests pass, `tsc --noEmit` clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`, smoke-test `/auth/register` and `/auth/login`. |
 
 | 2026-03-11 | Sprint 6 Bug Fix + Workers | `main` | `f3bc053` | Bug fixes + unified worker + SettingsPage | Fixed React #300 (JSX comments in CreativePage/ContextPage), warmup form active_hours_start string→int, added unified job worker for all 11 queue types in farm_jobs.py, created SettingsPage (0 placeholders left), added Scrum Master agent. All deployed to VPS. | Green | Green | Run product stability testing with DartVPN bot. |
+
+| 2026-03-12 | Platform Intelligence | `main` | `80c9053` | Smart Commenter + Channel Indexer + Auth Sessions | Added core/smart_commenter.py (PostAnalyzer, CommentGenerator, CommentStrategy, CommentOrchestrator with emoji-first trick and never-first rule), core/channel_indexer.py (Telethon channel metadata fetcher, bulk indexing, language detection, spam scoring), scripts/parse_cis_channels.py (CIS channel bootstrap CLI), migration 20260311_18 (topic_tags JSONB, spam_score, last_refreshed_at on channel_map_entries), auth session management (list/revoke/revoke-all in web_auth.py + ops_api.py), SettingsPage active sessions UI. All 13 tests pass, deployed to VPS. | Green | Green | Parse initial CIS channels batch, wire smart commenter into farm threads, start product stability testing. |
 
 ## Update Rules
 
