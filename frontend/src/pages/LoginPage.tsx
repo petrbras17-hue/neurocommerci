@@ -15,11 +15,11 @@ export function LoginPage() {
   return (
     <div className="auth-screen">
       <div className="auth-card">
-        <div className="eyebrow">Sprint 3 • Telegram-first auth</div>
-        <h1>Вход через Telegram</h1>
+        <div className="eyebrow">NEURO COMMENTING</div>
+        <h1>Вход в платформу</h1>
         <p className="auth-copy">
-          Войдите через основной бот, затем заполните email и компанию. После этого появится ваш tenant,
-          workspace и web onboarding для аккаунтов.
+          Авторизуйтесь через Telegram для доступа к вашему рабочему пространству.
+          После входа заполните email и название компании.
         </p>
         <TelegramLoginWidget />
       </div>

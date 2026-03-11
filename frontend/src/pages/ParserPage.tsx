@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { channelDbApi, parserApi, ChannelDatabase, ChannelEntry, ParsingJob } from "../api";
+import { apiFetch, channelDbApi, parserApi, ChannelDatabase, ChannelEntry, ParsingJob } from "../api";
 import { useAuth } from "../auth";
 
 type AccountRow = {
@@ -12,8 +12,6 @@ type AccountsResponse = {
   items: AccountRow[];
   total: number;
 };
-
-import { apiFetch } from "../api";
 
 const JOB_STATUS_LABELS: Record<string, string> = {
   pending: "Ожидание",

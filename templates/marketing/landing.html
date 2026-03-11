@@ -10,11 +10,18 @@
   <meta property="og:type" content="website">
   <meta property="og:image" content="{{ og_image }}">
   <meta property="og:url" content="{{ base_url }}{{ request.url.path }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static_css_url }}">
 </head>
 <body>
-  <div class="site-backdrop"></div>
-  <header class="page-shell">
+
+<div class="site-backdrop"></div>
+
+<!-- NAV -->
+<header>
+  <div class="page-shell">
     <nav class="top-nav">
       <a href="/" class="brand">
         <span class="brand-mark">NC</span>
@@ -26,15 +33,32 @@
         <a href="/edtech">EdTech</a>
         <a href="/saas">SaaS</a>
       </div>
-      <a href="#lead-form" class="nav-cta">Записаться</a>
+      <a href="#lead-form" class="nav-cta">Получить демо</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </nav>
-  </header>
+    <nav class="mobile-nav" id="mobile-nav">
+      <a href="/">Главная</a>
+      <a href="/ecom">Ecom</a>
+      <a href="/edtech">EdTech</a>
+      <a href="/saas">SaaS</a>
+      <a href="#lead-form" class="nav-cta">Получить демо</a>
+    </nav>
+  </div>
+</header>
 
-  <main class="page-shell">
-    <section class="hero">
+<main>
+
+  <!-- HERO -->
+  <section class="page-shell">
+    <div class="hero">
+
       <div class="hero-copy">
-        <p class="eyebrow">Premium Telegram Growth OS</p>
-        <h1>{{ page.headline }}</h1>
+        <p class="eyebrow">Telegram Growth OS</p>
+        <h1>{{ page.headline }}<span class="cursor"></span></h1>
         <p class="subheadline">{{ page.subheadline }}</p>
 
         <div class="trust-strip">
@@ -51,7 +75,15 @@
 
         <div class="hero-actions">
           <a href="#lead-form" class="primary-cta">Получить демо</a>
-          <a href="#pricing" class="secondary-cta">Посмотреть тарифы</a>
+          <a href="#pricing" class="secondary-cta">Тарифы</a>
+        </div>
+
+        <div class="terminal-hero" aria-hidden="true">
+          <div><span class="t-prompt">$ </span><span class="t-cmd">nc init --workspace=growth-team</span></div>
+          <div><span class="t-out">connecting to Telegram discovery engine...</span></div>
+          <div><span class="t-ok">✓ parser online</span><span class="t-out"> · channels indexed: 1,247</span></div>
+          <div><span class="t-ok">✓ ai router ready</span><span class="t-out"> · model: manager tier</span></div>
+          <div><span class="t-ok">✓ workspace shell</span><span class="t-out"> · tenant: {{ page.slug }}</span></div>
         </div>
       </div>
 
@@ -65,11 +97,11 @@
           {% endfor %}
         </div>
 
-        <div class="form-panel">
+        <div class="form-panel" id="lead-form">
           <p class="eyebrow">Waitlist</p>
           <h2>Получить доступ и growth-разбор</h2>
-          <p class="panel-copy">Оставьте контакты. Мы ответим в течение 48 часов и покажем, как применить продукт под ваш сценарий роста.</p>
-          <form id="lead-form" class="lead-form">
+          <p class="panel-copy">Оставьте контакты — ответим за 48 часов и покажем продукт под ваш сценарий роста.</p>
+          <form class="lead-form" id="lead-form-el">
             <input type="text" name="name" placeholder="Имя" required>
             <input type="email" name="email" placeholder="Email" required>
             <input type="text" name="company" placeholder="Компания" required>
@@ -87,110 +119,174 @@
           </form>
         </div>
       </aside>
-    </section>
 
-    <section class="story-grid">
-      <div class="section-head">
-        <p class="eyebrow">Почему это работает</p>
-        <h2>{{ page.segment_title }}</h2>
-      </div>
-      <div class="story-points">
-        {% for point in page.segment_points %}
-        <article class="story-card">
-          <span class="story-index">0{{ loop.index }}</span>
-          <p>{{ point }}</p>
-        </article>
-        {% endfor %}
-      </div>
-    </section>
+    </div>
+  </section>
 
-    <section class="section-grid">
-      <div class="section-head">
-        <p class="eyebrow">Что внутри</p>
-        <h2>Один премиальный контур для discovery, кампаний и роста</h2>
-      </div>
-      <div class="feature-grid">
-        {% for item in features %}
-        <article class="feature-card">
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.body }}</p>
-        </article>
-        {% endfor %}
-      </div>
-    </section>
+  <!-- STORY / WHY IT WORKS -->
+  <section class="story-grid page-shell">
+    <div class="section-head">
+      <p class="eyebrow">Почему это работает</p>
+      <h2>{{ page.segment_title }}</h2>
+    </div>
+    <div class="story-points">
+      {% for point in page.segment_points %}
+      <article class="story-card">
+        <span class="story-index">0{{ loop.index }}</span>
+        <p>{{ point }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
 
-    <section class="section-grid" id="pricing">
-      <div class="section-head">
-        <p class="eyebrow">Тарифы</p>
-        <h2>Три уровня для запуска и масштабирования growth-команды</h2>
-      </div>
-      <div class="pricing-grid">
-        {% for plan in pricing %}
-        <article class="pricing-card{% if plan.featured %} featured{% endif %}">
-          {% if plan.featured %}
-          <span class="pricing-badge">Популярный выбор</span>
-          {% endif %}
-          <h3>{{ plan.name }}</h3>
-          <p class="price">{{ plan.price }}</p>
-          <p class="plan-note">{{ plan.note }}</p>
-          <ul class="plan-bullets">
-            {% for bullet in plan.bullets %}
-            <li>{{ bullet }}</li>
-            {% endfor %}
-          </ul>
-          <a href="#lead-form" class="plan-cta">Обсудить внедрение</a>
-        </article>
-        {% endfor %}
-      </div>
-    </section>
+  <!-- FEATURES -->
+  <section class="section-grid page-shell">
+    <div class="section-head">
+      <p class="eyebrow">Что внутри</p>
+      <h2>Один контур для discovery, кампаний и роста</h2>
+    </div>
+    <div class="feature-grid">
+      {% for item in features %}
+      <article class="feature-card">
+        <h3>{{ item.title }}</h3>
+        <p>{{ item.body }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
 
-    <section class="section-grid faq-grid">
-      <div class="section-head">
-        <p class="eyebrow">FAQ</p>
-        <h2>Частые вопросы перед внедрением</h2>
-      </div>
-      <div class="faq-list">
-        {% for question, answer in faq %}
-        <details class="faq-item">
-          <summary>{{ question }}</summary>
-          <p>{{ answer }}</p>
-        </details>
-        {% endfor %}
-      </div>
-    </section>
+  <!-- PRICING -->
+  <section class="section-grid page-shell" id="pricing">
+    <div class="section-head">
+      <p class="eyebrow">Тарифы</p>
+      <h2>Три уровня для запуска и масштабирования growth-команды</h2>
+    </div>
+    <div class="pricing-grid">
+      {% for plan in pricing %}
+      <article class="pricing-card{% if plan.featured %} featured{% endif %}">
+        {% if plan.featured %}
+        <span class="pricing-badge">Популярный выбор</span>
+        {% endif %}
+        <h3>{{ plan.name }}</h3>
+        <p class="price">{{ plan.price }}</p>
+        <p class="plan-note">{{ plan.note }}</p>
+        <ul class="plan-bullets">
+          {% for bullet in plan.bullets %}
+          <li>{{ bullet }}</li>
+          {% endfor %}
+        </ul>
+        <a href="#lead-form" class="plan-cta">Обсудить внедрение</a>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
 
-    <section class="cta-banner">
+  <!-- FAQ -->
+  <section class="section-grid faq-grid page-shell">
+    <div class="section-head">
+      <p class="eyebrow">FAQ</p>
+      <h2>Частые вопросы перед внедрением</h2>
+    </div>
+    <div class="faq-list">
+      {% for question, answer in faq %}
+      <details class="faq-item">
+        <summary>{{ question }}</summary>
+        <p>{{ answer }}</p>
+      </details>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <div class="page-shell">
+    <div class="cta-banner">
       <div>
-        <p class="eyebrow">Final CTA</p>
+        <p class="eyebrow">Следующий шаг</p>
         <h2>Соберите Telegram growth machine, а не набор разрозненных действий</h2>
         <p>{{ success_message }}</p>
       </div>
       <a href="#lead-form" class="cta-link">Оставить заявку</a>
-    </section>
-  </main>
+    </div>
+  </div>
 
-  <script>
-    const form = document.getElementById("lead-form");
-    const message = document.getElementById("form-message");
-    const params = new URLSearchParams(window.location.search);
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      message.textContent = "Отправляем...";
-      const payload = Object.fromEntries(new FormData(form).entries());
-      payload.utm_source = params.get("utm_source") || "";
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="page-shell">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
+        NEURO COMMENTING &copy; 2026
+      </div>
+      <div class="footer-links">
+        <a href="/">Главная</a>
+        <a href="/ecom">Ecom</a>
+        <a href="/edtech">EdTech</a>
+        <a href="/saas">SaaS</a>
+        <a href="#lead-form">Заявка</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Hamburger toggle
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", () => {
+    mobileNav.classList.toggle("open");
+  });
+  // Close mobile nav when a link inside it is clicked
+  mobileNav.querySelectorAll("a").forEach(function(link) {
+    link.addEventListener("click", function() {
+      mobileNav.classList.remove("open");
+    });
+  });
+
+  // Lead form submission
+  const form = document.getElementById("lead-form-el");
+  const message = document.getElementById("form-message");
+  const params = new URLSearchParams(window.location.search);
+
+  form.addEventListener("submit", async function(event) {
+    event.preventDefault();
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    btn.textContent = "Отправляем...";
+    message.textContent = "";
+    message.className = "form-message";
+
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.utm_source = params.get("utm_source") || "";
+
+    try {
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json().catch(() => ({}));
+      const data = await response.json().catch(function() { return {}; });
+
       if (!response.ok) {
-        message.textContent = "Не удалось отправить форму. Проверьте поля и попробуйте ещё раз.";
+        message.textContent = data.detail || "Не удалось отправить форму. Проверьте поля и попробуйте ещё раз.";
+        message.className = "form-message error";
+        btn.disabled = false;
+        btn.textContent = "Отправить заявку";
         return;
       }
+
       message.textContent = data.message || "{{ success_message }}";
       form.reset();
-    });
-  </script>
+      btn.textContent = "Заявка отправлена";
+    } catch (err) {
+      message.textContent = "Ошибка соединения. Попробуйте позже.";
+      message.className = "form-message error";
+      btn.disabled = false;
+      btn.textContent = "Отправить заявку";
+    }
+  });
+</script>
+
 </body>
 </html>

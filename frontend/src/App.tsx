@@ -13,6 +13,8 @@ import { ChannelMapPage } from "./pages/ChannelMapPage";
 import { CampaignsPage } from "./pages/CampaignsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { FarmPage } from "./pages/FarmPage";
+import { ParserPage } from "./pages/ParserPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -43,7 +45,7 @@ export default function App() {
             <Route path="/assistant" element={<AssistantPage />} />
             <Route path="/context" element={<ContextPage />} />
             <Route path="/creative" element={<CreativePage />} />
-            <Route path="/farm" element={<PlaceholderPage title="Фермы" description="Управление фермами комментинга — запуск, мониторинг потоков и автоматическая ротация аккаунтов." />} />
+            <Route path="/farm" element={<FarmPage />} />
             <Route path="/warmup" element={<PlaceholderPage title="Прогрев" description="Автоматический прогрев аккаунтов перед запуском — имитация живого поведения." />} />
             <Route path="/health" element={<PlaceholderPage title="Здоровье" description="Мониторинг здоровья аккаунтов — scoring, карантин, автоматические апелляции." />} />
             <Route path="/reactions" element={<PlaceholderPage title="Реакции" description="Массовая расстановка реакций на посты в целевых каналах." />} />
@@ -52,7 +54,7 @@ export default function App() {
             <Route path="/user-parser" element={<PlaceholderPage title="Парсер юзеров" description="Парсинг аудитории каналов — сбор метаданных пользователей." />} />
             <Route path="/folders" element={<PlaceholderPage title="Папки" description="Управление Telegram-папками для организации каналов." />} />
             <Route path="/channel-map" element={<ChannelMapPage />} />
-            <Route path="/parser" element={<PlaceholderPage title="Парсер каналов" description="Поиск и анализ каналов по ключевым словам — AI spam rating." />} />
+            <Route path="/parser" element={<ParserPage />} />
             <Route path="/profiles" element={<PlaceholderPage title="Фабрика профилей" description="ИИ-генерация профилей — аватары, имена, биографии, каналы." />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />

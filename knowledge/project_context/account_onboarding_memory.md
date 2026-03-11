@@ -682,3 +682,283 @@
 - actor: `web:account_note`
 - notes: Обновлена ручная заметка оператора.
 
+## 2026-03-11 01:13:16 UTC | +79991234567 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.session.
+
+## 2026-03-11 01:13:16 UTC | +79991234567 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.json.
+
+## 2026-03-11 01:13:16 UTC | +79991234567 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:13:16 UTC | +79991234567 | run #1
+- step: `bind_proxy` (bind proxy)
+- result: `bound`
+- source: `web` / `web`
+- actor: `web:bind_proxy`
+- notes: Прокси proxy.example.com:1080 привязан к аккаунту.
+
+## 2026-03-11 01:13:17 UTC | +79990000001 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.session.
+
+## 2026-03-11 01:13:17 UTC | +79990000001 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.json.
+
+## 2026-03-11 01:13:17 UTC | +79990000001 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:13:17 UTC | +79990000001 | run #1
+- step: `manual_note` (Ручная заметка обновлена)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_note`
+- notes: Обновлена ручная заметка оператора.
+
+## 2026-03-11 01:17:37 UTC | +79991234567 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.session.
+
+## 2026-03-11 01:17:37 UTC | +79991234567 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.json.
+
+## 2026-03-11 01:17:37 UTC | +79991234567 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:17:37 UTC | +79991234567 | run #1
+- step: `bind_proxy` (bind proxy)
+- result: `bound`
+- source: `web` / `web`
+- actor: `web:bind_proxy`
+- notes: Прокси proxy.example.com:1080 привязан к аккаунту.
+
+## 2026-03-11 01:17:38 UTC | +79990000001 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.session.
+
+## 2026-03-11 01:17:38 UTC | +79990000001 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.json.
+
+## 2026-03-11 01:17:38 UTC | +79990000001 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:17:38 UTC | +79990000001 | run #1
+- step: `manual_note` (Ручная заметка обновлена)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_note`
+- notes: Обновлена ручная заметка оператора.
+
+## 2026-03-11 01:21:14 UTC | +79991234567 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.session.
+
+## 2026-03-11 01:21:14 UTC | +79991234567 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.json.
+
+## 2026-03-11 01:21:14 UTC | +79991234567 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:21:14 UTC | +79991234567 | run #1
+- step: `bind_proxy` (bind proxy)
+- result: `bound`
+- source: `web` / `web`
+- actor: `web:bind_proxy`
+- notes: Прокси proxy.example.com:1080 привязан к аккаунту.
+
+## 2026-03-11 01:21:15 UTC | +79990000001 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.session.
+
+## 2026-03-11 01:21:15 UTC | +79990000001 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.json.
+
+## 2026-03-11 01:21:15 UTC | +79990000001 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:21:15 UTC | +79990000001 | run #1
+- step: `manual_note` (Ручная заметка обновлена)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_note`
+- notes: Обновлена ручная заметка оператора.
+
+## 2026-03-11 01:33:04 UTC | +79991234567 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.session.
+
+## 2026-03-11 01:33:04 UTC | +79991234567 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.json.
+
+## 2026-03-11 01:33:04 UTC | +79991234567 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:33:04 UTC | +79991234567 | run #1
+- step: `bind_proxy` (bind proxy)
+- result: `bound`
+- source: `web` / `web`
+- actor: `web:bind_proxy`
+- notes: Прокси proxy.example.com:1080 привязан к аккаунту.
+
+## 2026-03-11 01:33:05 UTC | +79990000001 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.session.
+
+## 2026-03-11 01:33:05 UTC | +79990000001 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.json.
+
+## 2026-03-11 01:33:05 UTC | +79990000001 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:33:05 UTC | +79990000001 | run #1
+- step: `manual_note` (Ручная заметка обновлена)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_note`
+- notes: Обновлена ручная заметка оператора.
+
+## 2026-03-11 01:36:15 UTC | +79991234567 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.session.
+
+## 2026-03-11 01:36:15 UTC | +79991234567 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79991234567.json.
+
+## 2026-03-11 01:36:15 UTC | +79991234567 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:36:15 UTC | +79991234567 | run #1
+- step: `bind_proxy` (bind proxy)
+- result: `bound`
+- source: `web` / `web`
+- actor: `web:bind_proxy`
+- notes: Прокси proxy.example.com:1080 привязан к аккаунту.
+
+## 2026-03-11 01:36:16 UTC | +79990000001 | run #1
+- step: `upload_session` (Загружен .session)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.session.
+
+## 2026-03-11 01:36:16 UTC | +79990000001 | run #1
+- step: `upload_metadata` (Загружен .json)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Загружен файл 79990000001.json.
+
+## 2026-03-11 01:36:16 UTC | +79990000001 | run #1
+- step: `upload_bundle` (Комплект файлов собран)
+- result: `ready`
+- source: `web` / `web`
+- actor: `web:account_upload`
+- notes: Пара .session + .json собрана через web onboarding.
+
+## 2026-03-11 01:36:16 UTC | +79990000001 | run #1
+- step: `manual_note` (Ручная заметка обновлена)
+- result: `saved`
+- source: `web` / `web`
+- actor: `web:account_note`
+- notes: Обновлена ручная заметка оператора.
+

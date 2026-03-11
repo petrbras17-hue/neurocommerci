@@ -443,7 +443,7 @@ export function DashboardPage() {
 
       {/* ── 4. Quick Actions ─────────────────────────────────────────────── */}
       <motion.div className="dash-actions" variants={itemVariants}>
-        <button className="dash-action" onClick={() => navigate("/app/accounts")}>
+        <button className="dash-action" onClick={() => navigate("/accounts")}>
           <div className="dash-action-icon">{"\u2191"}</div>
           <span className="dash-action-title">Загрузить аккаунты</span>
           <span className="dash-action-desc">
@@ -452,7 +452,7 @@ export function DashboardPage() {
           <span className="dash-action-arrow">{"\u2192"}</span>
         </button>
 
-        <button className="dash-action" onClick={() => navigate("/app/assistant")}>
+        <button className="dash-action" onClick={() => navigate("/assistant")}>
           <div className="dash-action-icon">{"\u2726"}</div>
           <span className="dash-action-title">Запустить ассистент</span>
           <span className="dash-action-desc">
@@ -461,7 +461,7 @@ export function DashboardPage() {
           <span className="dash-action-arrow">{"\u2192"}</span>
         </button>
 
-        <button className="dash-action" onClick={() => navigate("/app/creative")}>
+        <button className="dash-action" onClick={() => navigate("/creative")}>
           <div className="dash-action-icon">{"\u2606"}</div>
           <span className="dash-action-title">Генерировать креатив</span>
           <span className="dash-action-desc">
