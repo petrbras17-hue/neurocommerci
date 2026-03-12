@@ -265,7 +265,7 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
     groups.get(cat)!.push(ch);
   }
 
-  const catKeys = Array.from(groups.keys());
+  const catKeys: string[] = Array.from(groups.keys());
   const totalCats = catKeys.length;
 
   // Cluster centres: arrange on a circle of clusters
