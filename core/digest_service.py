@@ -176,7 +176,10 @@ async def send_daily_digest_summary(*, user_id: int | None = None) -> dict[str, 
 # DigestReporter — real-time event → Telegram delivery
 # ---------------------------------------------------------------------------
 
-from core.event_bus import EventBus  # noqa: E402
+try:
+    from core.event_bus import EventBus  # noqa: E402
+except ImportError:
+    EventBus = None  # type: ignore[misc,assignment]
 
 _CATEGORIES = {
     "deploy":  ("DEPLOY",  "\U0001f680"),   # rocket
