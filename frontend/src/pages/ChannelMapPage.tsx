@@ -108,6 +108,7 @@ const CATEGORY_META: Record<string, { icon: string; color: string }> = {
   Politics:      { icon: "\ud83c\udfdb\ufe0f", color: "#0ea5e9" },
   Sports:        { icon: "\u26bd", color: "#84cc16" },
   Travel:        { icon: "\u2708\ufe0f", color: "#06b6d4" },
+  Business:      { icon: "\ud83d\udcbc", color: "#f59e0b" },
 };
 
 const DEFAULT_CATEGORY_META = { icon: "\ud83d\udccc", color: "var(--info)" };
@@ -134,6 +135,7 @@ const CATEGORY_COLORS_RESOLVED: Record<string, string> = {
   Politics:      "#0ea5e9",
   Sports:        "#84cc16",
   Travel:        "#06b6d4",
+  Business:      "#f59e0b",
   "\u0414\u0440\u0443\u0433\u043e\u0435": "#4488ff",
 };
 
@@ -973,7 +975,7 @@ function BubbleMapCanvas({
           }}
         >
           <div style={{ padding: "4px 12px 8px", fontSize: 11, color: "var(--muted)" }}>
-            {searchMatches.length} sovpadeniy
+            {searchMatches.length} совпадений
           </div>
           {searchMatches.slice(0, 20).map((node) => (
             <button
@@ -1821,6 +1823,7 @@ export function ChannelMapPage() {
         category: selectedCategory || undefined,
         language: selectedLanguage || undefined,
         min_members: minMembers > 0 ? minMembers : undefined,
+        limit: 500,
       });
       setItems(payload.items);
       setTotal(payload.total);
@@ -1933,7 +1936,7 @@ export function ChannelMapPage() {
         <MetricCard
           label="\u0421\u0443\u043c\u043c\u0430\u0440\u043d\u044b\u0439 \u043e\u0445\u0432\u0430\u0442"
           value={formatNumber(totalReach)}
-          sub={`\u043f\u043e ${displayItems.length} \u043a\u0430\u043d\u0430\u043b\u0430\u043c`}
+          sub={`\u043f\u043e ${formatNumber(totalIndexed)} \u043a\u0430\u043d\u0430\u043b\u0430\u043c`}
           icon={<Globe size={14} />}
         />
         <MetricCard

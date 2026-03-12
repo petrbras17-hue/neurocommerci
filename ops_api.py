@@ -5716,7 +5716,7 @@ async def channel_map_list(
     max_members: Optional[int] = Query(default=None),
     has_comments: Optional[bool] = Query(default=None),
     search: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
