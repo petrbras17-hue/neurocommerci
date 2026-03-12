@@ -77,6 +77,7 @@ class FarmThread:
         ai_router_func: Callable,
         redis_client: aioredis.Redis,
         publish_event_func: Callable,
+        channel_intel: Any = None,
     ) -> None:
         self.thread_id = thread_id
         self.account_id = account_id
@@ -93,6 +94,7 @@ class FarmThread:
         self.route_ai_task = ai_router_func
         self.redis = redis_client
         self._publish_event = publish_event_func
+        self.channel_intel = channel_intel
 
         # State machine
         self._state: str = STATE_IDLE
@@ -129,6 +131,55 @@ class FarmThread:
             "comments_failed": self._comments_failed,
             "reactions_sent": self._reactions_sent,
         }
+
+    async def should_comment(self, channel_id: int) -> tuple[bool, str]:
+        """Check channel intelligence rules before commenting."""
+        if not self.channel_intel:
+            return True, "ok"
+        rules = await self.channel_intel.get_rules(self.tenant_id, channel_id)
+        if not rules:
+            return True, "no_profile"
+        if rules.get("ban_risk") == "critical":
+            return False, "channel_too_risky"
+        interval = rules.get("safe_comment_interval_sec", 0)
+        if interval > 0 and self.redis:
+            import time as _time
+            key = f"ci:last_comment:{self.tenant_id}:{channel_id}:{self.account_id}"
+            last = await self.redis.get(key)
+            if last:
+                elapsed = _time.time() - float(last)
+                if elapsed < interval:
+                    return False, "too_soon"
+        return True, "ok"
+
+    async def _record_comment_success(self, channel_id: int) -> None:
+        """Record successful comment timestamp for rate limiting."""
+        if self.redis:
+            import time as _time
+            key = f"ci:last_comment:{self.tenant_id}:{channel_id}:{self.account_id}"
+            try:
+                await self.redis.setex(key, 3600, str(_time.time()))
+            except Exception:
+                pass
+
+    async def _record_ban(self, channel_id: int, ban_type: str) -> None:
+        """Record ban event via Channel Intelligence."""
+        if not self.channel_intel:
+            return
+        try:
+            from core.channel_intelligence import BanPatternLearner
+            learner = BanPatternLearner(
+                redis_client=self.redis,
+                ai_router_func=self.route_ai_task,
+            )
+            await learner.record_and_analyze(
+                tenant_id=self.tenant_id,
+                channel_telegram_id=channel_id,
+                account_id=self.account_id,
+                ban_type=ban_type,
+            )
+        except Exception as exc:
+            log.debug("farm_thread: ban record failed: %s", exc)
 
     async def stop(self) -> None:
         """Signal the run loop to exit after the current operation."""
@@ -205,6 +256,11 @@ class FarmThread:
 
                     await self._transition(STATE_COMMENTING)
                     try:
+                        channel_id = post.get("channel_id") or 0
+                        allowed, reason = await self.should_comment(channel_id)
+                        if not allowed:
+                            log.info("Thread %s: skip comment reason=%s", self.thread_id, reason)
+                            continue
                         comment_text = await self.generate_comment(
                             post.get("text", "")
                         )
@@ -214,6 +270,7 @@ class FarmThread:
                                 post=post,
                                 comment_text=comment_text,
                             )
+                            await self._record_comment_success(channel_id)
                     except _FloodWaitException as exc:
                         await self.handle_flood_wait(exc.seconds)
                         break  # exit inner post loop, re-enter outer loop
