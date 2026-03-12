@@ -336,7 +336,7 @@ async def seed_database(channels: list[dict]) -> int:
                         VALUES
                             (:telegram_id, :username, :title, :member_count, :category,
                              :subcategory, :language, :region, :engagement_rate,
-                             :avg_comments_per_post, :avg_post_reach, :topic_tags::jsonb,
+                             :avg_comments_per_post, :avg_post_reach, CAST(:topic_tags AS jsonb),
                              :source, :description)
                         ON CONFLICT (username) DO NOTHING
                     """),
