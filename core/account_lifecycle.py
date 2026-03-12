@@ -144,12 +144,11 @@ class AccountLifecycle:
                 f"transition '{old_stage}' -> '{target_stage}' is not allowed"
             )
 
-        # Apply update.
-        await self._session.execute(
-            update(Account)
-            .where(Account.id == account_id)
-            .values(lifecycle_stage=target_stage)
-        )
+        # Apply update — always include tenant_id in WHERE for defense-in-depth.
+        stmt = update(Account).where(Account.id == account_id)
+        if self._tenant_id is not None:
+            stmt = stmt.where(Account.tenant_id == self._tenant_id)
+        await self._session.execute(stmt.values(lifecycle_stage=target_stage))
 
         # Log event.
         event = AccountStageEvent(

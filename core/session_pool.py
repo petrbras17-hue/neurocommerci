@@ -355,7 +355,8 @@ class SessionPool:
         """Get a cached client synchronously without acquiring the async lock.
 
         Returns the TelegramClient if found and idle, None otherwise.
-        Uses the pool-level lock for thread safety.
+        This is cooperative-safe within a single asyncio event loop iteration
+        (no await between read and write). NOT safe across OS threads.
         """
         entry = self._pool.get(account_id)
         if entry is not None and entry.status != _ClientStatus.IN_USE:
@@ -468,6 +469,9 @@ class SessionPool:
         from storage.models import Account, Proxy
 
         # Re-load Account to get proxy_id and session_file.
+        # NOTE: callers MUST pass an RLS-scoped db_session. The Account.id
+        # filter alone is safe when RLS is active, but we rely on callers
+        # setting RLS context before calling get_client().
         result = await db_session.execute(
             select(Account).where(Account.id == account_id)
         )

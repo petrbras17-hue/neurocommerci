@@ -3121,9 +3121,22 @@ async def accounts_export(
     )
 
 
+_VALID_STAGES = {
+    "uploaded", "warming_up", "gate_review", "execution_ready",
+    "active_commenting", "cooldown", "restricted", "frozen", "banned", "dead",
+}
+
+
 class LifecycleTransitionPayload(BaseModel):
-    target_stage: str = Field(..., description="Target lifecycle stage to transition to")
-    reason: str = Field(default="", description="Optional operator-supplied reason")
+    target_stage: str = Field(..., max_length=50, description="Target lifecycle stage to transition to")
+    reason: str = Field(default="", max_length=500, description="Optional operator-supplied reason")
+
+    @field_validator("target_stage")
+    @classmethod
+    def validate_stage(cls, v: str) -> str:
+        if v not in _VALID_STAGES:
+            raise ValueError(f"invalid stage: {v}. Must be one of: {sorted(_VALID_STAGES)}")
+        return v
 
 
 @app.post("/v1/accounts/{account_id}/lifecycle", status_code=200)
@@ -3159,7 +3172,7 @@ async def account_lifecycle_transition(
             detail="account_not_found",
         )
 
-    lifecycle = AccountLifecycle(session)
+    lifecycle = AccountLifecycle(session, tenant_id=tenant_id)
     try:
         outcome = await lifecycle.transition(
             account_id,
@@ -3206,7 +3219,7 @@ async def account_lifecycle_history(
             detail="account_not_found",
         )
 
-    lifecycle = AccountLifecycle(session)
+    lifecycle = AccountLifecycle(session, tenant_id=tenant_id)
     history = await lifecycle.get_stage_history(account_id, limit=limit)
     return {"account_id": account_id, "total": len(history), "items": history}
 
@@ -8292,7 +8305,7 @@ async def account_approve(
         )
 
     try:
-        lifecycle = AccountLifecycle(session)
+        lifecycle = AccountLifecycle(session, tenant_id=tenant_id)
         transition_result = await lifecycle.transition(
             account_id,
             "execution_ready",
@@ -8339,7 +8352,7 @@ async def account_reject(
         )
 
     try:
-        lifecycle = AccountLifecycle(session)
+        lifecycle = AccountLifecycle(session, tenant_id=tenant_id)
         transition_result = await lifecycle.transition(
             account_id,
             "warming_up",
@@ -8383,7 +8396,7 @@ async def accounts_bulk_approve(
     )
     found_accounts = {int(a.id): a for a in bulk_result.scalars().all()}
 
-    lifecycle = AccountLifecycle(session)
+    lifecycle = AccountLifecycle(session, tenant_id=tenant_id)
     approved_count = 0
     errors: list[dict[str, Any]] = []
 
@@ -8443,7 +8456,17 @@ async def get_session_topology(
         None,
         lambda: audit_session_topology(base_dir, known_user_ids=known_user_ids),
     )
-    return audit
+    # Strip absolute server paths — return relative paths only.
+    base_str = str(base_dir)
+    def _strip(v: Any) -> Any:
+        if isinstance(v, str) and v.startswith(base_str):
+            return v[len(base_str):].lstrip("/")
+        if isinstance(v, list):
+            return [_strip(i) for i in v]
+        if isinstance(v, dict):
+            return {k: _strip(val) for k, val in v.items()}
+        return v
+    return _strip(audit)
 
 
 @app.get("/v1/sessions/topology/summary", response_model=TopologySummaryResponse)
