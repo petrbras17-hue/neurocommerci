@@ -23,6 +23,7 @@ import { UserParserPage } from "./pages/UserParserPage";
 import { FoldersPage } from "./pages/FoldersPage";
 import { ProfilesPage } from "./pages/ProfilesPage";
 import { BillingPage } from "./pages/BillingPage";
+import { ProxiesPage } from "./pages/ProxiesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 function ProtectedRoute() {
@@ -51,6 +52,7 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/proxies" element={<ProxiesPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
             <Route path="/context" element={<ContextPage />} />
             <Route path="/creative" element={<CreativePage />} />

@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 import time
 import traceback
-from typing import Any, AsyncIterator, List, Optional
+from typing import Any, AsyncIterator, List, Literal, Optional
 
 import jwt
 import uvicorn
@@ -79,6 +79,7 @@ from core.telegram_bot_auth import (
     stop_bot_polling,
 )
 from core.task_queue import task_queue
+from core.proxy_manager import ProxyConfig, ProxyManager, check_proxy_orm, parse_proxy_line
 from storage.models import (
     Account,
     AccountHealthScore,
@@ -97,6 +98,7 @@ from storage.models import (
     Lead,
     ParsingJob,
     ProfileTemplate,
+    Proxy,
     ReactionJob,
     TeamMember,
     TelegramFolder,
@@ -160,6 +162,11 @@ JOB_TYPE_CAMPAIGN_START = "campaign_start"
 JOB_TYPE_CAMPAIGN_STOP = "campaign_stop"
 JOB_TYPE_CHANNEL_INDEX = "channel_index"
 
+# Sprint 7 Tasks 2+3 — Account lifecycle
+QUEUE_ACCOUNT_LIFECYCLE = "account_lifecycle_tasks"
+JOB_TYPE_ACCOUNT_HEALTH_CHECK = "account_health_check"
+JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR = "account_lifecycle_monitor"
+
 _FARM_JOB_TYPE_TO_QUEUE: dict[str, str] = {
     JOB_TYPE_FARM_START: QUEUE_FARM,
     JOB_TYPE_FARM_STOP: QUEUE_FARM,
@@ -188,6 +195,9 @@ _FARM_JOB_TYPE_TO_QUEUE: dict[str, str] = {
     JOB_TYPE_CAMPAIGN_START: QUEUE_CAMPAIGNS,
     JOB_TYPE_CAMPAIGN_STOP: QUEUE_CAMPAIGNS,
     JOB_TYPE_CHANNEL_INDEX: QUEUE_CAMPAIGNS,
+    # Sprint 7 Tasks 2+3 — Account lifecycle
+    JOB_TYPE_ACCOUNT_HEALTH_CHECK: QUEUE_ACCOUNT_LIFECYCLE,
+    JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR: QUEUE_ACCOUNT_LIFECYCLE,
 }
 
 
@@ -468,6 +478,19 @@ class BindProxyPayload(BaseModel):
         if int(value) <= 0:
             raise ValueError("invalid_proxy_id")
         return int(value)
+
+
+class ProxyBulkImportPayload(BaseModel):
+    lines: str = Field(min_length=1, max_length=500_000)
+    proxy_type: str = Field(default="http", max_length=10)
+
+    @field_validator("proxy_type")
+    @classmethod
+    def validate_proxy_type(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"http", "socks5", "socks4"}:
+            raise ValueError("proxy_type must be http, socks5, or socks4")
+        return value
 
 
 class AccountNotePayload(BaseModel):
@@ -1813,6 +1836,391 @@ async def web_list_available_proxies(
     )
 
 
+# ---------------------------------------------------------------------------
+# Proxy Management — /v1/proxies/*
+# ---------------------------------------------------------------------------
+
+def _serialize_proxy(proxy: "Proxy", bound_account_phone: Optional[str] = None) -> dict[str, Any]:
+    """Serialize a Proxy ORM row to a dict for API responses."""
+    # Build safe display URL without password
+    safe_url = f"{proxy.proxy_type}://{proxy.host}:{proxy.port}"
+    if proxy.username:
+        safe_url = f"{proxy.proxy_type}://{proxy.username}:***@{proxy.host}:{proxy.port}"
+    return {
+        "id": proxy.id,
+        "proxy_type": proxy.proxy_type,
+        "host": proxy.host,
+        "port": proxy.port,
+        "username": proxy.username,
+        "is_active": proxy.is_active,
+        "status": proxy.health_status,
+        "health_status": proxy.health_status,
+        "consecutive_failures": proxy.consecutive_failures,
+        "last_error": proxy.last_error,
+        "last_checked": proxy.last_checked.isoformat() if proxy.last_checked else None,
+        "last_checked_at": proxy.last_checked.isoformat() if proxy.last_checked else None,
+        "last_success_at": proxy.last_success_at.isoformat() if proxy.last_success_at else None,
+        "created_at": proxy.created_at.isoformat() if proxy.created_at else None,
+        "url": safe_url,
+        "bound_account_phone": bound_account_phone,
+        "bound_account_id": None,
+    }
+
+
+@app.post("/v1/proxies/bulk-import", status_code=status.HTTP_200_OK)
+async def proxies_bulk_import(
+    payload: ProxyBulkImportPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Parse and import proxy lines, skipping duplicates within the tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    # Load existing host+port combinations for this tenant to detect duplicates.
+    existing_q = await session.execute(
+        select(Proxy.host, Proxy.port).where(Proxy.tenant_id == tenant_id)
+    )
+    existing_pairs: set[tuple[str, int]] = {(row.host, row.port) for row in existing_q}
+
+    for raw_line in payload.lines.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        cfg = parse_proxy_line(line, default_type=payload.proxy_type)
+        if cfg is None:
+            errors.append(f"parse_error: {line[:120]}")
+            continue
+        if (cfg.host, cfg.port) in existing_pairs:
+            skipped += 1
+            continue
+        proxy = Proxy(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=tenant_context.user_id,
+            proxy_type=cfg.proxy_type,
+            host=cfg.host,
+            port=cfg.port,
+            username=cfg.username,
+            password=cfg.password,
+            is_active=True,
+            health_status="unknown",
+            consecutive_failures=0,
+            created_at=utcnow(),
+        )
+        session.add(proxy)
+        existing_pairs.add((cfg.host, cfg.port))
+        imported += 1
+
+    await session.flush()
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+@app.get("/v1/proxies")
+async def proxies_list(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    health_status: Optional[str] = Query(default=None, alias="status"),
+    bound: Optional[bool] = Query(default=None),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List all proxies for the current tenant with optional filters and summary."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    # Base query — RLS is already active in tenant_session, but we also
+    # filter explicitly for clarity.
+    base_where = [Proxy.tenant_id == tenant_id]
+    if health_status:
+        allowed_statuses = {"unknown", "alive", "failing", "dead"}
+        if health_status in allowed_statuses:
+            base_where.append(Proxy.health_status == health_status)
+
+    # Subquery: which proxy_ids have at least one bound account.
+    bound_subq = (
+        select(Account.proxy_id)
+        .where(Account.proxy_id.isnot(None), Account.tenant_id == tenant_id)
+        .distinct()
+        .subquery()
+    )
+
+    if bound is True:
+        base_where.append(Proxy.id.in_(select(bound_subq.c.proxy_id)))
+    elif bound is False:
+        base_where.append(Proxy.id.notin_(select(bound_subq.c.proxy_id)))
+
+    # Count total matching proxies.
+    count_stmt = select(func.count()).select_from(Proxy).where(*base_where)
+    total: int = (await session.execute(count_stmt)).scalar_one()
+
+    # Fetch page.
+    stmt = (
+        select(Proxy)
+        .where(*base_where)
+        .order_by(Proxy.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    proxies = (await session.execute(stmt)).scalars().all()
+
+    # Fetch bound account phones for returned proxies in one query.
+    proxy_ids = [p.id for p in proxies]
+    bound_phone_map: dict[int, str] = {}
+    if proxy_ids:
+        phone_rows = await session.execute(
+            select(Account.proxy_id, Account.phone)
+            .where(Account.proxy_id.in_(proxy_ids), Account.tenant_id == tenant_id)
+            .distinct(Account.proxy_id)
+        )
+        for row in phone_rows:
+            if row.proxy_id not in bound_phone_map:
+                bound_phone_map[row.proxy_id] = row.phone
+
+    # Summary counters for the whole tenant (not just this page).
+    summary_rows = await session.execute(
+        select(Proxy.health_status, func.count().label("cnt"))
+        .where(Proxy.tenant_id == tenant_id)
+        .group_by(Proxy.health_status)
+    )
+    status_counts: dict[str, int] = {row.health_status: row.cnt for row in summary_rows}
+
+    # Bound count.
+    bound_count: int = (
+        await session.execute(
+            select(func.count())
+            .select_from(Proxy)
+            .where(Proxy.tenant_id == tenant_id, Proxy.id.in_(select(bound_subq.c.proxy_id)))
+        )
+    ).scalar_one()
+    total_proxies: int = (
+        await session.execute(
+            select(func.count()).select_from(Proxy).where(Proxy.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+
+    return {
+        "items": [
+            _serialize_proxy(p, bound_account_phone=bound_phone_map.get(p.id))
+            for p in proxies
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "summary": {
+            "alive": status_counts.get("alive", 0),
+            "dead": status_counts.get("dead", 0),
+            "failing": status_counts.get("failing", 0),
+            "unknown": status_counts.get("unknown", 0),
+            "bound": bound_count,
+            "free": total_proxies - bound_count,
+        },
+    }
+
+
+@app.post("/v1/proxies/health-check")
+async def proxies_health_check(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Run liveness check on all active proxies for the tenant and update their status."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    proxies = (
+        await session.execute(
+            select(Proxy).where(Proxy.tenant_id == tenant_id, Proxy.is_active.is_(True))
+        )
+    ).scalars().all()
+
+    import asyncio
+
+    manager = ProxyManager()
+    semaphore = asyncio.Semaphore(20)  # max 20 concurrent checks
+
+    async def _check_one(proxy):
+        async with semaphore:
+            return proxy, await check_proxy_orm(proxy, manager=manager, timeout=10)
+
+    check_tasks = [_check_one(p) for p in proxies]
+    outcomes = await asyncio.gather(*check_tasks, return_exceptions=True)
+
+    results: list[dict[str, Any]] = []
+    alive_count = 0
+
+    for outcome in outcomes:
+        if isinstance(outcome, Exception):
+            continue
+        proxy, is_alive = outcome
+        now = utcnow()
+        proxy.last_checked = now
+        if is_alive:
+            proxy.health_status = "alive"
+            proxy.consecutive_failures = 0
+            proxy.last_error = None
+            proxy.last_success_at = now
+            alive_count += 1
+        else:
+            proxy.consecutive_failures = (proxy.consecutive_failures or 0) + 1
+            proxy.health_status = "dead" if proxy.consecutive_failures >= 3 else "failing"
+            proxy.last_error = "health_check_failed"
+        safe_url = f"{proxy.proxy_type}://{proxy.host}:{proxy.port}"
+        results.append({
+            "id": proxy.id,
+            "url": safe_url,
+            "alive": is_alive,
+            "health_status": proxy.health_status,
+        })
+
+    return {
+        "checked": len(proxies),
+        "alive": alive_count,
+        "dead": len(proxies) - alive_count,
+        "results": results,
+    }
+
+
+@app.post("/v1/proxies/cleanup")
+async def proxies_cleanup(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Delete dead unbound proxies for the tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    # Find dead proxies that are NOT bound to any account.
+    bound_proxy_ids_q = (
+        select(Account.proxy_id)
+        .where(Account.proxy_id.isnot(None), Account.tenant_id == tenant_id)
+        .distinct()
+        .subquery()
+    )
+    dead_unbound = (
+        await session.execute(
+            select(Proxy).where(
+                Proxy.tenant_id == tenant_id,
+                Proxy.health_status == "dead",
+                Proxy.id.notin_(select(bound_proxy_ids_q.c.proxy_id)),
+            )
+        )
+    ).scalars().all()
+
+    # Count bound dead proxies that are kept.
+    dead_bound_count: int = (
+        await session.execute(
+            select(func.count())
+            .select_from(Proxy)
+            .where(
+                Proxy.tenant_id == tenant_id,
+                Proxy.health_status == "dead",
+                Proxy.id.in_(select(bound_proxy_ids_q.c.proxy_id)),
+            )
+        )
+    ).scalar_one()
+
+    deleted = 0
+    for proxy in dead_unbound:
+        await session.delete(proxy)
+        deleted += 1
+
+    return {"deleted": deleted, "kept_bound": dead_bound_count}
+
+
+@app.delete("/v1/proxies/{proxy_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def proxy_delete(
+    proxy_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> None:
+    """Delete a single proxy if no account is currently bound to it."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    proxy = (
+        await session.execute(
+            select(Proxy).where(Proxy.id == proxy_id, Proxy.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if proxy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proxy_not_found")
+
+    bound_account = (
+        await session.execute(
+            select(Account.id).where(
+                Account.proxy_id == proxy_id,
+                Account.tenant_id == tenant_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if bound_account is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="proxy_has_bound_accounts",
+        )
+
+    await session.delete(proxy)
+
+
+@app.post("/v1/proxies/{proxy_id}/check")
+async def proxy_single_check(
+    proxy_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Run a liveness check on a single proxy and return the updated proxy object."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    proxy = (
+        await session.execute(
+            select(Proxy).where(Proxy.id == proxy_id, Proxy.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if proxy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proxy_not_found")
+
+    manager = ProxyManager()
+    is_alive = await check_proxy_orm(proxy, manager=manager)
+    now = utcnow()
+    proxy.last_checked = now
+    if is_alive:
+        proxy.health_status = "alive"
+        proxy.consecutive_failures = 0
+        proxy.last_error = None
+        proxy.last_success_at = now
+    else:
+        proxy.consecutive_failures = (proxy.consecutive_failures or 0) + 1
+        proxy.health_status = "dead" if proxy.consecutive_failures >= 3 else "failing"
+        proxy.last_error = "health_check_failed"
+
+    # Fetch bound phone before serializing.
+    bound_phone: Optional[str] = None
+    bound_row = (
+        await session.execute(
+            select(Account.phone).where(
+                Account.proxy_id == proxy_id,
+                Account.tenant_id == tenant_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if bound_row:
+        bound_phone = bound_row
+
+    return _serialize_proxy(proxy, bound_account_phone=bound_phone)
+
+
 @app.post("/v1/web/accounts/{account_id}/bind-proxy")
 async def web_bind_proxy(
     account_id: int,
@@ -1890,6 +2298,328 @@ async def web_get_account_timeline(
         workspace_id=int(tenant_context.workspace_id or 0),
         account_id=account_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 7 Tasks 2+3 — Account Management v2 endpoints
+# ---------------------------------------------------------------------------
+
+
+class BulkActionPayload(BaseModel):
+    action: Literal["warmup_all", "start_farm", "stop_farm", "pause_farm"]
+    account_ids: Optional[List[int]] = None
+
+
+@app.post("/v1/accounts/bulk-import")
+async def accounts_bulk_import(
+    request: Request,
+    files: List[UploadFile] = File(...),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Accept multiple .session + .json pairs (or a single .zip) and bulk-import accounts.
+    Auto-assigns a free tenant proxy to each imported account when available.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    import io
+    import json as _json
+    import zipfile
+
+    from core.web_accounts import (
+        WebOnboardingError,
+        _phone_digits_from_filename,
+        normalize_phone,
+        upsert_account_from_session_upload,
+    )
+    from utils.account_uploads import validate_and_normalize_account_metadata, write_normalized_metadata
+    from utils.session_topology import canonical_session_paths
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    from core.web_accounts import get_workspace_runtime_user
+    workspace = await get_workspace_runtime_user(session, tenant_id=tenant_id, workspace_id=workspace_id)
+    runtime_user_id = int(workspace.runtime_user_id)
+
+    # Resolve free proxies for auto-assignment
+    free_proxy_result = await session.execute(
+        select(Proxy).where(
+            Proxy.tenant_id == tenant_id,
+            Proxy.workspace_id == workspace_id,
+            Proxy.is_active == True,
+        )
+    )
+    all_proxies = list(free_proxy_result.scalars().all())
+    used_proxy_ids_result = await session.execute(
+        select(Account.proxy_id).where(
+            Account.tenant_id == tenant_id,
+            Account.proxy_id.isnot(None),
+        )
+    )
+    used_proxy_ids = {row[0] for row in used_proxy_ids_result.fetchall()}
+    free_proxies = [p for p in all_proxies if p.id not in used_proxy_ids]
+    free_proxy_iter = iter(free_proxies)
+
+    # Collect raw bytes from uploads — expand ZIP if needed
+    pair_map: dict[str, dict[str, bytes]] = {}  # phone_digits -> {"session": bytes, "json": bytes}
+
+    async def _absorb_file(fname: str, data: bytes) -> None:
+        fname_lower = fname.lower()
+        if fname_lower.endswith(".session"):
+            digits = "".join(ch for ch in Path(fname).stem if ch.isdigit())
+            if digits:
+                pair_map.setdefault(digits, {})["session"] = data
+        elif fname_lower.endswith(".json"):
+            digits = "".join(ch for ch in Path(fname).stem if ch.isdigit())
+            if digits:
+                pair_map.setdefault(digits, {})["json"] = data
+
+    for upload in files:
+        raw = await upload.read()
+        fname = upload.filename or ""
+        if fname.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    for member in zf.namelist():
+                        member_data = zf.read(member)
+                        await _absorb_file(Path(member).name, member_data)
+            except zipfile.BadZipFile:
+                continue
+        else:
+            await _absorb_file(fname, raw)
+
+    imported = 0
+    skipped = 0
+    auto_proxied = 0
+    errors: list[str] = []
+
+    for digits, parts in pair_map.items():
+        if "session" not in parts or "json" not in parts:
+            errors.append(f"incomplete_pair:{digits}")
+            skipped += 1
+            continue
+        phone = normalize_phone(digits)
+        if not phone:
+            errors.append(f"invalid_phone:{digits}")
+            skipped += 1
+            continue
+        session_path, metadata_path = canonical_session_paths(
+            settings.sessions_path, runtime_user_id, phone
+        )
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        session_path.write_bytes(parts["session"])
+        try:
+            payload_data = _json.loads(parts["json"].decode("utf-8"))
+            normalized = validate_and_normalize_account_metadata(
+                payload_data,
+                expected_phone=phone,
+                expected_session_file=f"{digits}.session",
+            )
+            write_normalized_metadata(metadata_path, normalized)
+        except Exception as exc:
+            session_path.unlink(missing_ok=True)
+            errors.append(f"metadata_error:{digits}:{exc}")
+            skipped += 1
+            continue
+        try:
+            account, _ = await upsert_account_from_session_upload(
+                session,
+                phone=phone,
+                session_file=f"{digits}.session",
+                runtime_user_id=runtime_user_id,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                reset_runtime_state=True,
+            )
+            await session.flush()
+            # Auto-assign free proxy
+            if account.proxy_id is None:
+                free_proxy = next(free_proxy_iter, None)
+                if free_proxy is not None:
+                    account.proxy_id = free_proxy.id
+                    auto_proxied += 1
+            imported += 1
+        except WebOnboardingError as exc:
+            errors.append(f"db_error:{digits}:{exc}")
+            skipped += 1
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "auto_proxied": auto_proxied,
+        "errors": errors,
+    }
+
+
+@app.post("/v1/accounts/mass-proxy-assign")
+async def accounts_mass_proxy_assign(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Auto-assign free proxies (1:1) to all accounts without a proxy in this tenant/workspace."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    # Fetch unproxied accounts
+    unproxied_result = await session.execute(
+        select(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.proxy_id.is_(None),
+        )
+    )
+    unproxied_accounts = list(unproxied_result.scalars().all())
+
+    # Fetch free proxies
+    used_proxy_ids_result = await session.execute(
+        select(Account.proxy_id).where(
+            Account.tenant_id == tenant_id,
+            Account.proxy_id.isnot(None),
+        )
+    )
+    used_proxy_ids = {row[0] for row in used_proxy_ids_result.fetchall()}
+    free_proxy_result = await session.execute(
+        select(Proxy).where(
+            Proxy.tenant_id == tenant_id,
+            Proxy.workspace_id == workspace_id,
+            Proxy.is_active == True,
+        )
+    )
+    free_proxies = [p for p in free_proxy_result.scalars().all() if p.id not in used_proxy_ids]
+
+    assigned = 0
+    free_iter = iter(free_proxies)
+    for account in unproxied_accounts:
+        proxy = next(free_iter, None)
+        if proxy is None:
+            break
+        account.proxy_id = proxy.id
+        assigned += 1
+
+    no_proxy_available = len(unproxied_accounts) - assigned
+    return {"assigned": assigned, "no_proxy_available": no_proxy_available}
+
+
+@app.post("/v1/accounts/bulk-action")
+async def accounts_bulk_action(
+    request: Request,
+    payload: BulkActionPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Perform a bulk action on a set of accounts (or all accounts in the tenant workspace).
+    Actions: warmup_all | start_farm | stop_farm | pause_farm
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    VALID_ACTIONS = {"warmup_all", "start_farm", "stop_farm", "pause_farm"}
+    if payload.action not in VALID_ACTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid_action: must be one of {sorted(VALID_ACTIONS)}",
+        )
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    # Resolve target accounts
+    q = select(Account).where(
+        Account.tenant_id == tenant_id,
+        Account.workspace_id == workspace_id,
+    )
+    if payload.account_ids:
+        q = q.where(Account.id.in_(payload.account_ids))
+    result = await session.execute(q)
+    accounts = list(result.scalars().all())
+
+    affected = 0
+    errors: list[str] = []
+
+    ACTION_TO_STATUS = {
+        "start_farm": "active",
+        "stop_farm": "cooldown",
+        "pause_farm": "cooldown",
+    }
+    ACTION_TO_JOB_TYPE = {
+        "warmup_all": JOB_TYPE_WARMUP_START,
+        "start_farm": JOB_TYPE_FARM_START,
+        "stop_farm": JOB_TYPE_FARM_STOP,
+        "pause_farm": JOB_TYPE_FARM_PAUSE,
+    }
+
+    for account in accounts:
+        try:
+            if payload.action in ACTION_TO_STATUS:
+                account.status = ACTION_TO_STATUS[payload.action]
+
+            job_type = ACTION_TO_JOB_TYPE[payload.action]
+            job_payload: dict[str, Any] = {"account_id": account.id}
+            if payload.action == "warmup_all":
+                job_payload["config_id"] = account.id  # best-effort: use account id as config hint
+            else:
+                job_payload["farm_id"] = account.id
+
+            await _enqueue_within_session(
+                session=session,
+                tenant_id=tenant_id,
+                workspace_id=workspace_id,
+                user_id=tenant_context.user_id,
+                job_type=job_type,
+                payload=job_payload,
+            )
+            affected += 1
+        except Exception as exc:
+            errors.append(f"account:{account.id}:{exc}")
+
+    return {"action": payload.action, "affected": affected, "errors": errors}
+
+
+@app.get("/v1/accounts/stats")
+async def accounts_stats(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return aggregate account stats for the current tenant workspace."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    result = await session.execute(
+        select(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    accounts = list(result.scalars().all())
+
+    by_status: dict[str, int] = {}
+    by_lifecycle: dict[str, int] = {}
+    proxied = 0
+    unproxied = 0
+
+    for acc in accounts:
+        s = acc.status or "unknown"
+        by_status[s] = by_status.get(s, 0) + 1
+
+        lc = acc.lifecycle_stage or "unknown"
+        by_lifecycle[lc] = by_lifecycle.get(lc, 0) + 1
+
+        if acc.proxy_id is not None:
+            proxied += 1
+        else:
+            unproxied += 1
+
+    return {
+        "total": len(accounts),
+        "by_status": by_status,
+        "by_lifecycle": by_lifecycle,
+        "proxied": proxied,
+        "unproxied": unproxied,
+    }
 
 
 @app.post("/v1/assistant/start-brief")

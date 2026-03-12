@@ -48,6 +48,10 @@ JOB_TYPE_FOLDER_DELETE = "folder_delete"
 JOB_TYPE_CAMPAIGN_START = "campaign_start"
 JOB_TYPE_CAMPAIGN_STOP = "campaign_stop"
 
+# Sprint 7 Tasks 2+3 — Account lifecycle
+JOB_TYPE_ACCOUNT_HEALTH_CHECK = "account_health_check"
+JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR = "account_lifecycle_monitor"
+
 QUEUE_FARM = "farm_tasks"
 QUEUE_PARSER = "parser_tasks"
 QUEUE_PROFILE = "profile_tasks"
@@ -59,12 +63,13 @@ QUEUE_DIALOGS = "dialog_tasks"
 QUEUE_USER_PARSER = "user_parser_tasks"
 QUEUE_FOLDERS = "folder_tasks"
 QUEUE_CAMPAIGNS = "campaign_tasks"
+QUEUE_ACCOUNT_LIFECYCLE = "account_lifecycle_tasks"
 
 FARM_QUEUE_NAMES = (
     QUEUE_FARM, QUEUE_PARSER, QUEUE_PROFILE,
     QUEUE_WARMUP, QUEUE_HEALTH, QUEUE_REACTIONS,
     QUEUE_CHATTING, QUEUE_DIALOGS, QUEUE_USER_PARSER,
-    QUEUE_FOLDERS, QUEUE_CAMPAIGNS,
+    QUEUE_FOLDERS, QUEUE_CAMPAIGNS, QUEUE_ACCOUNT_LIFECYCLE,
 )
 
 
@@ -118,6 +123,12 @@ async def _process_farm_job(job: AppJob) -> dict[str, Any]:
     # Sprint 8 — campaigns
     if job_type in (JOB_TYPE_CAMPAIGN_START, JOB_TYPE_CAMPAIGN_STOP):
         return await _handle_campaign(job_type, payload, tenant_id)
+
+    # Sprint 7 Tasks 2+3 — account lifecycle
+    if job_type == JOB_TYPE_ACCOUNT_HEALTH_CHECK:
+        return await _handle_account_health_check(payload, tenant_id)
+    if job_type == JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR:
+        return await _handle_account_lifecycle_monitor(payload, tenant_id)
 
     raise FarmJobError(f"unsupported_job_type: {job_type}")
 
@@ -535,6 +546,213 @@ async def _handle_campaign(job_type: str, payload: dict, tenant_id: int) -> dict
             return {"status": "stopped", "campaign_id": campaign_id}
     finally:
         await redis_client.aclose()
+
+
+async def _handle_account_health_check(payload: dict, tenant_id: int) -> dict[str, Any]:
+    """
+    Sprint 7 Task 2 — account health check job handler.
+
+    For each account in warming_up / active_commenting / gate_review:
+    - validates proxy liveness via ProxyManager.validate_proxy
+    - updates health_status accordingly
+    - transitions warming_up accounts to gate_review after 48 h
+    - marks lifecycle_stage = "restricted" after 3 consecutive dead proxy checks
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select as sa_select
+
+    from config import settings
+    from core.proxy_manager import ProxyManager, ProxyConfig
+    from storage.models import Account
+
+    warmup_threshold_hours: int = int(payload.get("warmup_threshold_hours", 48))
+    consecutive_dead_threshold: int = int(payload.get("consecutive_dead_threshold", 3))
+
+    proxy_manager = ProxyManager(settings=settings)
+    updated: list[dict] = []
+
+    async with async_session() as session:
+        async with session.begin():
+            await apply_session_rls_context(session, tenant_id=tenant_id)
+            result = await session.execute(
+                sa_select(Account).where(
+                    Account.tenant_id == tenant_id,
+                    Account.lifecycle_stage.in_(["warming_up", "active_commenting", "gate_review"]),
+                )
+            )
+            accounts: list[Account] = list(result.scalars().all())
+
+            for account in accounts:
+                proxy_alive: bool | None = None
+
+                if account.proxy_id is not None:
+                    from storage.models import Proxy
+                    proxy_row_result = await session.execute(
+                        sa_select(Proxy).where(
+                            Proxy.id == account.proxy_id,
+                            Proxy.tenant_id == tenant_id,
+                        )
+                    )
+                    proxy_row = proxy_row_result.scalar_one_or_none()
+                    if proxy_row is not None:
+                        proxy_cfg = ProxyConfig(
+                            proxy_type=proxy_row.proxy_type or "socks5",
+                            host=proxy_row.host,
+                            port=int(proxy_row.port),
+                            username=proxy_row.username,
+                            password=proxy_row.password,
+                        )
+                        try:
+                            proxy_alive = await proxy_manager.validate_proxy(proxy_cfg, timeout=10)
+                        except Exception:
+                            proxy_alive = False
+
+                if proxy_alive is False:
+                    # increment consecutive failure counter using restriction_reason field as marker
+                    current_fails_str = account.restriction_reason or ""
+                    if current_fails_str.startswith("proxy_dead_x"):
+                        try:
+                            fails = int(current_fails_str.replace("proxy_dead_x", "")) + 1
+                        except ValueError:
+                            fails = 1
+                    else:
+                        fails = 1
+                    account.health_status = "dead"
+                    account.last_health_check = utcnow()
+                    if fails >= consecutive_dead_threshold:
+                        account.lifecycle_stage = "restricted"
+                        account.restriction_reason = "proxy_dead"
+                    else:
+                        account.restriction_reason = f"proxy_dead_x{fails}"
+                    updated.append({"account_id": account.id, "health_status": "dead", "proxy_alive": False})
+
+                elif proxy_alive is True:
+                    # clear any dead marker
+                    if account.health_status != "alive":
+                        account.health_status = "alive"
+                    if account.restriction_reason and account.restriction_reason.startswith("proxy_dead"):
+                        account.restriction_reason = None
+                    account.last_health_check = utcnow()
+
+                    # transition warming_up → gate_review after threshold
+                    if account.lifecycle_stage == "warming_up" and account.created_at is not None:
+                        age_hours = (utcnow() - account.created_at).total_seconds() / 3600
+                        if age_hours >= warmup_threshold_hours:
+                            account.lifecycle_stage = "gate_review"
+                    updated.append({"account_id": account.id, "health_status": "alive", "proxy_alive": True})
+
+                else:
+                    # No proxy attached — mark as unknown, still check warmup age transition
+                    account.last_health_check = utcnow()
+                    if account.lifecycle_stage == "warming_up" and account.created_at is not None:
+                        age_hours = (utcnow() - account.created_at).total_seconds() / 3600
+                        if age_hours >= warmup_threshold_hours:
+                            account.lifecycle_stage = "gate_review"
+                    updated.append({"account_id": account.id, "health_status": account.health_status, "proxy_alive": None})
+
+    log.info("account_health_check: tenant=%s checked=%d", tenant_id, len(updated))
+    return {"status": "completed", "tenant_id": tenant_id, "checked": len(updated), "results": updated}
+
+
+async def _handle_account_lifecycle_monitor(payload: dict, tenant_id: int) -> dict[str, Any]:
+    """
+    Sprint 7 Task 3 — periodic account lifecycle monitor job handler.
+
+    Runs as a cron-style periodic job (enqueued every 30 min by the scheduler).
+    - frozen accounts with cooldown expired → lifecycle_stage reset to gate_review
+    - warming_up beyond configured days → gate_review
+    - accounts with consecutive_failures > threshold → quarantine
+    Sends a digest notification if any transitions occurred.
+    """
+    from sqlalchemy import select as sa_select
+
+    from config import settings
+    from storage.models import Account
+    from core.digest_service import digest_configured, send_digest_text
+
+    warmup_max_days: int = int(payload.get("warmup_max_days", 7))
+    consecutive_failure_threshold: int = int(payload.get("consecutive_failure_threshold", 5))
+
+    transitions: list[dict] = []
+    scanned_count = 0
+
+    async with async_session() as session:
+        async with session.begin():
+            await apply_session_rls_context(session, tenant_id=tenant_id)
+            result = await session.execute(
+                sa_select(Account).where(Account.tenant_id == tenant_id)
+            )
+            all_accounts: list[Account] = list(result.scalars().all())
+            scanned_count = len(all_accounts)
+            now = utcnow()
+
+            for account in all_accounts:
+                prev_stage = account.lifecycle_stage
+
+                # frozen with expired cooldown → gate_review
+                if account.lifecycle_stage == "frozen" and account.cooldown_until is not None:
+                    if now >= account.cooldown_until:
+                        account.lifecycle_stage = "gate_review"
+                        account.cooldown_until = None
+                        transitions.append({
+                            "account_id": account.id,
+                            "from": "frozen",
+                            "to": "gate_review",
+                            "reason": "cooldown_expired",
+                        })
+
+                # warming_up too long → gate_review
+                elif account.lifecycle_stage == "warming_up" and account.created_at is not None:
+                    age_days = (now - account.created_at).total_seconds() / 86400
+                    if age_days >= warmup_max_days:
+                        account.lifecycle_stage = "gate_review"
+                        transitions.append({
+                            "account_id": account.id,
+                            "from": "warming_up",
+                            "to": "gate_review",
+                            "reason": "warmup_duration_exceeded",
+                        })
+
+                # excessive consecutive failures → quarantine
+                if (
+                    account.lifecycle_stage not in ("restricted", "frozen", "quarantine")
+                    and account.lifecycle_stage == prev_stage  # no transition yet this cycle
+                ):
+                    consec_str = account.restriction_reason or ""
+                    if consec_str.startswith("proxy_dead_x"):
+                        try:
+                            fails = int(consec_str.replace("proxy_dead_x", ""))
+                        except ValueError:
+                            fails = 0
+                        if fails >= consecutive_failure_threshold:
+                            account.lifecycle_stage = "frozen"
+                            account.restriction_reason = "quarantined_by_monitor"
+                            from datetime import timedelta
+                            account.quarantined_until = now + timedelta(hours=24)
+                            transitions.append({
+                                "account_id": account.id,
+                                "from": prev_stage,
+                                "to": "frozen",
+                                "reason": "consecutive_failures_threshold",
+                            })
+
+    if transitions and digest_configured():
+        lines = [f"Account lifecycle monitor — tenant {tenant_id}"]
+        for t in transitions:
+            lines.append(f"• account #{t['account_id']}: {t['from']} → {t['to']} ({t['reason']})")
+        try:
+            await send_digest_text("\n".join(lines))
+        except Exception as exc:
+            log.warning("account_lifecycle_monitor: digest send failed: %s", exc)
+
+    log.info(
+        "account_lifecycle_monitor: tenant=%s scanned=%d transitions=%d",
+        tenant_id,
+        scanned_count,
+        len(transitions),
+    )
+    return {"status": "completed", "tenant_id": tenant_id, "transitions": len(transitions), "details": transitions}
 
 
 async def farm_worker_loop(poll_interval: float = 2.0) -> None:

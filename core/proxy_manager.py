@@ -7,7 +7,7 @@
 import hashlib
 import re
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Any, Optional
 
 import aiohttp
 from python_socks import ProxyType
@@ -113,6 +113,22 @@ def parse_proxy_line(line: str, default_type: str = "socks5") -> Optional[ProxyC
 
     log.warning(f"Не удалось разобрать прокси: {line}")
     return None
+
+
+async def check_proxy_orm(proxy_orm: Any, manager: Optional["ProxyManager"] = None, timeout: int = 10) -> bool:
+    """Check liveness of a Proxy ORM row using ProxyManager.validate_proxy.
+
+    Returns True when the proxy responds successfully.
+    """
+    cfg = ProxyConfig(
+        proxy_type=str(proxy_orm.proxy_type or "http"),
+        host=str(proxy_orm.host),
+        port=int(proxy_orm.port),
+        username=proxy_orm.username or None,
+        password=proxy_orm.password or None,
+    )
+    _mgr = manager or ProxyManager()
+    return await _mgr.validate_proxy(cfg, timeout=timeout)
 
 
 class ProxyManager:

@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import {
   LayoutDashboard,
   Users,
+  Server,
   Bot,
   Flame,
   HeartPulse,
@@ -51,6 +52,7 @@ const NAV_GROUPS: NavGroup[] = [
     section: "Аккаунты",
     items: [
       { to: "/accounts", label: "Аккаунты", icon: Users },
+      { to: "/proxies", label: "Прокси", icon: Server },
       { to: "/farm", label: "Фермы", icon: Bot },
       { to: "/warmup", label: "Прогрев", icon: Flame },
       { to: "/health", label: "Здоровье", icon: HeartPulse },

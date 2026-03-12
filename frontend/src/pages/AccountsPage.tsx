@@ -1,6 +1,24 @@
 import { FormEvent, useEffect, useMemo, useState, useCallback, DragEvent } from "react";
 import { motion } from "framer-motion";
-import { Upload, Shield, Link, FileText, Clock, AlertTriangle, CheckCircle, User } from "lucide-react";
+import {
+  Upload,
+  Shield,
+  Link,
+  FileText,
+  Clock,
+  AlertTriangle,
+  CheckCircle,
+  User,
+  Activity,
+  Flame,
+  Play,
+  Square,
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  Archive,
+  Users,
+} from "lucide-react";
 import { apiFetch } from "../api";
 import { useAuth } from "../auth";
 
@@ -57,6 +75,28 @@ type TimelineResponse = {
   total: number;
 };
 
+type AccountStats = {
+  total: number;
+  active: number;
+  frozen: number;
+  warming_up: number;
+  proxied: number;
+  unproxied: number;
+  dead: number;
+};
+
+type BulkImportResult = {
+  imported: number;
+  skipped: number;
+  auto_proxied: number;
+  errors: string[];
+};
+
+type BulkActionResult = {
+  affected: number;
+  action: string;
+};
+
 /* ── animation helpers ── */
 
 const container = {
@@ -102,6 +142,19 @@ function timelineIcon(kind: string) {
   return <Clock size={14} />;
 }
 
+const STATUS_FILTERS = [
+  { value: "", label: "Все" },
+  { value: "active", label: "Активные" },
+  { value: "frozen", label: "Замороженные" },
+  { value: "warming_up", label: "На прогреве" },
+  { value: "dead", label: "Мёртвые" },
+  { value: "banned", label: "Забаненные" },
+  { value: "unknown", label: "Неизвестно" },
+];
+
+const PAGE_SIZE = 25;
+const monoFont = "'JetBrains Mono Variable', monospace";
+
 export function AccountsPage() {
   const { accessToken } = useAuth();
   const [accounts, setAccounts] = useState<AccountsResponse>({ items: [], total: 0 });
@@ -117,10 +170,36 @@ export function AccountsPage() {
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
+  /* ── New v2 state ── */
+  const [stats, setStats] = useState<AccountStats>({ total: 0, active: 0, frozen: 0, warming_up: 0, proxied: 0, unproxied: 0, dead: 0 });
+  const [statusFilter, setStatusFilter] = useState("");
+  const [page, setPage] = useState(0);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
+  const [bulkImportResult, setBulkImportResult] = useState<BulkImportResult | null>(null);
+  const [showBulkConfirm, setShowBulkConfirm] = useState<string | null>(null); // action name or null
+
+  /* ── data loading ── */
+
+  const loadStats = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const data = await apiFetch<AccountStats>("/v1/accounts/stats", { accessToken });
+      setStats(data);
+    } catch {
+      // fallback: compute from loaded accounts
+    }
+  }, [accessToken]);
+
   const loadState = useCallback(async () => {
     if (!accessToken) return;
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
+    params.set("offset", String(page * PAGE_SIZE));
+    if (statusFilter) params.set("status", statusFilter);
+
     const [accountsPayload, proxiesPayload] = await Promise.all([
-      apiFetch<AccountsResponse>("/v1/web/accounts", { accessToken }),
+      apiFetch<AccountsResponse>(`/v1/web/accounts?${params.toString()}`, { accessToken }),
       apiFetch<ProxiesResponse>("/v1/web/proxies/available", { accessToken }),
     ]);
     setAccounts(accountsPayload);
@@ -131,11 +210,29 @@ export function AccountsPage() {
     if (proxiesPayload.items.length && selectedProxyId === null) {
       setSelectedProxyId(proxiesPayload.items[0].id);
     }
-  }, [accessToken, selectedAccountId, selectedProxyId]);
+
+    // Compute stats locally if endpoint not available
+    if (stats.total === 0 && accountsPayload.total > 0) {
+      const all = accountsPayload.items;
+      setStats({
+        total: accountsPayload.total,
+        active: all.filter(a => ["active", "ok", "healthy", "connected"].includes(a.session_status.toLowerCase())).length,
+        frozen: all.filter(a => a.session_status.toLowerCase() === "frozen").length,
+        warming_up: all.filter(a => a.lifecycle_stage?.toLowerCase() === "warming_up").length,
+        proxied: all.filter(a => a.proxy !== null).length,
+        unproxied: all.filter(a => a.proxy === null).length,
+        dead: all.filter(a => ["dead", "banned"].includes(a.session_status.toLowerCase())).length,
+      });
+    }
+  }, [accessToken, selectedAccountId, selectedProxyId, page, statusFilter, stats.total]);
+
+  const reload = useCallback(async () => {
+    await Promise.all([loadState(), loadStats()]);
+  }, [loadState, loadStats]);
 
   useEffect(() => {
-    void loadState();
-  }, [loadState]);
+    void reload();
+  }, [reload]);
 
   const selectedAccount = useMemo(
     () => accounts.items.find((item) => item.id === selectedAccountId) || null,
@@ -152,6 +249,8 @@ export function AccountsPage() {
       .then(setTimeline)
       .catch(() => setTimeline(null));
   }, [accessToken, selectedAccountId, selectedAccount?.manual_notes]);
+
+  /* ── single pair upload ── */
 
   const uploadPair = async (event: FormEvent) => {
     event.preventDefault();
@@ -172,7 +271,7 @@ export function AccountsPage() {
       });
       setSelectedAccountId(result.account_id);
       setStatusMessage(`Аккаунт ${result.phone} загружен. Комплект файлов готов.`);
-      await loadState();
+      await reload();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "upload_failed");
     } finally {
@@ -195,7 +294,7 @@ export function AccountsPage() {
       });
       setStatusMessage("Прокси привязан к аккаунту.");
       setManualProxy("");
-      await loadState();
+      await reload();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "proxy_bind_failed");
     } finally {
@@ -213,7 +312,7 @@ export function AccountsPage() {
         accessToken,
       });
       setStatusMessage(`Проверка доступа завершена: ${result.audit.session_status}`);
-      await loadState();
+      await reload();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "audit_failed");
     } finally {
@@ -232,7 +331,7 @@ export function AccountsPage() {
         json: { notes: notesDraft },
       });
       setStatusMessage("Ручная заметка сохранена.");
-      await loadState();
+      await reload();
       const timelinePayload = await apiFetch<TimelineResponse>(`/v1/web/accounts/${selectedAccountId}/timeline`, { accessToken });
       setTimeline(timelinePayload);
     } catch (error) {
@@ -255,11 +354,120 @@ export function AccountsPage() {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
+    // For single pair mode
     for (const f of files) {
       if (f.name.endsWith(".session")) setSessionFile(f);
       if (f.name.endsWith(".json")) setMetadataFile(f);
     }
+    // For bulk mode: collect all relevant files
+    const bulkCandidates = files.filter(
+      f => f.name.endsWith(".session") || f.name.endsWith(".json") || f.name.endsWith(".zip")
+    );
+    if (bulkCandidates.length > 2) {
+      setBulkFiles(bulkCandidates);
+    }
   };
+
+  /* ── Bulk import ── */
+
+  const handleBulkDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    const relevant = files.filter(
+      f => f.name.endsWith(".session") || f.name.endsWith(".json") || f.name.endsWith(".zip")
+    );
+    setBulkFiles(prev => [...prev, ...relevant]);
+  };
+
+  const handleBulkFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const relevant = files.filter(
+      f => f.name.endsWith(".session") || f.name.endsWith(".json") || f.name.endsWith(".zip")
+    );
+    setBulkFiles(prev => [...prev, ...relevant]);
+  };
+
+  const removeBulkFile = (index: number) => {
+    setBulkFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleBulkImport = async () => {
+    if (!accessToken || bulkFiles.length === 0) {
+      setStatusMessage("Добавьте файлы для массового импорта.");
+      return;
+    }
+    setBusy(true);
+    setStatusMessage("");
+    setBulkImportResult(null);
+    try {
+      const body = new FormData();
+      for (const f of bulkFiles) {
+        body.append("files", f);
+      }
+      const result = await apiFetch<BulkImportResult>("/v1/accounts/bulk-import", {
+        method: "POST",
+        accessToken,
+        body,
+      });
+      setBulkImportResult(result);
+      setBulkFiles([]);
+      setStatusMessage(`Массовый импорт: ${result.imported} загружено, ${result.skipped} пропущено, ${result.auto_proxied} с авто-прокси.`);
+      await reload();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "bulk_import_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ── Bulk actions ── */
+
+  const toggleCheck = (id: number) => {
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleCheckAll = () => {
+    if (checkedIds.size === accounts.items.length) {
+      setCheckedIds(new Set());
+    } else {
+      setCheckedIds(new Set(accounts.items.map(a => a.id)));
+    }
+  };
+
+  const handleBulkAction = async (action: string) => {
+    if (!accessToken) return;
+    setShowBulkConfirm(null);
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const result = await apiFetch<BulkActionResult>("/v1/accounts/bulk-action", {
+        method: "POST",
+        accessToken,
+        json: {
+          action,
+          account_ids: checkedIds.size > 0 ? Array.from(checkedIds) : null,
+        },
+      });
+      setStatusMessage(`Действие "${action}" выполнено для ${result.affected} аккаунтов.`);
+      setCheckedIds(new Set());
+      await reload();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "bulk_action_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ── computed ── */
+
+  const totalPages = Math.max(1, Math.ceil(accounts.total / PAGE_SIZE));
+  const allChecked = accounts.items.length > 0 && checkedIds.size === accounts.items.length;
 
   return (
     <motion.div
@@ -268,6 +476,87 @@ export function AccountsPage() {
       initial="hidden"
       animate="show"
     >
+      {/* ── Stats bar ── */}
+      <motion.section
+        variants={item}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {[
+          { label: "Всего", value: stats.total, icon: Users, color: "var(--text)" },
+          { label: "Активные", value: stats.active, icon: Activity, color: "var(--accent)" },
+          { label: "Замороженные", value: stats.frozen, icon: AlertTriangle, color: "var(--warning)" },
+          { label: "На прогреве", value: stats.warming_up, icon: Flame, color: "var(--info)" },
+          { label: "С прокси", value: stats.proxied, icon: Shield, color: "var(--accent)" },
+          { label: "Без прокси", value: stats.unproxied, icon: AlertTriangle, color: "var(--danger)" },
+        ].map((card) => (
+          <article key={card.label} className="panel" style={{ borderTop: `2px solid ${card.color}`, padding: "12px 16px" }}>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <card.icon size={11} /> {card.label}
+            </div>
+            <div style={{
+              color: card.color,
+              fontFamily: monoFont,
+              fontSize: 24,
+              fontWeight: 600,
+            }}>
+              {card.value}
+            </div>
+          </article>
+        ))}
+      </motion.section>
+
+      {/* ── Bulk actions bar ── */}
+      <motion.section className="panel" variants={item}>
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Activity size={12} /> Массовые действия
+            </div>
+            <h2 style={{ color: "var(--text)" }}>
+              {checkedIds.size > 0
+                ? `Выбрано аккаунтов: ${checkedIds.size}`
+                : "Применить ко всем аккаунтам"}
+            </h2>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setShowBulkConfirm("warmup_all")}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Flame size={14} />
+            Прогрев всех
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setShowBulkConfirm("start_farm")}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Play size={14} />
+            Запустить ферму
+          </button>
+          <button
+            className="ghost-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setShowBulkConfirm("stop_farm")}
+            style={{ display: "flex", alignItems: "center", gap: 8 }}
+          >
+            <Square size={14} />
+            Остановить ферму
+          </button>
+        </div>
+      </motion.section>
+
       {/* ── Hero info cards ── */}
       <motion.section className="two-column-grid" variants={item}>
         <article className="panel" style={{ borderTop: "2px solid var(--accent)" }}>
@@ -280,7 +569,7 @@ export function AccountsPage() {
             </div>
           </div>
           <ul className="bullet-list">
-            <li>Принимает pair <code style={{ color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace", fontSize: 12 }}>.session + .json</code> и держит canonical storage.</li>
+            <li>Принимает pair <code style={{ color: "var(--accent)", fontFamily: monoFont, fontSize: 12 }}>.session + .json</code> и держит canonical storage.</li>
             <li>Показывает прокси, audit, lifecycle и следующий рекомендуемый шаг.</li>
             <li>Сохраняет историю действий и ручные заметки без запуска боевых Telegram-side действий.</li>
           </ul>
@@ -302,12 +591,134 @@ export function AccountsPage() {
         </article>
       </motion.section>
 
-      {/* ── Upload section ── */}
+      {/* ── Bulk import section ── */}
       <motion.section className="panel" variants={item}>
         <div className="panel-header">
           <div>
             <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Upload size={12} /> Step 1
+              <Archive size={12} /> Массовый импорт
+            </div>
+            <h2 style={{ color: "var(--text)" }}>Загрузить несколько аккаунтов</h2>
+          </div>
+        </div>
+        <div className="stack-form">
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleBulkDrop}
+            style={{
+              border: `2px dashed ${dragOver ? "var(--accent)" : "var(--border-bright)"}`,
+              borderRadius: 12,
+              padding: 24,
+              textAlign: "center",
+              background: dragOver ? "var(--accent-glow)" : "var(--surface-2)",
+              transition: "all 200ms ease",
+              cursor: "pointer",
+            }}
+          >
+            <Upload
+              size={28}
+              style={{ color: dragOver ? "var(--accent)" : "var(--muted)", marginBottom: 8 }}
+            />
+            <p style={{ color: "var(--text-secondary)", margin: "0 0 12px 0", fontSize: 13 }}>
+              Перетащите файлы (.session + .json пары или .zip) или выберите
+            </p>
+            <input
+              type="file"
+              multiple
+              accept=".session,.json,.zip"
+              onChange={handleBulkFileSelect}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                fontSize: 12,
+              }}
+            />
+          </div>
+
+          {bulkFiles.length > 0 ? (
+            <div style={{
+              padding: "12px 14px",
+              borderRadius: 8,
+              background: "var(--surface-2)",
+              border: "1px solid var(--border)",
+            }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>
+                Файлов к импорту: {bulkFiles.length}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 150, overflowY: "auto" }}>
+                {bulkFiles.map((f, i) => (
+                  <div key={`${f.name}-${i}`} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    background: "var(--surface)",
+                    fontSize: 12,
+                  }}>
+                    <span style={{ fontFamily: monoFont, color: "var(--accent)" }}>
+                      <CheckCircle size={10} style={{ marginRight: 4 }} />
+                      {f.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeBulkFile(i)}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "var(--muted)",
+                        cursor: "pointer",
+                        fontSize: 11,
+                      }}
+                    >
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <button
+                className="primary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void handleBulkImport()}
+                style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <Upload size={14} />
+                {busy ? "Импортируем..." : "Импортировать все"}
+              </button>
+            </div>
+          ) : null}
+
+          {bulkImportResult ? (
+            <div style={{
+              padding: "10px 14px",
+              borderRadius: 8,
+              background: "rgba(0,255,136,0.08)",
+              border: "1px solid rgba(0,255,136,0.2)",
+              fontSize: 13,
+              color: "var(--accent)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}>
+              <CheckCircle size={14} />
+              Загружено: {bulkImportResult.imported} | Пропущено: {bulkImportResult.skipped} | Авто-прокси: {bulkImportResult.auto_proxied}
+              {bulkImportResult.errors.length > 0 ? ` | Ошибки: ${bulkImportResult.errors.length}` : ""}
+            </div>
+          ) : null}
+        </div>
+      </motion.section>
+
+      {/* ── Single pair upload section ── */}
+      <motion.section className="panel" variants={item}>
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Upload size={12} /> Один аккаунт
             </div>
             <h2 style={{ color: "var(--text)" }}>Загрузите pair .session + .json</h2>
           </div>
@@ -351,7 +762,7 @@ export function AccountsPage() {
                   }}
                 />
                 {sessionFile && (
-                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
+                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: monoFont }}>
                     <CheckCircle size={10} style={{ marginRight: 4 }} />{sessionFile.name}
                   </span>
                 )}
@@ -372,7 +783,7 @@ export function AccountsPage() {
                   }}
                 />
                 {metadataFile && (
-                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
+                  <span style={{ fontSize: 11, color: "var(--accent)", fontFamily: monoFont }}>
                     <CheckCircle size={10} style={{ marginRight: 4 }} />{metadataFile.name}
                   </span>
                 )}
@@ -410,7 +821,7 @@ export function AccountsPage() {
                 border: "1px solid var(--border)",
                 background: "var(--surface-2)",
                 color: "var(--text)",
-                fontFamily: "'JetBrains Mono Variable', monospace",
+                fontFamily: monoFont,
                 fontSize: 13,
               }}
             >
@@ -452,7 +863,7 @@ export function AccountsPage() {
                 border: "1px solid var(--border)",
                 background: "var(--surface-2)",
                 color: "var(--text)",
-                fontFamily: "'JetBrains Mono Variable', monospace",
+                fontFamily: monoFont,
                 fontSize: 13,
               }}
             />
@@ -480,7 +891,6 @@ export function AccountsPage() {
           </div>
           <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 16px 0" }}>
             Этот шаг показывает, что сейчас видит система: session status, lifecycle и recommended next action.
-            До конца Sprint 3 это safe shell без реального execution path.
           </p>
           <button
             className="ghost-button"
@@ -507,7 +917,7 @@ export function AccountsPage() {
             }}>
               <AlertTriangle size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />
               <span>
-                Для <span style={{ color: "var(--accent)", fontFamily: "'JetBrains Mono Variable', monospace" }}>{selectedAccount.phone}</span>: следующий шаг —{" "}
+                Для <span style={{ color: "var(--accent)", fontFamily: monoFont }}>{selectedAccount.phone}</span>: следующий шаг —{" "}
                 <strong style={{ color: "var(--text)" }}>{selectedAccount.recommended_next_action}</strong>
               </span>
             </div>
@@ -524,13 +934,34 @@ export function AccountsPage() {
             </div>
             <h2 style={{ color: "var(--text)" }}>Аккаунты в workspace</h2>
           </div>
-          <span style={{
-            fontFamily: "'JetBrains Mono Variable', monospace",
-            fontSize: 12,
-            color: "var(--muted)",
-          }}>
-            {accounts.total} total
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Filter size={14} style={{ color: "var(--muted)" }} />
+              <select
+                value={statusFilter}
+                onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                  background: "var(--surface-2)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                }}
+              >
+                {STATUS_FILTERS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+            <span style={{
+              fontFamily: monoFont,
+              fontSize: 12,
+              color: "var(--muted)",
+            }}>
+              {accounts.total} total
+            </span>
+          </div>
         </div>
 
         {statusMessage ? (
@@ -569,6 +1000,14 @@ export function AccountsPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={toggleCheckAll}
+                    title="Выбрать все"
+                  />
+                </th>
                 <th>Phone</th>
                 <th>Proxy</th>
                 <th>Session status</th>
@@ -592,8 +1031,15 @@ export function AccountsPage() {
                       background: a.id === selectedAccountId ? "var(--surface-2)" : undefined,
                     }}
                   >
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={checkedIds.has(a.id)}
+                        onChange={() => toggleCheck(a.id)}
+                      />
+                    </td>
                     <td style={{
-                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontFamily: monoFont,
                       fontSize: 13,
                       fontWeight: 500,
                       color: "var(--text)",
@@ -601,7 +1047,7 @@ export function AccountsPage() {
                       {a.phone}
                     </td>
                     <td style={{
-                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontFamily: monoFont,
                       fontSize: 12,
                       color: a.proxy ? "var(--text-secondary)" : "var(--muted)",
                     }}>
@@ -623,7 +1069,7 @@ export function AccountsPage() {
                       </span>
                     </td>
                     <td style={{
-                      fontFamily: "'JetBrains Mono Variable', monospace",
+                      fontFamily: monoFont,
                       fontSize: 12,
                       color: "var(--muted)",
                     }}>
@@ -672,6 +1118,41 @@ export function AccountsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {accounts.total > PAGE_SIZE ? (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            marginTop: 16,
+            paddingTop: 12,
+            borderTop: "1px solid var(--border)",
+          }}>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={page === 0}
+              onClick={() => setPage(page - 1)}
+              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}
+            >
+              <ChevronLeft size={14} /> Назад
+            </button>
+            <span style={{ fontFamily: monoFont, fontSize: 12, color: "var(--text-secondary)" }}>
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={page >= totalPages - 1}
+              onClick={() => setPage(page + 1)}
+              style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}
+            >
+              Далее <ChevronRight size={14} />
+            </button>
+          </div>
+        ) : null}
       </motion.section>
 
       {/* ── Notes + Timeline ── */}
@@ -753,7 +1234,7 @@ export function AccountsPage() {
                       <span style={{
                         color: "var(--muted)",
                         fontSize: 11,
-                        fontFamily: "'JetBrains Mono Variable', monospace",
+                        fontFamily: monoFont,
                         flexShrink: 0,
                       }}>
                         {t.created_at || "---"}
@@ -773,7 +1254,7 @@ export function AccountsPage() {
                 textAlign: "center",
                 color: "var(--muted)",
                 fontSize: 13,
-                fontFamily: "'JetBrains Mono Variable', monospace",
+                fontFamily: monoFont,
               }}>
                 <Clock size={20} style={{ marginBottom: 8, opacity: 0.5 }} />
                 <p style={{ margin: 0 }}>Пока нет истории шагов.</p>
@@ -783,6 +1264,46 @@ export function AccountsPage() {
           </div>
         </article>
       </motion.section>
+
+      {/* ── Bulk action confirm modal ── */}
+      {showBulkConfirm ? (
+        <div className="modal-overlay" onClick={() => setShowBulkConfirm(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Подтверждение</div>
+                <h2 style={{ color: "var(--text)" }}>
+                  {showBulkConfirm === "warmup_all" && "Запустить прогрев?"}
+                  {showBulkConfirm === "start_farm" && "Запустить ферму?"}
+                  {showBulkConfirm === "stop_farm" && "Остановить ферму?"}
+                </h2>
+              </div>
+            </div>
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 16px" }}>
+              {checkedIds.size > 0
+                ? `Действие будет применено к ${checkedIds.size} выбранным аккаунтам.`
+                : "Действие будет применено ко всем аккаунтам в workspace."}
+            </p>
+            <div className="actions-row">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void handleBulkAction(showBulkConfirm)}
+              >
+                {busy ? "Выполняем..." : "Подтвердить"}
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setShowBulkConfirm(null)}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </motion.div>
   );
 }
