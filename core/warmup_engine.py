@@ -7,7 +7,7 @@ the actual Telegram activity loop.
 
 Public API
 ----------
-engine = WarmupEngine(session_manager)
+engine = WarmupEngine(session_pool=None)
 await engine.start_warmup(config_id, account_ids, tenant_id, db_session)
 await engine.stop_warmup(config_id, tenant_id, db_session)
 await engine.run_warmup_session(session_id, db_session)         # sync/test path
@@ -19,8 +19,12 @@ lifespan or a dedicated module-level instance).
 Safety rules enforced:
   - Active-hours gate checked on every iteration.
   - Hourly action-rate bucket: safety_limit_actions_per_hour is hard ceiling.
-  - FloodWaitError -> quarantine the account and wait (with jitter).
-  - FrozenMethodInvalidError -> stop the session immediately.
+  - FloodWaitError -> quarantine the account + call lifecycle.on_flood_wait().
+  - FrozenMethodInvalidError -> call lifecycle.on_frozen() then stop session.
+  - SessionDeadError -> call lifecycle.on_session_dead() then stop session.
+  - Session completes all planned actions -> call lifecycle.on_warmup_complete().
+  - NEVER calls send_code_request.
+  - Clients are always released in a finally block via SessionPool.
 """
 
 from __future__ import annotations
@@ -34,7 +38,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
+from core.account_lifecycle import AccountLifecycle
 from core.anti_detection import AntiDetection
+from core.session_pool import PoolCapacityError, SessionDeadError, SessionPool
 from storage.models import Account, AccountHealthScore, WarmupConfig, WarmupSession
 from storage.sqlite_db import apply_session_rls_context, async_session
 from utils.helpers import utcnow
@@ -108,11 +114,19 @@ class WarmupEngine:
         _stop_events[config_id][account_id] = asyncio.Event
     """
 
-    def __init__(self, session_manager=None) -> None:
+    def __init__(
+        self,
+        session_pool: Optional[SessionPool] = None,
+        # Legacy parameter kept for backward compat; ignored when session_pool is given.
+        session_manager=None,
+    ) -> None:
         # {config_id: {account_id: Task}}
         self._tasks: Dict[int, Dict[int, asyncio.Task]] = {}
         # {config_id: {account_id: asyncio.Event}}  — stop signals
         self._stop_events: Dict[int, Dict[int, asyncio.Event]] = {}
+        # Prefer the new SessionPool; fall back to legacy manager for compat.
+        self._session_pool: Optional[SessionPool] = session_pool
+        # Keep legacy reference so existing callers that pass session_manager= still work.
         self._session_mgr = session_manager
 
     # ------------------------------------------------------------------
@@ -327,11 +341,53 @@ class WarmupEngine:
                 "reason": "account_not_found",
             }
 
-        client = (
-            self._session_mgr.get_client(account.phone)
-            if self._session_mgr
-            else None
-        )
+        account_id = ws.account_id
+
+        # Acquire a Telethon client from SessionPool (preferred) or legacy manager.
+        client = None
+        client_from_pool = False
+
+        if self._session_pool is not None:
+            try:
+                client = await self._session_pool.get_client(
+                    account_id, db_session=db_session
+                )
+                client_from_pool = True
+            except SessionDeadError as exc:
+                log.warning(
+                    f"WarmupEngine: session dead for account {account_id}: {exc}"
+                )
+                ws.status = STATUS_FAILED
+                ws.completed_at = utcnow()
+                await db_session.flush()
+                # Lifecycle: mark account as dead
+                lifecycle = AccountLifecycle(db_session)
+                try:
+                    await lifecycle.on_session_dead(account_id)
+                except Exception as lc_exc:
+                    log.debug(
+                        f"WarmupEngine: lifecycle.on_session_dead skipped: {lc_exc}"
+                    )
+                return {
+                    "session_id": session_id,
+                    "status": STATUS_FAILED,
+                    "reason": "session_dead",
+                }
+            except PoolCapacityError as exc:
+                log.warning(
+                    f"WarmupEngine: pool full for account {account_id}: {exc}"
+                )
+                ws.status = STATUS_FAILED
+                ws.completed_at = utcnow()
+                await db_session.flush()
+                return {
+                    "session_id": session_id,
+                    "status": STATUS_FAILED,
+                    "reason": "pool_capacity",
+                }
+        elif self._session_mgr is not None:
+            client = self._session_mgr.get_client(account.phone)
+
         if client is None:
             ws.status = STATUS_FAILED
             ws.completed_at = utcnow()
@@ -346,6 +402,8 @@ class WarmupEngine:
         raw = config.target_channels
         if isinstance(raw, list):
             target_channels = [str(c) for c in raw if c]
+
+        lifecycle = AccountLifecycle(db_session)
 
         try:
             if config.enable_read_channels and actions_done < limit:
@@ -369,6 +427,12 @@ class WarmupEngine:
             ws.status = STATUS_FAILED
             ws.completed_at = utcnow()
             await db_session.flush()
+            try:
+                await lifecycle.on_flood_wait(account_id, exc.seconds)
+            except Exception as lc_exc:
+                log.debug(
+                    f"WarmupEngine: lifecycle.on_flood_wait skipped: {lc_exc}"
+                )
             return {
                 "session_id": session_id,
                 "status": STATUS_FAILED,
@@ -380,11 +444,28 @@ class WarmupEngine:
             ws.status = STATUS_FAILED
             ws.completed_at = utcnow()
             await db_session.flush()
+            try:
+                await lifecycle.on_frozen(account_id)
+            except Exception as lc_exc:
+                log.debug(
+                    f"WarmupEngine: lifecycle.on_frozen skipped: {lc_exc}"
+                )
             return {
                 "session_id": session_id,
                 "status": STATUS_FAILED,
                 "reason": "account_frozen",
             }
+        finally:
+            if client_from_pool and self._session_pool is not None:
+                await self._session_pool.release_client(account_id)
+
+        # All planned actions completed — advance lifecycle.
+        try:
+            await lifecycle.on_warmup_complete(account_id)
+        except Exception as lc_exc:
+            log.debug(
+                f"WarmupEngine: lifecycle.on_warmup_complete skipped: {lc_exc}"
+            )
 
         ws.status = STATUS_COMPLETED
         ws.actions_performed = actions_done
@@ -479,7 +560,7 @@ class WarmupEngine:
                     await _interruptible_sleep(_RATE_CHECK_INTERVAL, stop_event)
                     continue
 
-                # Resolve Telethon client.
+                # Resolve Telethon client via SessionPool (preferred) or legacy.
                 client = await self._get_client(account_id, tenant_id)
                 if client is None:
                     log.warning(
@@ -489,8 +570,9 @@ class WarmupEngine:
                     await _interruptible_sleep(60.0, stop_event)
                     continue
 
-                # Dispatch one action.
+                # Dispatch one action; always release pool client afterward.
                 action_done = False
+                client_from_pool = self._session_pool is not None
                 try:
                     action_done = await self._execute_one_action(
                         client=client,
@@ -509,6 +591,9 @@ class WarmupEngine:
                         STATUS_FAILED,
                         completed_at=utcnow(),
                     )
+                    await self._run_lifecycle(
+                        account_id, tenant_id, "frozen"
+                    )
                     return
                 except _QuarantineError as exc:
                     log.warning(
@@ -516,10 +601,16 @@ class WarmupEngine:
                         f"{exc.seconds}s, quarantining"
                     )
                     await self._quarantine_account(account_id, tenant_id, exc.seconds)
+                    await self._run_lifecycle(
+                        account_id, tenant_id, "flood_wait", seconds=exc.seconds
+                    )
                     await _interruptible_sleep(
                         min(exc.seconds * 1.5, 3600.0), stop_event
                     )
                     continue
+                finally:
+                    if client_from_pool and self._session_pool is not None:
+                        await self._session_pool.release_client(account_id)
 
                 if action_done:
                     actions_performed += 1
@@ -531,7 +622,7 @@ class WarmupEngine:
 
                 await anti_detection.inter_action_delay()
 
-            # Window ended normally.
+            # Window ended normally — advance lifecycle to gate_review.
             next_at = utcnow() + timedelta(
                 hours=config.interval_between_sessions_hours or 6
             )
@@ -541,6 +632,7 @@ class WarmupEngine:
                 actions_performed,
                 next_session_at=next_at,
             )
+            await self._run_lifecycle(account_id, tenant_id, "warmup_complete")
             log.info(
                 f"WarmupEngine: session {warmup_session_id} completed "
                 f"({actions_performed} actions), next at {next_at.isoformat()}"
@@ -905,15 +997,47 @@ class WarmupEngine:
             )
 
     # ------------------------------------------------------------------
-    # Session manager integration
+    # Client acquisition
     # ------------------------------------------------------------------
 
     async def _get_client(self, account_id: int, tenant_id: int):
         """
         Return a connected Telethon client for *account_id*, or None.
 
-        Connects via the SessionManager if the client is not already pooled.
+        Uses SessionPool when available.  Falls back to the legacy
+        SessionManager for backward compatibility.
+
+        On SessionDeadError the account lifecycle is advanced to "dead" and
+        None is returned so the caller can skip and retry later.
         """
+        # New path: SessionPool (account_id-keyed, fully async).
+        if self._session_pool is not None:
+            try:
+                async with async_session() as sess:
+                    async with sess.begin():
+                        await apply_session_rls_context(sess, tenant_id=tenant_id)
+                        client = await self._session_pool.get_client(
+                            account_id, db_session=sess
+                        )
+                return client
+            except SessionDeadError as exc:
+                log.warning(
+                    f"WarmupEngine: session dead account={account_id}: {exc}"
+                )
+                await self._run_lifecycle(account_id, tenant_id, "session_dead")
+                return None
+            except PoolCapacityError as exc:
+                log.warning(
+                    f"WarmupEngine: pool full, cannot acquire account={account_id}: {exc}"
+                )
+                return None
+            except Exception as exc:
+                log.warning(
+                    f"WarmupEngine: _get_client (pool) [account={account_id}]: {exc}"
+                )
+                return None
+
+        # Legacy path: SessionManager (phone-keyed).
         if self._session_mgr is None:
             return None
 
@@ -949,6 +1073,49 @@ class WarmupEngine:
                 f"WarmupEngine: _get_client [account={account_id}]: {exc}"
             )
             return None
+
+    # ------------------------------------------------------------------
+    # Lifecycle transition helper
+    # ------------------------------------------------------------------
+
+    async def _run_lifecycle(
+        self,
+        account_id: int,
+        tenant_id: int,
+        event: str,
+        *,
+        seconds: int = 0,
+    ) -> None:
+        """
+        Fire an AccountLifecycle event-handler in a short-lived DB session.
+
+        Errors are swallowed and logged at DEBUG level so a lifecycle failure
+        never interrupts the warmup loop.
+
+        event values:
+          "warmup_complete" -> on_warmup_complete
+          "flood_wait"      -> on_flood_wait(seconds)
+          "frozen"          -> on_frozen
+          "session_dead"    -> on_session_dead
+        """
+        try:
+            async with async_session() as sess:
+                async with sess.begin():
+                    await apply_session_rls_context(sess, tenant_id=tenant_id)
+                    lifecycle = AccountLifecycle(sess)
+                    if event == "warmup_complete":
+                        await lifecycle.on_warmup_complete(account_id)
+                    elif event == "flood_wait":
+                        await lifecycle.on_flood_wait(account_id, seconds)
+                    elif event == "frozen":
+                        await lifecycle.on_frozen(account_id)
+                    elif event == "session_dead":
+                        await lifecycle.on_session_dead(account_id)
+        except Exception as exc:
+            log.debug(
+                f"WarmupEngine._run_lifecycle [{event}] "
+                f"account={account_id}: {exc}"
+            )
 
 
 # ------------------------------------------------------------------

@@ -406,6 +406,12 @@ def quarantine_noncanonical_assets(
         for source, target in file_moves:
             if not source.exists():
                 continue
+            # Path traversal protection: ensure source is within base_dir
+            try:
+                source.resolve().relative_to(base_dir.resolve())
+            except ValueError:
+                skipped.append({"phone": phone, "reason": f"path_traversal_blocked:{source}"})
+                continue
             moved_phones.add(phone)
             moved.append(str(source))
             if dry_run:

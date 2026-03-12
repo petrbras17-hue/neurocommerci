@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Archive,
   Users,
+  Download,
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { useAuth } from "../auth";
@@ -92,9 +93,66 @@ type BulkImportResult = {
   errors: string[];
 };
 
+type ProxyLoadItem = {
+  proxy_id: number;
+  host: string;
+  port: number;
+  bindings_count: number;
+  health_status: string;
+  last_checked: string | null;
+};
+
+type AutoAssignResult = {
+  ok: boolean;
+  account_id: number;
+  proxy_id: number;
+  proxy_host: string;
+  strategy: string;
+};
+
+type MassAssignResult = {
+  assigned: Array<{ account_id: number; proxy_id: number }>;
+  skipped: number[];
+  errors: Array<{ account_id: number; reason: string }>;
+};
+
 type BulkActionResult = {
   affected: number;
   action: string;
+};
+
+type PendingReviewAccount = {
+  id: number;
+  phone: string;
+  lifecycle_stage: string;
+  health_status: string;
+  status: string;
+  health_score: number | null;
+  survivability_score: number | null;
+  warmup_sessions_completed: number;
+  warmup_sessions_total: number;
+  warmup_actions_performed: number;
+  proxy_status: "bound" | "unbound";
+  proxy_id: number | null;
+  manual_notes: string | null;
+  created_at: string | null;
+  last_active_at: string | null;
+};
+
+type PendingReviewResponse = {
+  items: PendingReviewAccount[];
+  total: number;
+};
+
+
+type DuplicateEntry = {
+  phone: string;
+  existing_account_id: number;
+};
+
+type CheckDuplicatesResult = {
+  duplicates: DuplicateEntry[];
+  new: string[];
 };
 
 /* ── animation helpers ── */
@@ -178,6 +236,23 @@ export function AccountsPage() {
   const [bulkFiles, setBulkFiles] = useState<File[]>([]);
   const [bulkImportResult, setBulkImportResult] = useState<BulkImportResult | null>(null);
   const [showBulkConfirm, setShowBulkConfirm] = useState<string | null>(null); // action name or null
+  const [tdataPasscode, setTdataPasscode] = useState("");
+  const [discoveringPhone, setDiscoveringPhone] = useState<number | null>(null);
+  const [duplicateWarnings, setDuplicateWarnings] = useState<DuplicateEntry[]>([]);
+  const [exportBusy, setExportBusy] = useState(false);
+
+  /* ── Approval gate state ── */
+  const [showReviewTab, setShowReviewTab] = useState(false);
+  const [pendingReview, setPendingReview] = useState<PendingReviewResponse>({ items: [], total: 0 });
+  const [reviewCheckedIds, setReviewCheckedIds] = useState<Set<number>>(new Set());
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState<number | null>(null); // account_id
+  const [rejectReason, setRejectReason] = useState("");
+
+  /* ── Smart proxy routing state ── */
+  const [autoAssignStrategy, setAutoAssignStrategy] = useState<"healthiest" | "round_robin" | "random">("healthiest");
+  const [proxyLoad, setProxyLoad] = useState<ProxyLoadItem[]>([]);
+  const [proxyLoadVisible, setProxyLoadVisible] = useState(false);
 
   /* ── data loading ── */
 
@@ -227,8 +302,8 @@ export function AccountsPage() {
   }, [accessToken, selectedAccountId, selectedProxyId, page, statusFilter, stats.total]);
 
   const reload = useCallback(async () => {
-    await Promise.all([loadState(), loadStats()]);
-  }, [loadState, loadStats]);
+    await Promise.all([loadState(), loadStats(), loadPendingReview()]);
+  }, [loadState, loadStats]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void reload();
@@ -297,6 +372,84 @@ export function AccountsPage() {
       await reload();
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "proxy_bind_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* ── Smart proxy routing handlers ── */
+
+  const autoAssignProxy = async () => {
+    if (!accessToken || !selectedAccountId) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const result = await apiFetch<AutoAssignResult>("/v1/proxies/auto-assign", {
+        method: "POST",
+        accessToken,
+        json: { account_id: selectedAccountId, strategy: autoAssignStrategy },
+      });
+      setStatusMessage(`Авто-назначен прокси ${result.proxy_host} (стратегия: ${result.strategy}).`);
+      await reload();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "auto_assign_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const massAssignProxies = async () => {
+    if (!accessToken) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const unproxiedIds = accounts.items
+        .filter(a => a.proxy_id === null)
+        .map(a => a.id);
+      if (unproxiedIds.length === 0) {
+        setStatusMessage("Все аккаунты уже имеют прокси.");
+        return;
+      }
+      const result = await apiFetch<MassAssignResult>("/v1/proxies/mass-assign", {
+        method: "POST",
+        accessToken,
+        json: { account_ids: unproxiedIds, strategy: autoAssignStrategy },
+      });
+      setStatusMessage(
+        `Назначено: ${result.assigned.length}, пропущено: ${result.skipped.length}, ошибок: ${result.errors.length}.`
+      );
+      await reload();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "mass_assign_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadProxyLoad = async () => {
+    if (!accessToken) return;
+    try {
+      const data = await apiFetch<{ items: ProxyLoadItem[]; total: number }>("/v1/proxies/load", { accessToken });
+      setProxyLoad(data.items);
+      setProxyLoadVisible(true);
+    } catch {
+      setStatusMessage("Не удалось загрузить статистику прокси.");
+    }
+  };
+
+  const cleanupDeadBindings = async () => {
+    if (!accessToken) return;
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const result = await apiFetch<{ unbound_count: number; affected_accounts: number[] }>(
+        "/v1/proxies/cleanup-dead",
+        { method: "POST", accessToken }
+      );
+      setStatusMessage(`Очищено мёртвых привязок: ${result.unbound_count}.`);
+      await reload();
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "cleanup_failed");
     } finally {
       setBusy(false);
     }
@@ -400,10 +553,22 @@ export function AccountsPage() {
     setBusy(true);
     setStatusMessage("");
     setBulkImportResult(null);
+    setDuplicateWarnings([]);
+
+    // Pre-check duplicates before uploading
+    const dupes = await checkDuplicates(bulkFiles);
+    if (dupes.length > 0) {
+      setDuplicateWarnings(dupes);
+      // Still proceed — server will upsert; warnings are informational
+    }
+
     try {
       const body = new FormData();
       for (const f of bulkFiles) {
         body.append("files", f);
+      }
+      if (tdataPasscode) {
+        body.append("tdata_passcode", tdataPasscode);
       }
       const result = await apiFetch<BulkImportResult>("/v1/accounts/bulk-import", {
         method: "POST",
@@ -418,6 +583,89 @@ export function AccountsPage() {
       setStatusMessage(error instanceof Error ? error.message : "bulk_import_failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  /* ── Duplicate pre-check before bulk import ── */
+
+  const checkDuplicates = async (files: File[]): Promise<DuplicateEntry[]> => {
+    if (!accessToken) return [];
+    // Extract phone digits from .session and .json filenames
+    const phones: string[] = [];
+    for (const f of files) {
+      const lower = f.name.toLowerCase();
+      if (lower.endsWith(".session") || lower.endsWith(".json")) {
+        const stem = f.name.replace(/\.[^.]+$/, "");
+        const digits = stem.replace(/\D/g, "");
+        if (digits) phones.push(`+${digits}`);
+      }
+    }
+    if (phones.length === 0) return [];
+    try {
+      const result = await apiFetch<CheckDuplicatesResult>("/v1/accounts/check-duplicates", {
+        method: "POST",
+        accessToken,
+        json: { phones: [...new Set(phones)] },
+      });
+      return result.duplicates;
+    } catch {
+      return [];
+    }
+  };
+
+  /* ── Export ── */
+
+  const handleExport = async (format: "csv" | "json") => {
+    if (!accessToken) return;
+    setExportBusy(true);
+    try {
+      const params = new URLSearchParams({ format });
+      if (statusFilter) params.set("status", statusFilter);
+      const resp = await fetch(`/v1/accounts/export?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!resp.ok) {
+        setStatusMessage(`Экспорт не удался: ${resp.status}`);
+        return;
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = format === "json" ? "accounts.json" : "accounts.csv";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "export_failed");
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  /* ── Phone discovery for TData accounts ── */
+  const handleDiscoverPhone = async (accountId: number) => {
+    if (!accessToken) return;
+    setDiscoveringPhone(accountId);
+    try {
+      const result = await apiFetch<{
+        ok: boolean;
+        phone?: string;
+        first_name?: string;
+        error?: string;
+        renamed?: boolean;
+      }>(`/v1/accounts/${accountId}/discover-phone`, { method: "POST", accessToken });
+      if (result.ok) {
+        setStatusMessage(`Телефон определён: ${result.phone}${result.first_name ? ` (${result.first_name})` : ""}${result.renamed ? " — файлы переименованы" : ""}`);
+        await reload();
+      } else {
+        setStatusMessage(`Ошибка определения телефона: ${result.error || "unknown"}`);
+      }
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "discover_phone_failed");
+    } finally {
+      setDiscoveringPhone(null);
     }
   };
 
@@ -461,6 +709,92 @@ export function AccountsPage() {
       setStatusMessage(error instanceof Error ? error.message : "bulk_action_failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+
+  /* ── Approval gate actions ── */
+
+  const loadPendingReview = async () => {
+    if (!accessToken) return;
+    try {
+      const data = await apiFetch<PendingReviewResponse>("/v1/accounts/pending-review?limit=100&offset=0", { accessToken });
+      setPendingReview(data);
+    } catch {
+      // silent
+    }
+  };
+
+  const handleApprove = async (accountId: number) => {
+    if (!accessToken) return;
+    setReviewBusy(true);
+    try {
+      await apiFetch(`/v1/accounts/${accountId}/approve`, { method: "POST", accessToken });
+      setStatusMessage(`Аккаунт #${accountId} одобрен — статус: execution_ready`);
+      await Promise.all([reload(), loadPendingReview()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "approve_failed");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const handleReject = async (accountId: number, reason: string) => {
+    if (!accessToken || !reason.trim()) return;
+    setReviewBusy(true);
+    try {
+      await apiFetch(`/v1/accounts/${accountId}/reject`, {
+        method: "POST",
+        accessToken,
+        json: { reason },
+      });
+      setStatusMessage(`Аккаунт #${accountId} возвращён на прогрев. Причина: ${reason}`);
+      setShowRejectModal(null);
+      setRejectReason("");
+      await Promise.all([reload(), loadPendingReview()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "reject_failed");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const handleBulkApproveReview = async () => {
+    if (!accessToken || reviewCheckedIds.size === 0) return;
+    setReviewBusy(true);
+    try {
+      const result = await apiFetch<{ ok: boolean; approved_count: number; errors: Array<{ account_id: number; error: string }> }>(
+        "/v1/accounts/bulk-approve",
+        {
+          method: "POST",
+          accessToken,
+          json: { account_ids: Array.from(reviewCheckedIds) },
+        }
+      );
+      setStatusMessage(`Одобрено аккаунтов: ${result.approved_count}. Ошибок: ${result.errors.length}`);
+      setReviewCheckedIds(new Set());
+      await Promise.all([reload(), loadPendingReview()]);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "bulk_approve_failed");
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
+  const toggleReviewCheck = (id: number) => {
+    setReviewCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleReviewCheckAll = () => {
+    if (reviewCheckedIds.size === pendingReview.items.length) {
+      setReviewCheckedIds(new Set());
+    } else {
+      setReviewCheckedIds(new Set(pendingReview.items.map(a => a.id)));
     }
   };
 
@@ -554,6 +888,29 @@ export function AccountsPage() {
             <Square size={14} />
             Остановить ферму
           </button>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Экспорт:</span>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={exportBusy}
+              onClick={() => void handleExport("csv")}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", fontSize: 12 }}
+            >
+              <Download size={12} />
+              CSV
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={exportBusy}
+              onClick={() => void handleExport("json")}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", fontSize: 12 }}
+            >
+              <Download size={12} />
+              JSON
+            </button>
+          </div>
         </div>
       </motion.section>
 
@@ -569,7 +926,7 @@ export function AccountsPage() {
             </div>
           </div>
           <ul className="bullet-list">
-            <li>Принимает pair <code style={{ color: "var(--accent)", fontFamily: monoFont, fontSize: 12 }}>.session + .json</code> и держит canonical storage.</li>
+            <li>Принимает pair <code style={{ color: "var(--accent)", fontFamily: monoFont, fontSize: 12 }}>.session + .json</code> или <code style={{ color: "var(--accent)", fontFamily: monoFont, fontSize: 12 }}>TData ZIP</code> и держит canonical storage.</li>
             <li>Показывает прокси, audit, lifecycle и следующий рекомендуемый шаг.</li>
             <li>Сохраняет историю действий и ручные заметки без запуска боевых Telegram-side действий.</li>
           </ul>
@@ -621,7 +978,7 @@ export function AccountsPage() {
               style={{ color: dragOver ? "var(--accent)" : "var(--muted)", marginBottom: 8 }}
             />
             <p style={{ color: "var(--text-secondary)", margin: "0 0 12px 0", fontSize: 13 }}>
-              Перетащите файлы (.session + .json пары или .zip) или выберите
+              Перетащите файлы (.session + .json пары, TData ZIP, или обычный .zip) или выберите
             </p>
             <input
               type="file"
@@ -650,19 +1007,28 @@ export function AccountsPage() {
                 Файлов к импорту: {bulkFiles.length}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 150, overflowY: "auto" }}>
-                {bulkFiles.map((f, i) => (
+                {bulkFiles.map((f, i) => {
+                  const stem = f.name.replace(/\.[^.]+$/, "");
+                  const digits = stem.replace(/\D/g, "");
+                  const isDuplicate = digits ? duplicateWarnings.some(d => d.phone === `+${digits}`) : false;
+                  return (
                   <div key={`${f.name}-${i}`} style={{
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
                     padding: "4px 8px",
                     borderRadius: 6,
-                    background: "var(--surface)",
+                    background: isDuplicate ? "rgba(255,170,0,0.06)" : "var(--surface)",
+                    border: isDuplicate ? "1px solid rgba(255,170,0,0.25)" : "1px solid transparent",
                     fontSize: 12,
                   }}>
-                    <span style={{ fontFamily: monoFont, color: "var(--accent)" }}>
-                      <CheckCircle size={10} style={{ marginRight: 4 }} />
+                    <span style={{ fontFamily: monoFont, color: isDuplicate ? "var(--warning)" : "var(--accent)" }}>
+                      {isDuplicate
+                        ? <AlertTriangle size={10} style={{ marginRight: 4 }} />
+                        : <CheckCircle size={10} style={{ marginRight: 4 }} />
+                      }
                       {f.name}
+                      {isDuplicate && <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.7 }}>(дубль)</span>}
                     </span>
                     <button
                       type="button"
@@ -678,8 +1044,54 @@ export function AccountsPage() {
                       x
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
+              {duplicateWarnings.length > 0 && (
+                <div style={{
+                  marginTop: 8,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: "rgba(255,170,0,0.08)",
+                  border: "1px solid rgba(255,170,0,0.3)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <AlertTriangle size={12} style={{ color: "var(--warning)" }} />
+                    <span style={{ fontSize: 12, color: "var(--warning)", fontWeight: 500 }}>
+                      {duplicateWarnings.length} аккаунт{duplicateWarnings.length > 1 ? "а уже существуют" : " уже существует"} — будут обновлены
+                    </span>
+                  </div>
+                  {duplicateWarnings.map(d => (
+                    <div key={d.phone} style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: monoFont, paddingLeft: 18 }}>
+                      {d.phone} (ID: {d.existing_account_id})
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {bulkFiles.some(f => f.name.toLowerCase().endsWith(".zip")) && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-secondary)", display: "block", marginBottom: 4 }}>
+                    TData passcode (если архив зашифрован, обычно пусто):
+                  </label>
+                  <input
+                    type="password"
+                    value={tdataPasscode}
+                    onChange={e => setTdataPasscode(e.target.value)}
+                    placeholder="Оставьте пустым если нет пароля"
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                      background: "var(--surface)",
+                      color: "var(--text)",
+                      fontSize: 12,
+                      width: "100%",
+                      fontFamily: monoFont,
+                    }}
+                  />
+                </div>
+              )}
               <button
                 className="primary-button"
                 type="button"
@@ -720,7 +1132,7 @@ export function AccountsPage() {
             <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Upload size={12} /> Один аккаунт
             </div>
-            <h2 style={{ color: "var(--text)" }}>Загрузите pair .session + .json</h2>
+            <h2 style={{ color: "var(--text)" }}>Загрузите .session + .json или TData</h2>
           </div>
         </div>
         <form className="stack-form" onSubmit={uploadPair}>
@@ -878,6 +1290,118 @@ export function AccountsPage() {
             <Link size={14} />
             Привязать прокси
           </button>
+
+          {/* ── Smart proxy routing ── */}
+          <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "16px 0" }} />
+          <div className="eyebrow" style={{ marginBottom: 8 }}>Авто-назначение прокси</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <select
+              value={autoAssignStrategy}
+              onChange={(e) => setAutoAssignStrategy(e.target.value as "healthiest" | "round_robin" | "random")}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                fontSize: 13,
+                flex: "1 1 140px",
+              }}
+            >
+              <option value="healthiest">Лучший по здоровью</option>
+              <option value="round_robin">По кругу</option>
+              <option value="random">Случайный</option>
+            </select>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || !selectedAccountId}
+              onClick={() => void autoAssignProxy()}
+              style={{ display: "flex", alignItems: "center", gap: 6, flex: "1 1 auto" }}
+            >
+              <Link size={13} />
+              Авто-назначить прокси
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void massAssignProxies()}
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "6px 10px" }}
+            >
+              <Users size={12} />
+              Назначить всем
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void loadProxyLoad()}
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "6px 10px" }}
+            >
+              <Activity size={12} />
+              Загрузка прокси
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void cleanupDeadBindings()}
+              style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "6px 10px" }}
+            >
+              <Archive size={12} />
+              Очистить мёртвые
+            </button>
+          </div>
+
+          {/* ── Proxy load stats ── */}
+          {proxyLoadVisible && proxyLoad.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>
+                  Загрузка прокси ({proxyLoad.length})
+                </span>
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() => setProxyLoadVisible(false)}
+                  style={{ fontSize: 11, padding: "2px 6px" }}
+                >
+                  скрыть
+                </button>
+              </div>
+              <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                {proxyLoad.map((p) => (
+                  <div
+                    key={p.proxy_id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      background: "var(--surface-2)",
+                      border: "1px solid var(--border)",
+                      fontSize: 12,
+                      fontFamily: monoFont,
+                    }}
+                  >
+                    <span style={{ color: "var(--text)" }}>{p.host}:{p.port}</span>
+                    <span style={{
+                      color: p.health_status === "alive" ? "var(--accent)" : p.health_status === "failing" ? "var(--warning)" : "var(--text-secondary)",
+                    }}>
+                      {p.health_status}
+                    </span>
+                    <span style={{ color: "var(--text-secondary)" }}>
+                      {p.bindings_count} привязок
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </article>
 
         <article className="panel">
@@ -903,24 +1427,38 @@ export function AccountsPage() {
             Запустить audit для выбранного аккаунта
           </button>
           {selectedAccount ? (
-            <div style={{
-              marginTop: 8,
-              padding: "10px 14px",
-              borderRadius: 8,
-              background: "var(--surface-2)",
-              border: "1px solid var(--border)",
-              fontSize: 13,
-              color: "var(--text-secondary)",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}>
-              <AlertTriangle size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />
-              <span>
-                Для <span style={{ color: "var(--accent)", fontFamily: monoFont }}>{selectedAccount.phone}</span>: следующий шаг —{" "}
-                <strong style={{ color: "var(--text)" }}>{selectedAccount.recommended_next_action}</strong>
-              </span>
-            </div>
+            <>
+              <div style={{
+                marginTop: 8,
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "var(--surface-2)",
+                border: "1px solid var(--border)",
+                fontSize: 13,
+                color: "var(--text-secondary)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}>
+                <AlertTriangle size={14} style={{ color: "var(--warning)", flexShrink: 0 }} />
+                <span>
+                  Для <span style={{ color: "var(--accent)", fontFamily: monoFont }}>{selectedAccount.phone}</span>: следующий шаг —{" "}
+                  <strong style={{ color: "var(--text)" }}>{selectedAccount.recommended_next_action}</strong>
+                </span>
+              </div>
+              {selectedAccount.phone && (selectedAccount.phone.includes("tdata") || (selectedAccount.phone.replace(/\D/g, "").length < 8 && selectedAccount.phone.replace(/\D/g, "").length > 0)) && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={discoveringPhone === selectedAccount.id}
+                  onClick={() => void handleDiscoverPhone(selectedAccount.id)}
+                  style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}
+                >
+                  <Shield size={14} />
+                  {discoveringPhone === selectedAccount.id ? "Определяем телефон..." : "Определить телефон через Telegram"}
+                </button>
+              )}
+            </>
           ) : null}
         </article>
       </motion.section>
@@ -935,6 +1473,41 @@ export function AccountsPage() {
             <h2 style={{ color: "var(--text)" }}>Аккаунты в workspace</h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+
+            <button
+              type="button"
+              onClick={() => { setShowReviewTab(!showReviewTab); void loadPendingReview(); }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 14px",
+                borderRadius: 8,
+                border: showReviewTab ? "1px solid var(--accent)" : "1px solid var(--border)",
+                background: showReviewTab ? "rgba(0,255,136,0.12)" : "var(--surface-2)",
+                color: showReviewTab ? "var(--accent)" : "var(--text-secondary)",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle size={13} />
+              На проверке
+              {pendingReview.total > 0 && (
+                <span style={{
+                  background: "var(--accent)",
+                  color: "#000",
+                  borderRadius: 999,
+                  padding: "1px 7px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  marginLeft: 2,
+                }}>
+                  {pendingReview.total}
+                </span>
+              )}
+            </button>
+
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Filter size={14} style={{ color: "var(--muted)" }} />
               <select
@@ -1044,7 +1617,29 @@ export function AccountsPage() {
                       fontWeight: 500,
                       color: "var(--text)",
                     }}>
-                      {a.phone}
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {a.phone}
+                        {a.phone && (a.phone.includes("tdata") || (a.phone.replace(/\D/g, "").length < 8 && a.phone.replace(/\D/g, "").length > 0)) && (
+                          <button
+                            type="button"
+                            disabled={discoveringPhone === a.id}
+                            onClick={(e) => { e.stopPropagation(); void handleDiscoverPhone(a.id); }}
+                            title="Определить телефон через Telegram"
+                            style={{
+                              background: "rgba(0,255,136,0.12)",
+                              border: "1px solid rgba(0,255,136,0.3)",
+                              borderRadius: 4,
+                              color: "var(--accent)",
+                              cursor: "pointer",
+                              fontSize: 10,
+                              padding: "2px 6px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {discoveringPhone === a.id ? "..." : "ID"}
+                          </button>
+                        )}
+                      </span>
                     </td>
                     <td style={{
                       fontFamily: monoFont,
@@ -1154,6 +1749,174 @@ export function AccountsPage() {
           </div>
         ) : null}
       </motion.section>
+
+
+      {/* ── Gate Review Section ── */}
+      {showReviewTab && (
+        <motion.section className="panel wide" variants={item} style={{ borderTop: "2px solid var(--accent)" }}>
+          <div className="panel-header">
+            <div>
+              <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <CheckCircle size={12} /> Approval gate
+              </div>
+              <h2 style={{ color: "var(--text)" }}>
+                На проверке ({pendingReview.total})
+              </h2>
+            </div>
+            {reviewCheckedIds.size > 0 && (
+              <button
+                type="button"
+                className="primary-button"
+                disabled={reviewBusy}
+                onClick={() => void handleBulkApproveReview()}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <CheckCircle size={14} />
+                Одобрить выбранные ({reviewCheckedIds.size})
+              </button>
+            )}
+          </div>
+
+          {pendingReview.items.length === 0 ? (
+            <div style={{
+              padding: "32px 0",
+              textAlign: "center",
+              color: "var(--muted)",
+              fontSize: 13,
+            }}>
+              <CheckCircle size={24} style={{ marginBottom: 10, opacity: 0.4 }} />
+              <p style={{ margin: 0 }}>Нет аккаунтов, ожидающих проверки.</p>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={reviewCheckedIds.size === pendingReview.items.length && pendingReview.items.length > 0}
+                        onChange={toggleReviewCheckAll}
+                        title="Выбрать все"
+                      />
+                    </th>
+                    <th>Phone</th>
+                    <th>Health score</th>
+                    <th>Прогрев</th>
+                    <th>Прокси</th>
+                    <th>Статус</th>
+                    <th>Действия</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingReview.items.map((a) => {
+                    const score = a.health_score ?? 0;
+                    const scoreColor = score >= 70 ? "var(--accent)" : score >= 40 ? "var(--warning)" : "var(--danger)";
+                    const scoreBarBg = score >= 70 ? "rgba(0,255,136,0.15)" : score >= 40 ? "rgba(255,170,0,0.15)" : "rgba(255,68,68,0.15)";
+                    return (
+                      <tr key={a.id}>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={reviewCheckedIds.has(a.id)}
+                            onChange={() => toggleReviewCheck(a.id)}
+                          />
+                        </td>
+                        <td style={{ fontFamily: "'JetBrains Mono Variable', monospace", fontSize: 13, fontWeight: 500 }}>
+                          {a.phone}
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{
+                              width: 80,
+                              height: 6,
+                              borderRadius: 3,
+                              background: "var(--border)",
+                              overflow: "hidden",
+                            }}>
+                              <div style={{
+                                width: `${score}%`,
+                                height: "100%",
+                                background: scoreColor,
+                                borderRadius: 3,
+                                transition: "width 0.3s",
+                              }} />
+                            </div>
+                            <span style={{
+                              fontFamily: "'JetBrains Mono Variable', monospace",
+                              fontSize: 12,
+                              color: scoreColor,
+                              padding: "2px 7px",
+                              borderRadius: 6,
+                              background: scoreBarBg,
+                              fontWeight: 600,
+                            }}>
+                              {a.health_score !== null ? a.health_score : "—"}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                          {a.warmup_sessions_completed}/{a.warmup_sessions_total} сессий
+                          <span style={{ color: "var(--muted)", marginLeft: 6 }}>
+                            ({a.warmup_actions_performed} действий)
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{
+                            padding: "3px 10px",
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            background: a.proxy_status === "bound" ? "rgba(0,255,136,0.15)" : "rgba(255,68,68,0.15)",
+                            color: a.proxy_status === "bound" ? "var(--accent)" : "var(--danger)",
+                          }}>
+                            {a.proxy_status === "bound" ? "Привязан" : "Не привязан"}
+                          </span>
+                        </td>
+                        <td>
+                          <span style={{
+                            padding: "3px 10px",
+                            borderRadius: 999,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            background: "rgba(68,136,255,0.15)",
+                            color: "var(--info)",
+                          }}>
+                            {a.health_status}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              disabled={reviewBusy}
+                              onClick={() => void handleApprove(a.id)}
+                              style={{ fontSize: 12, padding: "5px 12px", display: "flex", alignItems: "center", gap: 6 }}
+                            >
+                              <CheckCircle size={12} />
+                              Одобрить
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-button"
+                              disabled={reviewBusy}
+                              onClick={() => { setShowRejectModal(a.id); setRejectReason(""); }}
+                              style={{ fontSize: 12, padding: "5px 12px", display: "flex", alignItems: "center", gap: 6, color: "var(--danger)", borderColor: "rgba(255,68,68,0.3)" }}
+                            >
+                              Вернуть на прогрев
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </motion.section>
+      )}
 
       {/* ── Notes + Timeline ── */}
       <motion.section className="two-column-grid" variants={item}>
@@ -1304,6 +2067,58 @@ export function AccountsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* ── Rejection modal ── */}
+      {showRejectModal !== null && (
+        <div className="modal-overlay" onClick={() => setShowRejectModal(null)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Вернуть на прогрев</div>
+                <h2 style={{ color: "var(--text)" }}>Укажите причину</h2>
+              </div>
+            </div>
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 12px" }}>
+              Аккаунт #{showRejectModal} будет возвращён в статус warming_up.
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Например: недостаточно прогрева, низкий health score..."
+              rows={3}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+                background: "var(--surface-2)",
+                color: "var(--text)",
+                fontSize: 13,
+                resize: "vertical",
+                fontFamily: "inherit",
+              }}
+            />
+            <div className="actions-row" style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={reviewBusy || !rejectReason.trim()}
+                onClick={() => void handleReject(showRejectModal, rejectReason)}
+                style={{ color: "var(--danger)", borderColor: "rgba(255,68,68,0.3)" }}
+              >
+                {reviewBusy ? "Сохраняем..." : "Вернуть на прогрев"}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setShowRejectModal(null)}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -30,6 +30,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { AdminPage } from "./pages/AdminPage";
 import { PlatformHealthPage } from "./pages/PlatformHealthPage";
 import { CommentDashboardPage } from "./pages/CommentDashboardPage";
+import { SessionTopologyPage } from "./pages/SessionTopologyPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/platform-health" element={<PlatformHealthPage />} />
             <Route path="/comments" element={<CommentDashboardPage />} />
+            <Route path="/topology" element={<SessionTopologyPage />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route
               path="/settings"

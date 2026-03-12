@@ -12,10 +12,10 @@ from typing import Any, AsyncIterator, List, Literal, Optional
 
 import jwt
 import uvicorn
-from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
@@ -80,9 +80,12 @@ from core.telegram_bot_auth import (
 )
 from core.task_queue import task_queue
 from core.proxy_manager import ProxyConfig, ProxyManager, check_proxy_orm, parse_proxy_line
+from core.proxy_router import NoAvailableProxyError, ProxyRouter
+from core.account_lifecycle import AccountLifecycle, LifecycleTransitionError
 from storage.models import (
     Account,
     AccountHealthScore,
+    AccountStageEvent,
     AIBudgetCounter,
     AIRequest,
     AlertConfig,
@@ -124,6 +127,7 @@ from storage.models import (
 )
 from storage.sqlite_db import apply_session_rls_context, async_session, dispose_engine, init_db
 from utils.helpers import utcnow
+from utils.session_topology import audit_session_topology, quarantine_noncanonical_assets
 
 
 # ---------------------------------------------------------------------------
@@ -532,6 +536,32 @@ class ProxyBulkImportPayload(BaseModel):
         return value
 
 
+class ProxyAutoAssignPayload(BaseModel):
+    account_id: int = Field(gt=0)
+    strategy: str = Field(default="healthiest", max_length=20)
+
+    @field_validator("strategy")
+    @classmethod
+    def validate_strategy(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"healthiest", "round_robin", "random"}:
+            raise ValueError("strategy must be healthiest, round_robin, or random")
+        return value
+
+
+class ProxyMassAssignPayload(BaseModel):
+    account_ids: list[int] = Field(min_length=1, max_length=500)
+    strategy: str = Field(default="round_robin", max_length=20)
+
+    @field_validator("strategy")
+    @classmethod
+    def validate_mass_strategy(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"healthiest", "round_robin", "random"}:
+            raise ValueError("strategy must be healthiest, round_robin, or random")
+        return value
+
+
 class AccountNotePayload(BaseModel):
     notes: str = Field(default="", max_length=4000)
 
@@ -589,6 +619,57 @@ class SessionInfoItem(BaseModel):
 class SessionListResponse(BaseModel):
     items: list[SessionInfoItem]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Session Topology — request / response models
+# ---------------------------------------------------------------------------
+
+class TopologyItemResponse(BaseModel):
+    phone: str
+    user_id: Optional[int]
+    status_kind: str
+    canonical_complete: bool
+    safe_to_quarantine: bool
+    canonical_session: Optional[str]
+    canonical_metadata: Optional[str]
+    flat_session: Optional[str]
+    flat_metadata: Optional[str]
+    legacy_sessions: list[str]
+    legacy_metadata: list[str]
+    legacy_dirs: list[str]
+
+
+class TopologySummaryResponse(BaseModel):
+    phones_total: int
+    status_counts: dict[str, int]
+    canonical_complete: int
+    with_root_copies: int
+    with_legacy_copies: int
+    duplicate_copy_phones: int
+    duplicate_phones: list[str]
+    safe_to_quarantine: int
+
+
+class TopologyAuditResponse(BaseModel):
+    items: list[TopologyItemResponse]
+    summary: TopologySummaryResponse
+
+
+class QuarantinePayload(BaseModel):
+    phones: list[str] = Field(default_factory=list)
+    dry_run: bool = True
+
+
+class QuarantineResponse(BaseModel):
+    ok: bool
+    dry_run: bool
+    quarantine_dir: str
+    moved_files: int
+    moved_phones: list[str]
+    files: list[str]
+    skipped: list[dict[str, str]]
+    skipped_count: int
 
 
 # ---------------------------------------------------------------------------
@@ -2265,6 +2346,74 @@ async def proxy_single_check(
     return _serialize_proxy(proxy, bound_account_phone=bound_phone)
 
 
+# ---------------------------------------------------------------------------
+# Proxy Smart Routing — /v1/proxies/auto-assign, mass-assign, load, cleanup-dead
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/proxies/auto-assign", status_code=status.HTTP_200_OK)
+async def proxies_auto_assign(
+    payload: ProxyAutoAssignPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Auto-assign the best available proxy to a single account."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    router = ProxyRouter(session, tenant_id=tenant_context.tenant_id)
+    try:
+        result = await router.assign_proxy(payload.account_id, strategy=payload.strategy)
+    except NoAvailableProxyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    return result
+
+
+@app.post("/v1/proxies/mass-assign", status_code=status.HTTP_200_OK)
+async def proxies_mass_assign(
+    payload: ProxyMassAssignPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Assign proxies to multiple accounts at once using the chosen strategy."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    router = ProxyRouter(session, tenant_id=tenant_context.tenant_id)
+    try:
+        result = await router.mass_assign(payload.account_ids, strategy=payload.strategy)
+    except NoAvailableProxyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    return result
+
+
+@app.get("/v1/proxies/load", status_code=status.HTTP_200_OK)
+async def proxies_load(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return per-proxy utilization stats sorted by bindings_count ascending."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    router = ProxyRouter(session, tenant_id=tenant_context.tenant_id)
+    rows = await router.get_proxy_load()
+    return {"items": rows, "total": len(rows)}
+
+
+@app.post("/v1/proxies/cleanup-dead", status_code=status.HTTP_200_OK)
+async def proxies_cleanup_dead(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Unbind all dead/inactive proxies from accounts in this tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    router = ProxyRouter(session, tenant_id=tenant_context.tenant_id)
+    return await router.cleanup_dead_bindings()
+
+
 @app.post("/v1/web/accounts/{account_id}/bind-proxy")
 async def web_bind_proxy(
     account_id: int,
@@ -2354,16 +2503,26 @@ class BulkActionPayload(BaseModel):
     account_ids: Optional[List[int]] = None
 
 
+class CheckDuplicatesPayload(BaseModel):
+    phones: List[str] = Field(..., min_length=1, max_length=500)
+
+
 @app.post("/v1/accounts/bulk-import")
 async def accounts_bulk_import(
     request: Request,
     files: List[UploadFile] = File(...),
+    tdata_passcode: str = Form(""),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
     """
-    Accept multiple .session + .json pairs (or a single .zip) and bulk-import accounts.
+    Accept multiple .session + .json pairs, TData ZIP archives, or mixed ZIPs and bulk-import accounts.
+    TData archives are auto-converted to session+json pairs via opentele.
     Auto-assigns a free tenant proxy to each imported account when available.
+
+    Form fields:
+        files: Upload files (.session, .json, .zip with session+json pairs, or TData ZIP)
+        tdata_passcode: Optional local passcode for encrypted TData archives (usually empty)
     """
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     import io
@@ -2419,17 +2578,39 @@ async def accounts_bulk_import(
             if digits:
                 pair_map.setdefault(digits, {})["json"] = data
 
+    def _absorb_tdata_result(result: "TDataConversionResult") -> None:
+        """Inject TData-converted accounts into pair_map."""
+        for acct in result.accounts:
+            # TData accounts may not have a phone — use a placeholder from user_id
+            phone_digits = "".join(ch for ch in acct.phone if ch.isdigit()) if acct.phone else ""
+            if not phone_digits:
+                # Generate a temporary identifier; the user will need to verify later
+                import hashlib
+                phone_digits = "tdata_" + hashlib.md5(acct.session_bytes[:64]).hexdigest()[:8]
+            meta_bytes = _json.dumps(acct.metadata, ensure_ascii=False, indent=2).encode("utf-8")
+            pair_map.setdefault(phone_digits, {})["session"] = acct.session_bytes
+            pair_map.setdefault(phone_digits, {})["json"] = meta_bytes
+            pair_map[phone_digits]["_source"] = "tdata"
+
     for upload in files:
         fname = upload.filename or ""
         if fname.lower().endswith(".zip"):
             raw = await _read_upload_safe(upload, max_bytes=_MAX_ZIP_BYTES)
-            try:
-                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                    for member in zf.namelist():
-                        member_data = zf.read(member)
-                        await _absorb_file(Path(member).name, member_data)
-            except zipfile.BadZipFile:
-                continue
+            # Check if ZIP contains TData structure
+            from utils.tdata_converter import is_tdata_zip, convert_tdata_zip
+            if is_tdata_zip(raw):
+                tdata_result = convert_tdata_zip(raw, settings.sessions_path, passcode=tdata_passcode)
+                _absorb_tdata_result(tdata_result)
+                if tdata_result.errors:
+                    errors.extend([f"tdata:{e}" for e in tdata_result.errors])
+            else:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                        for member in zf.namelist():
+                            member_data = zf.read(member)
+                            await _absorb_file(Path(member).name, member_data)
+                except zipfile.BadZipFile:
+                    continue
         else:
             raw = await _read_upload_safe(upload, max_bytes=_MAX_UPLOAD_BYTES)
             await _absorb_file(fname, raw)
@@ -2444,11 +2625,21 @@ async def accounts_bulk_import(
             errors.append(f"incomplete_pair:{digits}")
             skipped += 1
             continue
+        is_tdata = parts.get("_source") == "tdata"
+        # For TData accounts, try to extract phone from metadata if digits key is not a real phone
         phone = normalize_phone(digits)
+        if not phone and is_tdata:
+            try:
+                meta_preview = _json.loads(parts["json"].decode("utf-8"))
+                meta_phone = str(meta_preview.get("phone") or "")
+                phone = normalize_phone(meta_phone)
+            except Exception:
+                pass
         if not phone:
-            errors.append(f"invalid_phone:{digits}")
+            errors.append(f"invalid_phone:{digits}" + (" (tdata: connect to Telegram to discover phone)" if is_tdata else ""))
             skipped += 1
             continue
+        phone_digits = "".join(ch for ch in phone if ch.isdigit())
         session_path, metadata_path = canonical_session_paths(
             settings.sessions_path, runtime_user_id, phone
         )
@@ -2459,7 +2650,7 @@ async def accounts_bulk_import(
             normalized = validate_and_normalize_account_metadata(
                 payload_data,
                 expected_phone=phone,
-                expected_session_file=f"{digits}.session",
+                expected_session_file=f"{phone_digits}.session",
             )
             write_normalized_metadata(metadata_path, normalized)
         except Exception as exc:
@@ -2471,7 +2662,7 @@ async def accounts_bulk_import(
             account, _ = await upsert_account_from_session_upload(
                 session,
                 phone=phone,
-                session_file=f"{digits}.session",
+                session_file=f"{phone_digits}.session",
                 runtime_user_id=runtime_user_id,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
@@ -2494,6 +2685,137 @@ async def accounts_bulk_import(
         "skipped": skipped,
         "auto_proxied": auto_proxied,
         "errors": errors,
+    }
+
+
+@app.post("/v1/accounts/{account_id}/discover-phone")
+async def account_discover_phone(
+    account_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Connect to Telegram via Telethon and discover the real phone number for an account.
+    Used for TData-imported accounts where the phone is unknown.
+    Does NOT call send_code_request — only connects and calls get_me().
+    Requires the account to have a bound proxy.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    from core.web_accounts import get_web_account_record, get_workspace_runtime_user, normalize_phone
+    from utils.tdata_converter import discover_phone_from_session
+    from utils.session_topology import canonical_session_paths
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    workspace = await get_workspace_runtime_user(session, tenant_id=tenant_id, workspace_id=workspace_id)
+    runtime_user_id = int(workspace.runtime_user_id)
+
+    account, _ = await get_web_account_record(
+        session, tenant_id=tenant_id, workspace_id=workspace_id, account_id=account_id,
+    )
+
+    # Build proxy tuple if account has a proxy
+    proxy_tuple = None
+    if account.proxy_id:
+        proxy_result = await session.execute(
+            select(Proxy).where(Proxy.id == account.proxy_id, Proxy.tenant_id == tenant_id)
+        )
+        proxy_obj = proxy_result.scalar_one_or_none()
+        if proxy_obj:
+            proxy_tuple = (
+                3,
+                str(proxy_obj.host),
+                int(proxy_obj.port),
+                True,
+                str(proxy_obj.username or ""),
+                str(proxy_obj.password or ""),
+            )
+
+    # Read metadata
+    import json as _json
+    session_path, metadata_path = canonical_session_paths(
+        settings.sessions_path, runtime_user_id, account.phone,
+    )
+    metadata = {}
+    if metadata_path.exists():
+        try:
+            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    if not session_path.exists():
+        raise HTTPException(status_code=404, detail="session_file_not_found")
+
+    # Discover phone via Telethon
+    discovery = await discover_phone_from_session(
+        session_path, metadata, proxy=proxy_tuple, timeout=30,
+    )
+
+    if not discovery.get("ok"):
+        return {
+            "ok": False,
+            "account_id": account_id,
+            "error": discovery.get("error", "unknown"),
+            "authorized": discovery.get("authorized", False),
+        }
+
+    discovered_phone = normalize_phone(str(discovery.get("phone") or ""))
+    first_name = str(discovery.get("first_name") or "")
+    last_name = str(discovery.get("last_name") or "")
+
+    if not discovered_phone:
+        return {
+            "ok": False,
+            "account_id": account_id,
+            "error": "phone_not_available",
+            "user_id": discovery.get("user_id"),
+            "authorized": True,
+        }
+
+    # Update account phone and metadata if changed
+    old_phone = account.phone
+    if discovered_phone != old_phone:
+        account.phone = discovered_phone
+        # Rename session files to match new phone
+        new_phone_digits = "".join(ch for ch in discovered_phone if ch.isdigit())
+        new_session_path, new_metadata_path = canonical_session_paths(
+            settings.sessions_path, runtime_user_id, discovered_phone,
+        )
+        new_session_path.parent.mkdir(parents=True, exist_ok=True)
+        if session_path.exists() and session_path != new_session_path:
+            import shutil
+            shutil.move(str(session_path), str(new_session_path))
+        if metadata_path.exists() and metadata_path != new_metadata_path:
+            # Update phone in metadata
+            metadata["phone"] = discovered_phone
+            metadata["session_file"] = f"{new_phone_digits}.session"
+            new_metadata_path.write_text(
+                _json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+            if metadata_path != new_metadata_path:
+                metadata_path.unlink(missing_ok=True)
+
+        account.session_file = f"{new_phone_digits}.session"
+
+    # Update first_name if available
+    if first_name:
+        account.first_name = first_name
+    if last_name:
+        account.last_name = last_name
+
+    await session.flush()
+
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "old_phone": old_phone,
+        "phone": discovered_phone,
+        "first_name": first_name,
+        "last_name": last_name,
+        "user_id": discovery.get("user_id"),
+        "renamed": discovered_phone != old_phone,
     }
 
 
@@ -2665,6 +2987,228 @@ async def accounts_stats(
         "proxied": proxied,
         "unproxied": unproxied,
     }
+
+
+@app.post("/v1/accounts/check-duplicates")
+async def accounts_check_duplicates(
+    payload: CheckDuplicatesPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Check which of the supplied phone numbers already exist for this tenant workspace."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    # Normalise: strip whitespace and ensure leading +
+    def _norm(p: str) -> str:
+        digits = "".join(ch for ch in str(p or "") if ch.isdigit())
+        return f"+{digits}" if digits else ""
+
+    normalised = [_norm(p) for p in payload.phones]
+    unique_phones = list({p for p in normalised if p})
+
+    if not unique_phones:
+        return {"duplicates": [], "new": []}
+
+    result = await session.execute(
+        select(Account.phone, Account.id).where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.phone.in_(unique_phones),
+        )
+    )
+    rows = result.all()
+    existing_map: dict[str, int] = {row[0]: row[1] for row in rows}
+
+    duplicates = [
+        {"phone": p, "existing_account_id": existing_map[p]}
+        for p in unique_phones
+        if p in existing_map
+    ]
+    new = [p for p in unique_phones if p not in existing_map]
+
+    return {"duplicates": duplicates, "new": new}
+
+
+@app.get("/v1/accounts/export")
+async def accounts_export(
+    format: str = Query(default="csv", pattern="^(csv|json)$"),
+    status_filter: str = Query(default="all", alias="status"),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> StreamingResponse:
+    """Export tenant-scoped accounts as CSV or JSON for download."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    stmt = (
+        select(Account)
+        .where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+        .order_by(Account.id.asc())
+        .limit(10000)  # Hard ceiling to prevent memory exhaustion
+    )
+    if status_filter != "all":
+        stmt = stmt.where(Account.status == status_filter)
+
+    rows = list((await session.execute(stmt)).scalars().all())
+
+    if format == "json":
+        import json as _json
+
+        data = [
+            {
+                "id": acc.id,
+                "phone": acc.phone,
+                "status": acc.status,
+                "lifecycle_stage": acc.lifecycle_stage,
+                "health_status": acc.health_status,
+                "risk_level": acc.risk_level,
+                "proxy_id": acc.proxy_id,
+                "account_age_days": acc.account_age_days,
+                "created_at": acc.created_at.isoformat() if acc.created_at else None,
+                "last_active_at": acc.last_active_at.isoformat() if acc.last_active_at else None,
+                "last_health_check": acc.last_health_check.isoformat() if acc.last_health_check else None,
+                "manual_notes": acc.manual_notes,
+            }
+            for acc in rows
+        ]
+        content = _json.dumps(data, ensure_ascii=False, indent=2)
+        media_type = "application/json"
+        filename = "accounts.json"
+        return StreamingResponse(
+            iter([content.encode("utf-8")]),
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    # CSV
+    import csv
+    import io as _io
+
+    buf = _io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "id", "phone", "status", "lifecycle_stage", "health_status",
+        "risk_level", "proxy_id", "account_age_days",
+        "created_at", "last_active_at", "last_health_check", "manual_notes",
+    ])
+    for acc in rows:
+        writer.writerow([
+            acc.id,
+            acc.phone,
+            acc.status or "",
+            acc.lifecycle_stage or "",
+            acc.health_status or "",
+            acc.risk_level or "",
+            acc.proxy_id or "",
+            acc.account_age_days or 0,
+            acc.created_at.isoformat() if acc.created_at else "",
+            acc.last_active_at.isoformat() if acc.last_active_at else "",
+            acc.last_health_check.isoformat() if acc.last_health_check else "",
+            acc.manual_notes or "",
+        ])
+
+    content_bytes = buf.getvalue().encode("utf-8")
+    return StreamingResponse(
+        iter([content_bytes]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="accounts.csv"'},
+    )
+
+
+class LifecycleTransitionPayload(BaseModel):
+    target_stage: str = Field(..., description="Target lifecycle stage to transition to")
+    reason: str = Field(default="", description="Optional operator-supplied reason")
+
+
+@app.post("/v1/accounts/{account_id}/lifecycle", status_code=200)
+async def account_lifecycle_transition(
+    account_id: int,
+    payload: LifecycleTransitionPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Manually transition an account to a new lifecycle stage.
+
+    Validates that the transition is allowed by the state machine.
+    Logs the event to account_stage_events with actor="operator".
+    Tenant-scoped: the account must belong to the current tenant workspace.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    # Verify account belongs to this tenant / workspace before mutating.
+    result = await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="account_not_found",
+        )
+
+    lifecycle = AccountLifecycle(session)
+    try:
+        outcome = await lifecycle.transition(
+            account_id,
+            payload.target_stage,
+            reason=payload.reason or "",
+            actor="operator",
+        )
+    except LifecycleTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return outcome
+
+
+@app.get("/v1/accounts/{account_id}/lifecycle/history", status_code=200)
+async def account_lifecycle_history(
+    account_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return the lifecycle stage transition history for an account.
+
+    Tenant-scoped: the account must belong to the current tenant workspace.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    result = await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="account_not_found",
+        )
+
+    lifecycle = AccountLifecycle(session)
+    history = await lifecycle.get_stage_history(account_id, limit=limit)
+    return {"account_id": account_id, "total": len(history), "items": history}
 
 
 @app.post("/v1/assistant/start-brief")
@@ -7605,6 +8149,362 @@ async def channels_refresh_scores(
     scorer = ChannelQualityScorer(redis_client=redis, ai_router_func=_route_ai)
     count = await scorer.score_all(tenant_id=tenant_context.tenant_id)
     return {"scored": count}
+
+
+
+# ---------------------------------------------------------------------------
+# Account Approval Gate — /v1/accounts/pending-review, approve, reject, bulk-approve
+# ---------------------------------------------------------------------------
+
+
+class RejectAccountPayload(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+class BulkApprovePayload(BaseModel):
+    account_ids: List[int] = Field(..., min_length=1, max_length=100)
+
+
+@app.get("/v1/accounts/pending-review")
+async def accounts_pending_review(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List accounts currently in the gate_review lifecycle stage."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    # Count total for pagination header
+    from sqlalchemy import func as sa_func
+    count_result = await session.execute(
+        select(sa_func.count(Account.id))
+        .where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.lifecycle_stage == "gate_review",
+        )
+    )
+    total = count_result.scalar() or 0
+
+    # Paginated query
+    accounts_result = await session.execute(
+        select(Account)
+        .where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.lifecycle_stage == "gate_review",
+        )
+        .order_by(Account.created_at.asc(), Account.id.asc())
+        .limit(limit)
+        .offset(offset)
+    )
+    page_accounts = list(accounts_result.scalars().all())
+
+    account_ids = [int(a.id) for a in page_accounts]
+
+    health_map: dict[int, AccountHealthScore] = {}
+    if account_ids:
+        hs_result = await session.execute(
+            select(AccountHealthScore).where(
+                AccountHealthScore.tenant_id == tenant_id,
+                AccountHealthScore.account_id.in_(account_ids),
+            )
+        )
+        for hs in hs_result.scalars().all():
+            health_map[int(hs.account_id)] = hs
+
+    warmup_map: dict[int, dict[str, int]] = {}
+    if account_ids:
+        ws_result = await session.execute(
+            select(WarmupSession).where(
+                WarmupSession.tenant_id == tenant_id,
+                WarmupSession.account_id.in_(account_ids),
+            )
+        )
+        for ws in ws_result.scalars().all():
+            acc_id = int(ws.account_id)
+            stats = warmup_map.setdefault(
+                acc_id,
+                {"sessions_total": 0, "sessions_completed": 0, "actions_performed": 0},
+            )
+            stats["sessions_total"] += 1
+            if ws.status == "completed":
+                stats["sessions_completed"] += 1
+            stats["actions_performed"] += int(ws.actions_performed or 0)
+
+    items = []
+    for account in page_accounts:
+        hs = health_map.get(int(account.id))
+        warmup_stats = warmup_map.get(
+            int(account.id),
+            {"sessions_total": 0, "sessions_completed": 0, "actions_performed": 0},
+        )
+        items.append({
+            "id": account.id,
+            "phone": account.phone,
+            "lifecycle_stage": account.lifecycle_stage,
+            "health_status": account.health_status,
+            "status": account.status,
+            "health_score": hs.health_score if hs else None,
+            "survivability_score": hs.survivability_score if hs else None,
+            "warmup_sessions_completed": warmup_stats["sessions_completed"],
+            "warmup_sessions_total": warmup_stats["sessions_total"],
+            "warmup_actions_performed": warmup_stats["actions_performed"],
+            "proxy_status": "bound" if account.proxy_id is not None else "unbound",
+            "proxy_id": account.proxy_id,
+            "manual_notes": account.manual_notes,
+            "created_at": account.created_at.isoformat() if account.created_at else None,
+            "last_active_at": account.last_active_at.isoformat() if account.last_active_at else None,
+        })
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@app.post("/v1/accounts/{account_id}/approve")
+async def account_approve(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Approve a gate_review account, advancing it to execution_ready."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    acct_result = await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    account: Optional[Account] = acct_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    if account.lifecycle_stage != "gate_review":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"account_not_in_gate_review (current: {account.lifecycle_stage})",
+        )
+
+    try:
+        lifecycle = AccountLifecycle(session)
+        transition_result = await lifecycle.transition(
+            account_id,
+            "execution_ready",
+            reason="operator_approved",
+            actor=f"operator:{tenant_context.user_id}",
+        )
+    except LifecycleTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "new_stage": transition_result["new_stage"],
+    }
+
+
+@app.post("/v1/accounts/{account_id}/reject")
+async def account_reject(
+    account_id: int,
+    payload: RejectAccountPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Reject a gate_review account, sending it back to warming_up."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    acct_result = await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    account: Optional[Account] = acct_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    if account.lifecycle_stage != "gate_review":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"account_not_in_gate_review (current: {account.lifecycle_stage})",
+        )
+
+    try:
+        lifecycle = AccountLifecycle(session)
+        transition_result = await lifecycle.transition(
+            account_id,
+            "warming_up",
+            reason=f"operator_rejected: {payload.reason}",
+            actor=f"operator:{tenant_context.user_id}",
+        )
+    except LifecycleTransitionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "new_stage": transition_result["new_stage"],
+        "reason": payload.reason,
+    }
+
+
+@app.post("/v1/accounts/bulk-approve")
+async def accounts_bulk_approve(
+    payload: BulkApprovePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Approve multiple gate_review accounts in a single request."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = int(tenant_context.workspace_id or 0)
+
+    if len(payload.account_ids) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="too_many_ids (max 100)",
+        )
+
+    bulk_result = await session.execute(
+        select(Account).where(
+            Account.id.in_(payload.account_ids),
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    found_accounts = {int(a.id): a for a in bulk_result.scalars().all()}
+
+    lifecycle = AccountLifecycle(session)
+    approved_count = 0
+    errors: list[dict[str, Any]] = []
+
+    for aid in payload.account_ids:
+        acct = found_accounts.get(aid)
+        if acct is None:
+            errors.append({"account_id": aid, "error": "not_found"})
+            continue
+        if acct.lifecycle_stage != "gate_review":
+            errors.append({
+                "account_id": aid,
+                "error": f"not_in_gate_review (current: {acct.lifecycle_stage})",
+            })
+            continue
+        try:
+            await lifecycle.transition(
+                aid,
+                "execution_ready",
+                reason="operator_approved_bulk",
+                actor=f"operator:{tenant_context.user_id}",
+            )
+            approved_count += 1
+        except (LifecycleTransitionError, ValueError) as exc:
+            errors.append({"account_id": aid, "error": str(exc)})
+
+    return {
+        "ok": True,
+        "approved_count": approved_count,
+        "errors": errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Session Topology endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/sessions/topology", response_model=TopologyAuditResponse)
+async def get_session_topology(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict:
+    """Run a full session topology audit for the current tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
+    result = await session.execute(
+        select(Account.user_id)
+        .where(
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.user_id.isnot(None),
+        )
+        .distinct()
+    )
+    known_user_ids = [row[0] for row in result.all()]
+    base_dir = settings.sessions_path
+    audit = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: audit_session_topology(base_dir, known_user_ids=known_user_ids),
+    )
+    return audit
+
+
+@app.get("/v1/sessions/topology/summary", response_model=TopologySummaryResponse)
+async def get_session_topology_summary(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict:
+    """Return only the summary statistics from a session topology audit."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
+    result = await session.execute(
+        select(Account.user_id)
+        .where(
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.user_id.isnot(None),
+        )
+        .distinct()
+    )
+    known_user_ids = [row[0] for row in result.all()]
+    base_dir = settings.sessions_path
+    audit = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: audit_session_topology(base_dir, known_user_ids=known_user_ids),
+    )
+    return audit["summary"]
+
+
+@app.post("/v1/sessions/quarantine", response_model=QuarantineResponse)
+async def quarantine_sessions(
+    payload: QuarantinePayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict:
+    """Move non-canonical session copies into a quarantine folder.
+
+    If phones list is empty, all eligible phones in the tenant scope are processed.
+    Set dry_run=true (default) to preview without moving files.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
+    result = await session.execute(
+        select(Account.user_id)
+        .where(
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.user_id.isnot(None),
+        )
+        .distinct()
+    )
+    known_user_ids = [row[0] for row in result.all()]
+    base_dir = settings.sessions_path
+    phones = payload.phones if payload.phones else None
+    quarantine_result = await asyncio.get_event_loop().run_in_executor(
+        None,
+        lambda: quarantine_noncanonical_assets(
+            base_dir,
+            known_user_ids=known_user_ids,
+            phones=phones,
+            dry_run=payload.dry_run,
+        ),
+    )
+    return quarantine_result
 
 
 # ---------------------------------------------------------------------------
