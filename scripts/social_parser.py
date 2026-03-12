@@ -97,7 +97,7 @@ def chunk_text(text: str, max_chars: int = 2000, overlap: int = 200) -> list[str
 # YouTube parser
 # ---------------------------------------------------------------------------
 
-def parse_youtube(url: str, subs_only: bool = False, whisper_model: str = "base") -> dict:
+def parse_youtube(url: str, subs_only: bool = False, whisper_model: str = "base", whisper_lang: str = None) -> dict:
     """
     Parse a YouTube video: download metadata, subtitles/audio, transcribe, vectorize.
 
@@ -209,37 +209,66 @@ def parse_youtube(url: str, subs_only: bool = False, whisper_model: str = "base"
     # If no subs and not subs_only, download audio and transcribe with Whisper
     if not transcript and not subs_only:
         print("  No subtitles found. Downloading audio for Whisper transcription...")
-        audio_path = output_dir / f"{video_id}.mp3"
+        audio_path = output_dir / f"{video_id}.mp4"
 
-        ydl_audio_opts = {
-            "quiet": True,
-            "format": "bestaudio/best",
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "64",
-            }],
-            "outtmpl": str(output_dir / f"{video_id}.%(ext)s"),
-        }
-
+        # Try pytubefix first (bypasses SABR 403), then yt-dlp fallback
+        downloaded = False
         try:
-            with yt_dlp.YoutubeDL(ydl_audio_opts) as ydl:
-                ydl.download([url])
+            from pytubefix import YouTube as PTYouTube
+            yt = PTYouTube(url)
+            stream = yt.streams.filter(only_audio=True).first()
+            if stream:
+                stream.download(output_path=str(output_dir), filename=f"{video_id}.mp4")
+                downloaded = audio_path.exists()
+                if downloaded:
+                    print(f"  Audio downloaded via pytubefix: {audio_path.stat().st_size // 1024}KB")
+        except Exception as e:
+            print(f"  pytubefix failed: {e}")
 
-            if audio_path.exists():
-                print(f"  Audio downloaded: {audio_path.stat().st_size // 1024}KB")
-                print(f"  Transcribing with Whisper ({whisper_model})...")
+        if not downloaded:
+            ydl_audio_opts = {
+                "quiet": True,
+                "format": "bestaudio/best",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "64",
+                }],
+                "outtmpl": str(output_dir / f"{video_id}.%(ext)s"),
+            }
+            try:
+                with yt_dlp.YoutubeDL(ydl_audio_opts) as ydl:
+                    ydl.download([url])
+                audio_path = output_dir / f"{video_id}.mp3"
+                downloaded = audio_path.exists()
+            except Exception as e:
+                print(f"  yt-dlp audio download failed: {e}")
 
+        if downloaded and audio_path.exists():
+            print(f"  Transcribing with Whisper ({whisper_model})...")
+            try:
                 import whisper
                 model = whisper.load_model(whisper_model)
-                result = model.transcribe(str(audio_path))
+                result = model.transcribe(str(audio_path), language=whisper_lang)
                 transcript = result["text"]
-                print(f"  Transcribed: {len(transcript)} chars")
 
-                # Cleanup audio
+                # Save segments with timestamps
+                segments_data = [
+                    {"start": s["start"], "end": s["end"], "text": s["text"]}
+                    for s in result.get("segments", [])
+                ]
+                whisper_backup = output_dir / f"yt_{video_id}_whisper.json"
+                with open(whisper_backup, "w", encoding="utf-8") as wf:
+                    json.dump({"text": transcript, "segments": segments_data}, wf, ensure_ascii=False, indent=2)
+
+                print(f"  Transcribed: {len(transcript)} chars ({len(segments_data)} segments)")
+                print(f"  Whisper backup: {whisper_backup}")
+            except Exception as e:
+                print(f"  Whisper transcription failed: {e}")
+            finally:
                 audio_path.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"  Audio transcription failed: {e}")
+        elif not downloaded:
+            print(f"  Audio download failed — no transcript available.")
 
     if not transcript:
         if subs_only:
@@ -382,6 +411,7 @@ def main():
     yt_parser.add_argument("--url", required=True, help="YouTube video URL")
     yt_parser.add_argument("--subs-only", action="store_true", help="Only use subtitles, skip Whisper")
     yt_parser.add_argument("--whisper-model", default="base", help="Whisper model size (tiny/base/small/medium)")
+    yt_parser.add_argument("--lang", default=None, help="Force Whisper language (ru/en/de/etc). Auto-detect if omitted")
 
     # search
     search_parser = subparsers.add_parser("search", help="Search parsed content")
@@ -392,7 +422,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == "youtube":
-        parse_youtube(args.url, subs_only=args.subs_only, whisper_model=args.whisper_model)
+        parse_youtube(args.url, subs_only=args.subs_only, whisper_model=args.whisper_model, whisper_lang=args.lang)
     elif args.command == "search":
         search_content(args.query, top_k=args.top_k, source_filter=args.source)
     else:

@@ -23,13 +23,28 @@ URL/Channel → Fetch metadata → Get transcript/text → Chunk → Embed (Gemi
 
 The main script is `scripts/social_parser.py`. Activate the project venv before running.
 
-### Parse YouTube video
+### Parse YouTube video (subtitles only — fast)
 ```bash
-cd "$PROJECT_DIR" && source venv/bin/activate
-python scripts/social_parser.py youtube --url "URL" --subs-only
+cd "$PROJECT_DIR" && .venv/bin/python scripts/social_parser.py youtube --url "URL" --subs-only
 ```
 
-`--subs-only` skips Whisper audio download (faster, free). Omit it to fall back to Whisper transcription when no subtitles exist.
+### Parse YouTube video (with Whisper transcription — any language)
+```bash
+cd "$PROJECT_DIR" && PATH=".venv/bin:$PATH" .venv/bin/python scripts/social_parser.py youtube --url "URL" --lang ru
+```
+
+Whisper transcription pipeline:
+1. First tries subtitles (youtube-transcript-api → yt-dlp)
+2. If no subs: downloads audio via **pytubefix** (bypasses YouTube SABR 403), falls back to yt-dlp
+3. Transcribes with **OpenAI Whisper** (local, no API key needed)
+4. Saves timestamped segments to `output/parsed/yt_{id}_whisper.json`
+
+Options:
+- `--subs-only` — skip Whisper, only use subtitles (faster)
+- `--lang ru` — force Whisper language (ru/en/de/fr/es/zh/ar/etc). Auto-detect if omitted
+- `--whisper-model base` — model size: tiny (fastest), base (default), small, medium (best quality)
+
+**Important:** ffmpeg is required for Whisper. It's installed via `imageio-ffmpeg` and symlinked to `.venv/bin/ffmpeg`. Always use `PATH=".venv/bin:$PATH"` when running Whisper commands.
 
 ### Search parsed content
 ```bash
