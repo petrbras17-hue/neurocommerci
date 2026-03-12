@@ -319,14 +319,25 @@ async def seed_database(channels: list[dict]) -> int:
 
     engine = create_async_engine(db_url, echo=False)
 
+    import json
+
+    # Check if seed data already exists
+    async with engine.begin() as conn:
+        existing = (await conn.execute(text(
+            "SELECT COUNT(*) FROM channel_map_entries WHERE source = 'seed_v1'"
+        ))).scalar_one()
+        if existing > 0:
+            print(f"  Already have {existing} seed_v1 records. Skipping insert.")
+            await engine.dispose()
+            return 0
+
     inserted = 0
     batch_size = 500
     for batch_start in range(0, len(channels), batch_size):
         batch = channels[batch_start : batch_start + batch_size]
         async with engine.begin() as conn:
             for ch in batch:
-                import json
-                result = await conn.execute(
+                await conn.execute(
                     text("""
                         INSERT INTO channel_map_entries
                             (telegram_id, username, title, member_count, category,
@@ -338,14 +349,13 @@ async def seed_database(channels: list[dict]) -> int:
                              :subcategory, :language, :region, :engagement_rate,
                              :avg_comments_per_post, :avg_post_reach, CAST(:topic_tags AS jsonb),
                              :source, :description)
-                        ON CONFLICT (username) DO NOTHING
                     """),
                     {
                         **{k: v for k, v in ch.items() if k != "topic_tags"},
                         "topic_tags": json.dumps(ch["topic_tags"]),
                     },
                 )
-                inserted += result.rowcount
+                inserted += 1
         print(f"  Batch {batch_start // batch_size + 1}/{(len(channels) + batch_size - 1) // batch_size}: {inserted} inserted so far")
 
     await engine.dispose()
