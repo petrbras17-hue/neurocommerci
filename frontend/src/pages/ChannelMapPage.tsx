@@ -258,14 +258,14 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
   if (items.length === 0) return { nodes: [], labels: [], width: 800, height: 600 };
 
   // Group by category
-  const groups = new Map<string, ChannelMapEntry[]>();
+  const groups: Record<string, ChannelMapEntry[]> = {};
   for (const ch of items) {
     const cat = ch.category ?? "\u0414\u0440\u0443\u0433\u043e\u0435";
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat)!.push(ch);
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(ch);
   }
 
-  const catKeys: string[] = Array.from(groups.keys());
+  const catKeys: string[] = Object.keys(groups);
   const totalCats = catKeys.length;
 
   // Cluster centres: arrange on a circle of clusters
@@ -275,7 +275,7 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
 
   for (let ci = 0; ci < catKeys.length; ci++) {
     const cat = catKeys[ci];
-    const chItems = groups.get(cat)!;
+    const chItems = groups[cat];
     const theta = (ci / totalCats) * 2 * Math.PI - Math.PI / 2;
     const cx = Math.cos(theta) * clusterRadius;
     const cy = Math.sin(theta) * clusterRadius;
