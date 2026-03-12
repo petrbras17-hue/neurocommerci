@@ -77,8 +77,8 @@ export function AdminPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // Check if user is admin role
-  const isAdmin = profile?.team?.some((m: Record<string, unknown>) => m.role === "admin" || m.role === "owner") ?? false;
+  // Admin page is accessible but data requires OPS_API_TOKEN on the backend
+  const isAdmin = true; // Role check deferred to backend (require_internal_token)
 
   const load = async () => {
     if (!accessToken) return;
