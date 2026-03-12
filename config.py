@@ -124,6 +124,25 @@ class Settings(BaseSettings):
     WARMUP_ACTIVE_HOURS_END: int = Field(default=23)
     HEALTH_RECALC_INTERVAL_SEC: int = Field(default=300)  # 5 min
 
+    # --- Liveliness Agent ---
+    LIVELINESS_ENABLED: bool = Field(default=True)
+    LIVELINESS_MAX_CONCURRENT: int = Field(default=10)
+    LIVELINESS_TIMEZONE: str = Field(default="Europe/Moscow")
+    LIVELINESS_HEALTH_THRESHOLD: int = Field(default=30)
+    LIVELINESS_POLL_INTERVAL_SEC: int = Field(default=60)
+    LIVELINESS_SLEEP_START_HOUR: int = Field(default=23)
+    LIVELINESS_SLEEP_END_HOUR: int = Field(default=7)
+
+    # --- Digest Reporter ---
+    DIGEST_BATCH_WINDOW_SEC: int = Field(default=2)
+    DIGEST_MAX_PER_MINUTE: int = Field(default=30)
+
+    # -- Channel Intelligence --
+    CI_PROFILE_REFRESH_HOURS: int = Field(default=24)
+    CI_JOIN_POLL_INTERVAL_SEC: int = Field(default=300)
+    CI_BAN_RISK_CRITICAL_THRESHOLD: float = Field(default=50.0)
+    CI_REDIS_CACHE_TTL_SEC: int = Field(default=3600)
+
     # --- Session Health & Keep-Alive ---
     SESSION_HEALTH_CHECK_HOURS: int = Field(default=4)  # Проверка авторизации
     KEEP_ALIVE_INTERVAL_HOURS: int = Field(default=6)   # Периодический get_me / read

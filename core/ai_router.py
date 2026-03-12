@@ -220,6 +220,64 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_MANAGER,
         output_contract_type="json_object",
     ),
+    # --- Channel Intelligence ---
+    "channel_rules_extraction": TaskPolicy(
+        task_type="channel_rules_extraction",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "ban_analysis": TaskPolicy(
+        task_type="ban_analysis",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "comment_adaptation": TaskPolicy(
+        task_type="comment_adaptation",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "ban_pattern_global": TaskPolicy(
+        task_type="ban_pattern_global",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_BOSS,
+        output_contract_type="json_object",
+        approval_required=True,
+    ),
+    # --- Autonomous Life (AI-driven) ---
+    "life_next_action": TaskPolicy(
+        task_type="life_next_action",
+        agent_name="Liveliness Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "life_story_reaction": TaskPolicy(
+        task_type="life_story_reaction",
+        agent_name="Liveliness Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "life_search_query": TaskPolicy(
+        task_type="life_search_query",
+        agent_name="Liveliness Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "life_channel_reading": TaskPolicy(
+        task_type="life_channel_reading",
+        agent_name="Liveliness Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
+    "strategy_optimization": TaskPolicy(
+        task_type="strategy_optimization",
+        agent_name="Strategy Agent",
+        requested_model_tier=TIER_BOSS,
+        output_contract_type="json_object",
+        approval_required=True,
+    ),
     # --- Chatting & Dialogs ---
     "neuro_chat_message": TaskPolicy(
         task_type="neuro_chat_message",
