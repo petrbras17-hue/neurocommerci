@@ -172,6 +172,7 @@ class Settings(BaseSettings):
     OPS_API_PORT: int = Field(default=8081)
     OPS_API_TOKEN: str = Field(default="")
     WEBAPP_DEV_ORIGIN: str = Field(default="http://localhost:5173")
+    PUBLIC_DOMAIN: str = Field(default="")
     WEBAPP_SESSION_COOKIE_NAME: str = Field(default="nc_refresh_token")
     JWT_ACCESS_SECRET: str = Field(default="")
     JWT_REFRESH_SECRET: str = Field(default="")

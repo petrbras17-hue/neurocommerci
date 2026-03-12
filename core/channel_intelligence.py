@@ -25,7 +25,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from storage.models import ChannelBanEvent, ChannelEntry, ChannelJoinRequest, ChannelProfile
+from storage.models import ChannelBanEvent, ChannelEntry, ChannelJoinRequest, ChannelMapEntry, ChannelProfile
 from storage.sqlite_db import apply_session_rls_context, async_session
 from utils.helpers import utcnow
 
@@ -1167,3 +1167,158 @@ class ChannelQualityScorer:
                 exc,
             )
             return False
+
+
+# ---------------------------------------------------------------------------
+# Micro-topic classification
+# ---------------------------------------------------------------------------
+
+_CLASSIFICATION_PROMPT_TEMPLATE = (
+    "You are a Telegram channel topic classifier.\n"
+    "Analyze the following channel and return ONLY a valid JSON object:\n"
+    "{{\n"
+    '  "main_category": "<primary category, e.g. Crypto, Marketing, Tech, Finance, Lifestyle>",\n'
+    '  "subcategory": "<specific subcategory, e.g. Trading, DeFi, SaaS, E-commerce>",\n'
+    '  "micro_topics": ["<topic1>", "<topic2>", "<topic3>"],\n'
+    '  "language": "<2-letter language code, e.g. ru, en, uk>",\n'
+    '  "audience_type": "<target audience, e.g. traders, developers, marketers, entrepreneurs>"\n'
+    "}}\n\n"
+    "Channel title: {title}\n"
+    "Channel description: {description}\n\n"
+    "Rules:\n"
+    "- Return 3 to 7 micro_topics.\n"
+    "- Use English for all field values.\n"
+    "- Do not add any explanation outside the JSON object."
+)
+
+_CLASSIFICATION_SYSTEM = (
+    "You are a precise channel taxonomy classifier. "
+    "Return ONLY a JSON object with exactly these keys: "
+    "main_category, subcategory, micro_topics, language, audience_type. "
+    "Never include markdown code fences or extra text."
+)
+
+
+async def classify_channel_topics(
+    session: AsyncSession,
+    channel_id: int,
+    tenant_id: int,
+) -> dict:
+    """Use AI to classify a channel into micro-topics based on title + description.
+
+    Fetches the ChannelMapEntry by id, calls route_ai_task with
+    task_type='channel_classification', updates category / subcategory /
+    topic_tags on the row, and returns the parsed classification dict.
+
+    channel_map_entries.tenant_id is nullable — this function handles both
+    platform catalog rows (tenant_id IS NULL) and tenant-owned rows.
+    """
+    from core.ai_router import route_ai_task
+
+    # Load the channel entry — works with both platform-level and tenant-owned rows.
+    stmt = select(ChannelMapEntry).where(ChannelMapEntry.id == channel_id)
+    row: ChannelMapEntry | None = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"ChannelMapEntry id={channel_id} not found")
+
+    title = row.title or ""
+    description = row.description or ""
+    if not title and not description:
+        return {
+            "main_category": None,
+            "subcategory": None,
+            "micro_topics": [],
+            "language": None,
+            "audience_type": None,
+            "channel_id": channel_id,
+            "skipped": True,
+            "reason": "no_title_or_description",
+        }
+
+    prompt = _CLASSIFICATION_PROMPT_TEMPLATE.format(
+        title=title[:500],
+        description=description[:1000],
+    )
+
+    result = await route_ai_task(
+        session,
+        task_type="channel_classification",
+        prompt=prompt,
+        system_instruction=_CLASSIFICATION_SYSTEM,
+        tenant_id=tenant_id,
+        max_output_tokens=400,
+        temperature=0.2,
+        surface="channel_map",
+    )
+
+    if not result.ok or not result.parsed:
+        return {
+            "main_category": None,
+            "subcategory": None,
+            "micro_topics": [],
+            "language": None,
+            "audience_type": None,
+            "channel_id": channel_id,
+            "skipped": True,
+            "reason": result.reason_code or "ai_failed",
+        }
+
+    parsed = result.parsed
+    main_category = parsed.get("main_category") or None
+    subcategory = parsed.get("subcategory") or None
+    micro_topics = parsed.get("micro_topics") or []
+    language = parsed.get("language") or None
+    audience_type = parsed.get("audience_type") or None
+
+    # Persist classification back to the row
+    if main_category:
+        row.category = main_category
+    if subcategory:
+        row.subcategory = subcategory
+    if micro_topics:
+        existing_tags: list = list(row.topic_tags or [])
+        # Merge, de-duplicate, preserve order
+        for t in micro_topics:
+            if t not in existing_tags:
+                existing_tags.append(t)
+        row.topic_tags = existing_tags
+    if language and not row.language:
+        row.language = language
+    row.last_refreshed_at = utcnow()
+
+    return {
+        "main_category": main_category,
+        "subcategory": subcategory,
+        "micro_topics": micro_topics,
+        "language": language,
+        "audience_type": audience_type,
+        "channel_id": channel_id,
+        "ai_request_id": result.ai_request_id,
+    }
+
+
+async def classify_channels_batch(
+    session: AsyncSession,
+    channel_ids: list[int],
+    tenant_id: int,
+) -> list[dict]:
+    """Classify up to 20 channels in one call.
+
+    Processes each channel sequentially (AI calls are already async).
+    Returns one result dict per channel_id in the same order.
+    """
+    if len(channel_ids) > 20:
+        raise ValueError("classify_channels_batch: maximum 20 channels per call")
+
+    results: list[dict] = []
+    for cid in channel_ids:
+        try:
+            res = await classify_channel_topics(session, channel_id=cid, tenant_id=tenant_id)
+        except Exception as exc:
+            res = {
+                "channel_id": cid,
+                "skipped": True,
+                "reason": str(exc),
+            }
+        results.append(res)
+    return results

@@ -181,6 +181,9 @@ QUEUE_ACCOUNT_LIFECYCLE = "account_lifecycle_tasks"
 JOB_TYPE_ACCOUNT_HEALTH_CHECK = "account_health_check"
 JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR = "account_lifecycle_monitor"
 
+# Channel classification (micro-topic taxonomy)
+JOB_TYPE_CHANNEL_CLASSIFY_BATCH = "channel_classify_batch"
+
 _FARM_JOB_TYPE_TO_QUEUE: dict[str, str] = {
     JOB_TYPE_FARM_START: QUEUE_FARM,
     JOB_TYPE_FARM_STOP: QUEUE_FARM,
@@ -212,6 +215,8 @@ _FARM_JOB_TYPE_TO_QUEUE: dict[str, str] = {
     # Sprint 7 Tasks 2+3 — Account lifecycle
     JOB_TYPE_ACCOUNT_HEALTH_CHECK: QUEUE_ACCOUNT_LIFECYCLE,
     JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR: QUEUE_ACCOUNT_LIFECYCLE,
+    # Channel classification
+    JOB_TYPE_CHANNEL_CLASSIFY_BATCH: QUEUE_CAMPAIGNS,
 }
 
 
@@ -332,6 +337,26 @@ _rate_limit_buckets: dict[tuple[str, str], collections.deque] = collections.defa
 _rate_limit_last_gc = time.monotonic()
 _RATE_LIMIT_MAX_BUCKETS = 10_000
 _RATE_LIMIT_GC_INTERVAL = 300  # seconds
+
+
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB per file
+_MAX_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB for ZIP uploads
+
+
+async def _read_upload_safe(upload: UploadFile, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
+    """Read upload file with size limit to prevent memory exhaustion."""
+    data = await upload.read()
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large: {len(data)} bytes (max {max_bytes})",
+        )
+    return data
+
+
+def _escape_like(value: str) -> str:
+    """Escape SQL LIKE metacharacters to prevent wildcard injection."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_seconds: int) -> None:
@@ -1178,7 +1203,12 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="NEURO COMMENTING Ops API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.WEBAPP_DEV_ORIGIN, "http://127.0.0.1:5173"],
+    allow_origins=(
+        [settings.WEBAPP_DEV_ORIGIN, "http://127.0.0.1:5173"]
+        if settings.APP_ENV in ("development", "test")
+        else [f"https://{settings.PUBLIC_DOMAIN}"] if hasattr(settings, "PUBLIC_DOMAIN") and settings.PUBLIC_DOMAIN
+        else []
+    ),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -1820,8 +1850,8 @@ async def web_upload_account_pair(
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    session_bytes = await session_file.read()
-    metadata_bytes = await metadata_file.read()
+    session_bytes = await _read_upload_safe(session_file)
+    metadata_bytes = await _read_upload_safe(metadata_file)
     if not session_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty_session_file")
     if not metadata_bytes:
@@ -2390,9 +2420,9 @@ async def accounts_bulk_import(
                 pair_map.setdefault(digits, {})["json"] = data
 
     for upload in files:
-        raw = await upload.read()
         fname = upload.filename or ""
         if fname.lower().endswith(".zip"):
+            raw = await _read_upload_safe(upload, max_bytes=_MAX_ZIP_BYTES)
             try:
                 with zipfile.ZipFile(io.BytesIO(raw)) as zf:
                     for member in zf.namelist():
@@ -2401,6 +2431,7 @@ async def accounts_bulk_import(
             except zipfile.BadZipFile:
                 continue
         else:
+            raw = await _read_upload_safe(upload, max_bytes=_MAX_UPLOAD_BYTES)
             await _absorb_file(fname, raw)
 
     imported = 0
@@ -5156,10 +5187,11 @@ async def channel_map_list(
         q = q.where(ChannelMapEntry.comments_enabled == has_comments)
         count_q = count_q.where(ChannelMapEntry.comments_enabled == has_comments)
     if search:
+        safe_search = _escape_like(search)
         search_filter = or_(
-            ChannelMapEntry.username.ilike(f"%{search}%"),
-            ChannelMapEntry.title.ilike(f"%{search}%"),
-            ChannelMapEntry.description.ilike(f"%{search}%"),
+            ChannelMapEntry.username.ilike(f"%{safe_search}%"),
+            ChannelMapEntry.title.ilike(f"%{safe_search}%"),
+            ChannelMapEntry.description.ilike(f"%{safe_search}%"),
         )
         q = q.where(search_filter)
         count_q = count_q.where(search_filter)
@@ -5186,11 +5218,12 @@ async def channel_map_search(
     if payload.min_members is not None:
         q = q.where(ChannelMapEntry.member_count >= payload.min_members)
     if payload.query is not None:
+        sq = _escape_like(payload.query)
         q = q.where(
             or_(
-                ChannelMapEntry.username.ilike(f"%{payload.query}%"),
-                ChannelMapEntry.title.ilike(f"%{payload.query}%"),
-                ChannelMapEntry.description.ilike(f"%{payload.query}%"),
+                ChannelMapEntry.username.ilike(f"%{sq}%"),
+                ChannelMapEntry.title.ilike(f"%{sq}%"),
+                ChannelMapEntry.description.ilike(f"%{sq}%"),
             )
         )
     q = q.order_by(ChannelMapEntry.member_count.desc()).limit(payload.limit)
@@ -5424,6 +5457,229 @@ async def channel_map_export(
         },
         "items": [_serialize_export(r) for r in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Channel Map — micro-topic classification endpoints
+# ---------------------------------------------------------------------------
+
+_CATEGORY_TREE_CACHE_KEY = "channel_map:category_tree:{tenant_id}"
+_CATEGORY_TREE_CACHE_TTL = 300  # 5 minutes
+
+
+@app.get("/v1/channel-map/category-tree")
+async def channel_map_category_tree(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return hierarchical category → subcategory → micro_topics tree.
+
+    Result is cached in Redis for 5 minutes keyed by tenant_id.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    cache_key = _CATEGORY_TREE_CACHE_KEY.format(tenant_id=tenant_context.tenant_id)
+
+    # Try Redis cache first
+    try:
+        await task_queue.connect()
+        cached = await task_queue._redis.get(cache_key)
+        if cached:
+            import json as _json
+            return _json.loads(cached)
+    except Exception:
+        pass  # Redis unavailable — proceed without cache
+
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+
+    # Total channel count
+    total_channels: int = (
+        await session.execute(
+            select(func.count()).select_from(ChannelMapEntry).where(tf)
+        )
+    ).scalar_one()
+
+    # Group by category + subcategory
+    cat_sub_rows = (
+        await session.execute(
+            select(
+                ChannelMapEntry.category,
+                ChannelMapEntry.subcategory,
+                func.count(ChannelMapEntry.id).label("cnt"),
+            )
+            .where(tf, ChannelMapEntry.category.isnot(None))
+            .group_by(ChannelMapEntry.category, ChannelMapEntry.subcategory)
+            .order_by(ChannelMapEntry.category, func.count(ChannelMapEntry.id).desc())
+        )
+    ).all()
+
+    # Collect topic_tags per (category, subcategory) — scan rows with tags
+    tagged_rows = (
+        await session.execute(
+            select(ChannelMapEntry.category, ChannelMapEntry.subcategory, ChannelMapEntry.topic_tags)
+            .where(tf, ChannelMapEntry.category.isnot(None), ChannelMapEntry.topic_tags.isnot(None))
+            .limit(10000)
+        )
+    ).all()
+
+    # Build topic index
+    from collections import defaultdict
+    topic_index: dict[tuple, set] = defaultdict(set)
+    for cat, sub, tags in tagged_rows:
+        if tags and isinstance(tags, list):
+            key = (cat, sub or "")
+            for t in tags:
+                if isinstance(t, str) and t:
+                    topic_index[key].add(t)
+
+    # Assemble category tree
+    cat_map: dict[str, dict] = {}
+    for cat, sub, cnt in cat_sub_rows:
+        if cat not in cat_map:
+            cat_map[cat] = {"name": cat, "count": 0, "subcategories": {}}
+        cat_map[cat]["count"] += cnt
+        sub_key = sub or ""
+        if sub_key not in cat_map[cat]["subcategories"]:
+            cat_map[cat]["subcategories"][sub_key] = {
+                "name": sub or None,
+                "count": 0,
+                "micro_topics": [],
+            }
+        cat_map[cat]["subcategories"][sub_key]["count"] += cnt
+        topics = sorted(topic_index.get((cat, sub_key), set()))
+        cat_map[cat]["subcategories"][sub_key]["micro_topics"] = topics
+
+    # Flatten subcategory dicts
+    categories = []
+    all_micro_topics: set = set()
+    for cat_data in sorted(cat_map.values(), key=lambda x: -x["count"]):
+        subcats = sorted(cat_data["subcategories"].values(), key=lambda x: -x["count"])
+        for s in subcats:
+            all_micro_topics.update(s["micro_topics"])
+        categories.append({
+            "name": cat_data["name"],
+            "count": cat_data["count"],
+            "subcategories": subcats,
+        })
+
+    response: dict[str, Any] = {
+        "categories": categories,
+        "total_channels": total_channels,
+        "total_categories": len(categories),
+        "total_micro_topics": len(all_micro_topics),
+    }
+
+    # Cache result
+    try:
+        import json as _json
+        await task_queue._redis.set(cache_key, _json.dumps(response), ex=_CATEGORY_TREE_CACHE_TTL)
+    except Exception:
+        pass
+
+    return response
+
+
+class ChannelClassifySinglePayload(BaseModel):
+    """Payload for POST /v1/channel-map/{id}/classify — no body required but kept for extensibility."""
+    pass
+
+
+class ChannelClassifyBatchPayload(BaseModel):
+    """Payload for POST /v1/channel-map/batch-classify."""
+    channel_ids: list[int] = Field(..., min_length=1, max_length=20)
+
+
+@app.post("/v1/channel-map/{channel_id}/classify")
+async def channel_map_classify_single(
+    channel_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Trigger AI micro-topic classification for a single channel.
+
+    Runs synchronously and returns the classification result.
+    Updates category, subcategory, topic_tags on the channel record.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+
+    from core.channel_intelligence import classify_channel_topics
+
+    # Verify the channel is visible to this tenant before classifying
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    exists = (
+        await session.execute(
+            select(func.count()).select_from(ChannelMapEntry).where(
+                tf, ChannelMapEntry.id == channel_id
+            )
+        )
+    ).scalar_one()
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="channel_not_found",
+        )
+
+    result = await classify_channel_topics(
+        session,
+        channel_id=channel_id,
+        tenant_id=tenant_context.tenant_id,
+    )
+
+    # Invalidate the category-tree cache for this tenant
+    try:
+        await task_queue.connect()
+        cache_key = _CATEGORY_TREE_CACHE_KEY.format(tenant_id=tenant_context.tenant_id)
+        await task_queue._redis.delete(cache_key)
+    except Exception:
+        pass
+
+    return result
+
+
+@app.post("/v1/channel-map/batch-classify", status_code=status.HTTP_202_ACCEPTED)
+async def channel_map_batch_classify(
+    payload: ChannelClassifyBatchPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Enqueue batch AI classification for up to 20 channels.
+
+    All channel_ids must be visible to the current tenant (platform catalog
+    rows with NULL tenant_id are also accessible).
+    Returns a job_id for polling.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+
+    if len(payload.channel_ids) > 20:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="maximum 20 channel_ids per batch-classify request",
+        )
+
+    # Validate all requested ids are visible to this tenant
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    visible_ids_rows = (
+        await session.execute(
+            select(ChannelMapEntry.id).where(
+                tf, ChannelMapEntry.id.in_(payload.channel_ids)
+            )
+        )
+    ).scalars().all()
+    visible_ids = set(visible_ids_rows)
+    invisible = [cid for cid in payload.channel_ids if cid not in visible_ids]
+    if invisible:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"channel_ids not found or not accessible: {invisible}",
+        )
+
+    result = await _enqueue_farm_job(
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        user_id=tenant_context.user_id,
+        job_type=JOB_TYPE_CHANNEL_CLASSIFY_BATCH,
+        payload={"channel_ids": list(payload.channel_ids)},
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -7094,7 +7350,7 @@ async def comments_feed(
     if account_id is not None:
         stmt = stmt.where(CommentABResult.account_id == account_id)
     if channel_username:
-        stmt = stmt.where(CommentABResult.channel_username.ilike(f"%{channel_username}%"))
+        stmt = stmt.where(CommentABResult.channel_username.ilike(f"%{_escape_like(channel_username)}%"))
     if style_name:
         stmt = stmt.where(CommentABResult.style_name == style_name)
 

@@ -56,6 +56,9 @@ JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR = "account_lifecycle_monitor"
 JOB_TYPE_HEALTH_SWEEP = "health_sweep"
 JOB_TYPE_AUTO_PURCHASE = "auto_purchase"
 
+# Channel classification (micro-topic taxonomy)
+JOB_TYPE_CHANNEL_CLASSIFY_BATCH = "channel_classify_batch"
+
 QUEUE_FARM = "farm_tasks"
 QUEUE_PARSER = "parser_tasks"
 QUEUE_PROFILE = "profile_tasks"
@@ -141,6 +144,10 @@ async def _process_farm_job(job: AppJob) -> dict[str, Any]:
         return await _handle_health_sweep(payload, tenant_id)
     if job_type == JOB_TYPE_AUTO_PURCHASE:
         return await _handle_auto_purchase(payload, tenant_id)
+
+    # Channel micro-topic classification
+    if job_type == JOB_TYPE_CHANNEL_CLASSIFY_BATCH:
+        return await _handle_channel_classify_batch(payload, tenant_id)
 
     raise FarmJobError(f"unsupported_job_type: {job_type}")
 
@@ -788,6 +795,29 @@ async def _handle_auto_purchase(payload: dict, tenant_id: int) -> dict[str, Any]
     mgr = AutoPurchaseManager()
     result = await mgr.check_resource_levels(tenant_id)
     return {"status": "completed", "result": result}
+
+
+async def _handle_channel_classify_batch(payload: dict, tenant_id: int) -> dict[str, Any]:
+    """Run classify_channels_batch for the given channel_ids."""
+    from core.channel_intelligence import classify_channels_batch
+
+    channel_ids: list[int] = list(payload.get("channel_ids") or [])
+    if not channel_ids:
+        return {"status": "completed", "results": [], "total": 0}
+
+    async with async_session() as session:
+        async with session.begin():
+            await apply_session_rls_context(session, tenant_id=tenant_id)
+            results = await classify_channels_batch(session, channel_ids, tenant_id)
+
+    classified = sum(1 for r in results if not r.get("skipped"))
+    return {
+        "status": "completed",
+        "total": len(results),
+        "classified": classified,
+        "skipped": len(results) - classified,
+        "results": results,
+    }
 
 
 async def farm_worker_loop(poll_interval: float = 2.0) -> None:

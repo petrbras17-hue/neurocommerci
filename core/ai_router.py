@@ -369,6 +369,13 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
+    # --- Channel Classification (micro-topic taxonomy) ---
+    "channel_classification": TaskPolicy(
+        task_type="channel_classification",
+        agent_name="Channel Intelligence Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
 }
 
 

@@ -40,7 +40,7 @@ def _enable_tenant_rls(table_name: str) -> None:
     op.execute(sa.text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY"))
     op.execute(sa.text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY"))
     op.execute(sa.text(f"DROP POLICY IF EXISTS {table_name}_tenant_isolation ON {table_name}"))
-    tenant_scope = "tenant_id = NULLIF(current_setting('app.current_tenant_id', true), '')::int"
+    tenant_scope = "tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::int"
     op.execute(
         sa.text(
             f"""
