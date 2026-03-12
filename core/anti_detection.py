@@ -2,13 +2,22 @@
 Anti-Detection System — behavioral randomization and human simulation.
 
 Provides typing simulation, random delays, read simulation,
-and behavioral fingerprinting to avoid Telegram detection.
+online-status toggling, random reactions, and behavioral fingerprinting
+to avoid Telegram detection.
+
+v2 additions (Sprint 8):
+  - toggle_online_status()      — randomized online/offline pattern
+  - simulate_channel_browse()   — scroll + read multiple posts
+  - send_random_reaction()      — react to a random recent post
+  - per_account_interval()      — unique timing jitter per account
+  - is_night_hours()            — time-of-day awareness (00:00–07:00)
 """
 
 from __future__ import annotations
 
 import asyncio
 import random
+from datetime import timezone
 from typing import Any, Optional
 
 
@@ -190,3 +199,190 @@ class AntiDetection:
     def randomize_emoji(self) -> str:
         """Return a randomly chosen reaction emoji."""
         return random.choice(_REACTION_EMOJIS)
+
+    # ------------------------------------------------------------------
+    # Online status toggling (Sprint 8)
+    # ------------------------------------------------------------------
+
+    async def toggle_online_status(
+        self,
+        client: Any,
+        cycles: int = 3,
+    ) -> None:
+        """
+        Simulate human-like online/offline presence toggling.
+
+        Sends UpdateStatus(offline=False/True) with random delays between
+        transitions, mimicking a user who glances at their phone and puts it down.
+
+        Args:
+            client:  Telethon TelegramClient.
+            cycles:  Number of on/off cycles to perform.
+        """
+        if client is None:
+            return
+        try:
+            from telethon.functions.account import UpdateStatusRequest
+        except ImportError:
+            return
+
+        delays = {
+            "conservative": (30.0, 90.0),
+            "moderate": (15.0, 45.0),
+            "aggressive": (5.0, 20.0),
+        }
+        lo, hi = delays[self.mode]
+
+        for _ in range(cycles):
+            try:
+                await client(UpdateStatusRequest(offline=False))
+                await asyncio.sleep(random.uniform(lo / 2, hi / 2))
+                await client(UpdateStatusRequest(offline=True))
+                await asyncio.sleep(random.uniform(lo, hi) * self._multiplier)
+            except Exception:
+                break  # Non-critical
+
+    # ------------------------------------------------------------------
+    # Channel browsing simulation (Sprint 8)
+    # ------------------------------------------------------------------
+
+    async def simulate_channel_browse(
+        self,
+        client: Any,
+        channel_entity: Any,
+        posts_to_read: int = 5,
+    ) -> None:
+        """
+        Simulate browsing a channel: read a few recent posts with realistic pauses.
+
+        Args:
+            client:           Telethon TelegramClient.
+            channel_entity:   The channel/chat entity.
+            posts_to_read:    How many recent posts to "read".
+        """
+        if client is None or channel_entity is None:
+            return
+        try:
+            msgs = await client.get_messages(channel_entity, limit=posts_to_read)
+            for msg in msgs:
+                text = getattr(msg, "text", None) or ""
+                # Realistic reading speed: 200–300 chars/sec
+                chars = max(1, len(text))
+                speed = random.uniform(200.0, 300.0) / self._multiplier
+                await asyncio.sleep(min(chars / speed + random.uniform(0.5, 2.0), 10.0))
+        except Exception:
+            pass  # Non-critical
+
+    # ------------------------------------------------------------------
+    # Random reaction on recent posts (Sprint 8)
+    # ------------------------------------------------------------------
+
+    async def send_random_reaction(
+        self,
+        client: Any,
+        channel_entity: Any,
+        skip_probability: float = 0.6,
+    ) -> bool:
+        """
+        React to a random recent post in the channel.
+
+        Args:
+            client:           Telethon TelegramClient.
+            channel_entity:   Channel/chat entity.
+            skip_probability: Probability of skipping (default 60% — not every visit).
+
+        Returns:
+            True if a reaction was sent, False otherwise.
+        """
+        if client is None or channel_entity is None:
+            return False
+        if random.random() < skip_probability:
+            return False
+        try:
+            from telethon.tl.functions.messages import SendReactionRequest
+            from telethon.tl.types import ReactionEmoji
+        except ImportError:
+            return False
+        try:
+            msgs = await client.get_messages(channel_entity, limit=10)
+            if not msgs:
+                return False
+            target = random.choice(msgs)
+            emoji_char = self.randomize_emoji()
+            await client(
+                SendReactionRequest(
+                    peer=channel_entity,
+                    msg_id=target.id,
+                    reaction=[ReactionEmoji(emoticon=emoji_char)],
+                )
+            )
+            return True
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+    # Per-account interval jitter (Sprint 8)
+    # ------------------------------------------------------------------
+
+    def per_account_interval(
+        self,
+        base_min_sec: float,
+        base_max_sec: float,
+        account_id: int,
+    ) -> float:
+        """
+        Return a per-account randomized interval within [base_min, base_max].
+
+        Uses account_id as a deterministic seed offset so different accounts
+        get slightly different timing profiles, reducing fingerprinting.
+
+        Args:
+            base_min_sec:  Minimum interval in seconds.
+            base_max_sec:  Maximum interval in seconds.
+            account_id:    Account ID used to seed jitter offset.
+
+        Returns:
+            Float seconds to wait.
+        """
+        # Stable per-account offset: ±15% of base range
+        range_width = base_max_sec - base_min_sec
+        account_seed_offset = (account_id % 100) / 100.0  # 0.00–0.99
+        # Shift the midpoint slightly based on account_id
+        midpoint = (base_min_sec + base_max_sec) / 2.0
+        offset = (account_seed_offset - 0.5) * range_width * 0.30
+        adjusted_min = max(base_min_sec, midpoint + offset - range_width * 0.35)
+        adjusted_max = min(base_max_sec, midpoint + offset + range_width * 0.35)
+        return random.uniform(adjusted_min, adjusted_max) * self._multiplier
+
+    # ------------------------------------------------------------------
+    # Time-of-day awareness (Sprint 8)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def is_night_hours(account_utc_offset_hours: int = 3) -> bool:
+        """
+        Return True if the current time (adjusted for account timezone) falls
+        between 00:00 and 07:00 — the quiet hours.
+
+        Args:
+            account_utc_offset_hours:  UTC offset for the account's timezone.
+                                       Default 3 = Moscow time (UTC+3).
+
+        Returns:
+            True if current local hour is in [0, 7).
+        """
+        from datetime import datetime
+        utc_now = datetime.now(timezone.utc)
+        local_hour = (utc_now.hour + account_utc_offset_hours) % 24
+        return 0 <= local_hour < 7
+
+    def night_activity_multiplier(self, account_utc_offset_hours: int = 3) -> float:
+        """
+        Return a multiplier for activity reduction during night hours.
+
+        Night (00:00–07:00 local): 0.2 — drastically reduced activity.
+        Day:                        1.0 — normal activity.
+        """
+        if self.is_night_hours(account_utc_offset_hours):
+            return 0.2
+        return 1.0

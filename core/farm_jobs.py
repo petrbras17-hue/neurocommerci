@@ -52,6 +52,10 @@ JOB_TYPE_CAMPAIGN_STOP = "campaign_stop"
 JOB_TYPE_ACCOUNT_HEALTH_CHECK = "account_health_check"
 JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR = "account_lifecycle_monitor"
 
+# Sprint 11 — Self-Healing & Auto-Purchase
+JOB_TYPE_HEALTH_SWEEP = "health_sweep"
+JOB_TYPE_AUTO_PURCHASE = "auto_purchase"
+
 QUEUE_FARM = "farm_tasks"
 QUEUE_PARSER = "parser_tasks"
 QUEUE_PROFILE = "profile_tasks"
@@ -64,12 +68,14 @@ QUEUE_USER_PARSER = "user_parser_tasks"
 QUEUE_FOLDERS = "folder_tasks"
 QUEUE_CAMPAIGNS = "campaign_tasks"
 QUEUE_ACCOUNT_LIFECYCLE = "account_lifecycle_tasks"
+QUEUE_HEALING = "healing_tasks"
 
 FARM_QUEUE_NAMES = (
     QUEUE_FARM, QUEUE_PARSER, QUEUE_PROFILE,
     QUEUE_WARMUP, QUEUE_HEALTH, QUEUE_REACTIONS,
     QUEUE_CHATTING, QUEUE_DIALOGS, QUEUE_USER_PARSER,
     QUEUE_FOLDERS, QUEUE_CAMPAIGNS, QUEUE_ACCOUNT_LIFECYCLE,
+    QUEUE_HEALING,
 )
 
 
@@ -129,6 +135,12 @@ async def _process_farm_job(job: AppJob) -> dict[str, Any]:
         return await _handle_account_health_check(payload, tenant_id)
     if job_type == JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR:
         return await _handle_account_lifecycle_monitor(payload, tenant_id)
+
+    # Sprint 11 — self-healing and auto-purchase
+    if job_type == JOB_TYPE_HEALTH_SWEEP:
+        return await _handle_health_sweep(payload, tenant_id)
+    if job_type == JOB_TYPE_AUTO_PURCHASE:
+        return await _handle_auto_purchase(payload, tenant_id)
 
     raise FarmJobError(f"unsupported_job_type: {job_type}")
 
@@ -753,6 +765,29 @@ async def _handle_account_lifecycle_monitor(payload: dict, tenant_id: int) -> di
         len(transitions),
     )
     return {"status": "completed", "tenant_id": tenant_id, "transitions": len(transitions), "details": transitions}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 11 handlers — self-healing and auto-purchase
+# ---------------------------------------------------------------------------
+
+
+async def _handle_health_sweep(payload: dict, tenant_id: int) -> dict[str, Any]:
+    """Run the SelfHealingEngine health sweep for the tenant."""
+    from core.self_healing import SelfHealingEngine
+
+    engine = SelfHealingEngine()
+    result = await engine.run_health_sweep(tenant_id)
+    return {"status": "completed", "result": result}
+
+
+async def _handle_auto_purchase(payload: dict, tenant_id: int) -> dict[str, Any]:
+    """Run AutoPurchaseManager.check_resource_levels for the tenant."""
+    from core.auto_purchase import AutoPurchaseManager
+
+    mgr = AutoPurchaseManager()
+    result = await mgr.check_resource_levels(tenant_id)
+    return {"status": "completed", "result": result}
 
 
 async def farm_worker_loop(poll_interval: float = 2.0) -> None:

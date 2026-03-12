@@ -936,6 +936,9 @@ class ChannelProfile(Base):
     safe_comment_interval_sec = Column(Integer, default=0)
     last_profiled_at = Column(DateTime, nullable=True)
     last_ban_analysis_at = Column(DateTime, nullable=True)
+    # Sprint 8: quality scoring
+    quality_score = Column(Float, nullable=True)
+    quality_scored_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -1464,5 +1467,252 @@ class PaymentEvent(Base):
     external_payment_id = Column(String(255), nullable=True)
     event_meta = Column("metadata", JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8 — Comment Quality A/B Testing
+# ---------------------------------------------------------------------------
+
+
+class CommentStyleTemplate(Base):
+    """Шаблоны стилей комментариев для A/B тестирования."""
+    __tablename__ = "comment_style_templates"
+    __table_args__ = (
+        Index("ix_comment_style_templates_tenant_id", "tenant_id"),
+        Index("ix_comment_style_templates_is_active", "is_active"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    name = Column(String(100), nullable=False)            # question, agree, joke, etc.
+    description = Column(Text, nullable=True)
+    template_pattern = Column(Text, nullable=True)        # prompt template with {{placeholders}}
+    tone = Column(String(50), nullable=True)              # maps to VALID_TONES
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class CommentABResult(Base):
+    """A/B результаты по стилям комментариев."""
+    __tablename__ = "comment_ab_results"
+    __table_args__ = (
+        Index("ix_comment_ab_results_tenant_id", "tenant_id"),
+        Index("ix_comment_ab_results_style_name", "style_name"),
+        Index("ix_comment_ab_results_posted_at", "posted_at"),
+        Index("ix_comment_ab_results_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    farm_event_id = Column(Integer, ForeignKey("farm_events.id"), nullable=True)
+    style_name = Column(String(100), nullable=False)
+    tone = Column(String(50), nullable=True)
+    channel_username = Column(String(100), nullable=True)
+    channel_entry_id = Column(Integer, ForeignKey("channel_entries.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    reactions_count = Column(Integer, default=0)
+    replies_count = Column(Integer, default=0)
+    was_deleted = Column(Boolean, default=False)
+    posted_at = Column(DateTime, nullable=True)
+    measured_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 9 — Client Onboarding & Auto Campaign
+# ---------------------------------------------------------------------------
+
+
+class ProductBrief(Base):
+    """AI-analysed product brief from URL, used to auto-create campaigns."""
+    __tablename__ = "product_briefs"
+    __table_args__ = (
+        Index("ix_product_briefs_tenant_id", "tenant_id"),
+        Index("ix_product_briefs_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    url = Column(String(2000), nullable=True)
+    product_name = Column(String(500), nullable=True)
+    target_audience = Column(Text, nullable=True)
+    brand_tone = Column(String(200), nullable=True)
+    usp = Column(Text, nullable=True)
+    keywords = Column(JSONType, nullable=True)        # list[str]
+    suggested_styles = Column(JSONType, nullable=True)  # list[str]
+    daily_volume = Column(Integer, nullable=True)
+    analysis_raw = Column(JSONType, nullable=True)   # raw AI JSON response
+    created_at = Column(DateTime, default=utcnow)
+
+
+class CampaignChannel(Base):
+    """Channels assigned to a campaign for targeting."""
+    __tablename__ = "campaign_channels"
+    __table_args__ = (
+        Index("ix_campaign_channels_tenant_id", "tenant_id"),
+        Index("ix_campaign_channels_campaign_id", "campaign_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    channel_id = Column(Integer, ForeignKey("channel_map_entries.id"), nullable=True)
+    channel_username = Column(String(200), nullable=True)
+    status = Column(String(20), default="active")   # active, paused, removed
+    comments_count = Column(Integer, default=0)
+    last_comment_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class CampaignAccount(Base):
+    """Accounts assigned to a campaign."""
+    __tablename__ = "campaign_accounts"
+    __table_args__ = (
+        Index("ix_campaign_accounts_tenant_id", "tenant_id"),
+        Index("ix_campaign_accounts_campaign_id", "campaign_id"),
+        Index("ix_campaign_accounts_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    status = Column(String(20), default="active")   # active, paused, removed
+    comments_today = Column(Integer, default=0)
+    last_comment_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 10 — Analytics & ROI Dashboard
+# ---------------------------------------------------------------------------
+
+
+class AnalyticsDailyCache(Base):
+    """Pre-aggregated daily analytics metrics for fast dashboard queries."""
+    __tablename__ = "analytics_daily_cache"
+    __table_args__ = (
+        Index("ix_analytics_daily_cache_tenant_id", "tenant_id"),
+        Index("ix_analytics_daily_cache_date", "date"),
+        UniqueConstraint("tenant_id", "date", "metric_type", name="uq_analytics_daily_cache_scope"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    date = Column(String(10), nullable=False)           # YYYY-MM-DD
+    metric_type = Column(String(50), nullable=False)    # comments, reactions, leads, bans
+    value = Column(Float, default=0.0)
+    extra_data = Column("metadata", JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class WeeklyReport(Base):
+    """AI-generated weekly marketing report per tenant."""
+    __tablename__ = "weekly_reports"
+    __table_args__ = (
+        Index("ix_weekly_reports_tenant_id", "tenant_id"),
+        Index("ix_weekly_reports_week_start", "week_start"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    week_start = Column(String(10), nullable=False)     # YYYY-MM-DD (Monday)
+    week_end = Column(String(10), nullable=False)       # YYYY-MM-DD (Sunday)
+    report_text = Column(Text, nullable=True)           # Natural language report from AI
+    metrics_snapshot = Column(JSONType, nullable=True)  # Raw metrics used for report
+    generated_at = Column(DateTime, nullable=True)
+    sent_at = Column(DateTime, nullable=True)           # When Telegram digest was sent
+    created_at = Column(DateTime, default=utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 11 — Self-Healing & Auto-Purchase
+# ---------------------------------------------------------------------------
+
+
+class HealingAction(Base):
+    """Log of automatic self-healing actions performed by the platform."""
+    __tablename__ = "healing_actions"
+    __table_args__ = (
+        Index("ix_healing_actions_tenant_id", "tenant_id"),
+        Index("ix_healing_actions_action_type", "action_type"),
+        Index("ix_healing_actions_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    action_type = Column(String(50), nullable=False)
+    # handle_account_ban, handle_proxy_death, handle_flood_wait, handle_freeze, health_sweep
+    target_type = Column(String(20), nullable=False)    # account, proxy, thread
+    target_id = Column(Integer, nullable=True)
+    details = Column(JSONType, nullable=True)
+    outcome = Column(String(20), default="pending")     # pending, success, failed
+    created_at = Column(DateTime, default=utcnow)
+
+
+class PurchaseRequest(Base):
+    """Admin-gated request to purchase proxies or accounts via a provider."""
+    __tablename__ = "purchase_requests"
+    __table_args__ = (
+        Index("ix_purchase_requests_tenant_id", "tenant_id"),
+        Index("ix_purchase_requests_status", "status"),
+        Index("ix_purchase_requests_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    resource_type = Column(String(20), nullable=False)  # proxy, account
+    quantity = Column(Integer, nullable=False)
+    provider_name = Column(String(100), nullable=False)
+    status = Column(String(20), default="pending")
+    # pending, approved, rejected, completed, failed
+    requested_by = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    approved_by = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
+    estimated_cost_usd = Column(Float, nullable=True)
+    actual_cost_usd = Column(Float, nullable=True)
+    details = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    approved_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
+class PlatformAlert(Base):
+    """Active and resolved platform-level alerts for a tenant."""
+    __tablename__ = "platform_alerts"
+    __table_args__ = (
+        Index("ix_platform_alerts_tenant_id", "tenant_id"),
+        Index("ix_platform_alerts_severity", "severity"),
+        Index("ix_platform_alerts_is_resolved", "is_resolved"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    alert_type = Column(String(50), nullable=False)
+    severity = Column(String(10), default="info")       # info, warning, critical
+    message = Column(Text, nullable=False)
+    is_resolved = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class AlertConfig(Base):
+    """Per-tenant threshold configuration for auto-purchase and notification triggers."""
+    __tablename__ = "alert_configs"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "resource_type", name="uq_alert_configs_tenant_resource"),
+        Index("ix_alert_configs_tenant_id", "tenant_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    resource_type = Column(String(20), nullable=False)  # proxy, account
+    threshold_percent = Column(Integer, default=10)
+    auto_purchase_enabled = Column(Boolean, default=False)
+    notify_telegram = Column(Boolean, default=True)
+    notify_email = Column(Boolean, default=False)
 
 

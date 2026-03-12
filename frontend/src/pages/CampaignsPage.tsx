@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Megaphone,
@@ -11,6 +12,8 @@ import {
   RefreshCw,
   RotateCcw,
   X,
+  Rocket,
+  ExternalLink,
 } from "lucide-react";
 import {
   campaignsApi,
@@ -119,6 +122,7 @@ const cardVariants = {
 
 export function CampaignsPage() {
   const { accessToken } = useAuth();
+  const navigate = useNavigate();
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -339,15 +343,26 @@ export function CampaignsPage() {
             <p className="dash-panel-title">Список</p>
             <h2 style={{ fontSize: "1.2rem", marginTop: 4 }}>Ваши кампании</h2>
           </div>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => setShowCreate(true)}
-            style={{ display: "flex", alignItems: "center", gap: 6 }}
-          >
-            <Plus size={14} />
-            Создать
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => navigate("/onboarding")}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              <Rocket size={14} />
+              Авто-запуск
+            </button>
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setShowCreate(true)}
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              <Plus size={14} />
+              Создать
+            </button>
+          </div>
         </div>
 
         {campaigns.length ? (
@@ -410,6 +425,15 @@ export function CampaignsPage() {
                       style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}
                       onClick={(e) => e.stopPropagation()}
                     >
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => navigate(`/campaigns/${c.id}`)}
+                        style={{ display: "flex", alignItems: "center", gap: 6 }}
+                      >
+                        <ExternalLink size={13} />
+                        Детали
+                      </button>
                       <button
                         className="primary-button"
                         type="button"

@@ -22,10 +22,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
+from sqlalchemy import Integer as sa_Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ai_router import route_ai_task
-from storage.models import FarmEvent
+from storage.models import CommentABResult, CommentStyleTemplate, FarmEvent
 from storage.sqlite_db import apply_session_rls_context, async_session
 from utils.helpers import utcnow
 from utils.logger import log
@@ -60,6 +61,64 @@ _MAX_WAIT_BEFORE_FIRST_COMMENT_SEC = 600   # 10 мин
 # Задержка между emoji-постом и редактированием (секунды)
 _EMOJI_TRICK_EDIT_DELAY_MIN = 40
 _EMOJI_TRICK_EDIT_DELAY_MAX = 55
+
+# Исследовательские лимиты: 350-400 сек между комментариями, 12-14/час
+COMMENT_INTERVAL_MIN_SEC = 350
+COMMENT_INTERVAL_MAX_SEC = 400
+MAX_COMMENTS_PER_HOUR_SAFE = 12
+
+# 10 стилей комментариев для A/B тестирования
+STYLE_QUESTION = "question"         # Задаёт вопрос
+STYLE_AGREE = "agree"               # Согласие
+STYLE_SUPPLEMENT = "supplement"     # Дополнение / новый аргумент
+STYLE_JOKE = "joke"                 # Шутка / ирония
+STYLE_EXPERT = "expert"             # Экспертное мнение
+STYLE_PERSONAL = "personal"         # Личный опыт
+STYLE_QUOTE = "quote"               # Цитата из поста
+STYLE_EMOJI = "emoji"               # Эмодзи-реакция
+STYLE_CONTROVERSIAL = "controversial"  # Спорное мнение
+STYLE_GRATITUDE = "gratitude"       # Благодарность
+
+ALL_STYLES = [
+    STYLE_QUESTION,
+    STYLE_AGREE,
+    STYLE_SUPPLEMENT,
+    STYLE_JOKE,
+    STYLE_EXPERT,
+    STYLE_PERSONAL,
+    STYLE_QUOTE,
+    STYLE_EMOJI,
+    STYLE_CONTROVERSIAL,
+    STYLE_GRATITUDE,
+]
+
+# Маппинг style → tone для генератора
+_STYLE_TO_TONE: dict[str, str] = {
+    STYLE_QUESTION: TONE_POSITIVE,
+    STYLE_AGREE: TONE_POSITIVE,
+    STYLE_SUPPLEMENT: TONE_EXPERT,
+    STYLE_JOKE: TONE_WITTY,
+    STYLE_EXPERT: TONE_EXPERT,
+    STYLE_PERSONAL: TONE_EMOTIONAL,
+    STYLE_QUOTE: TONE_POSITIVE,
+    STYLE_EMOJI: TONE_EMOTIONAL,
+    STYLE_CONTROVERSIAL: TONE_HATER,
+    STYLE_GRATITUDE: TONE_POSITIVE,
+}
+
+# Системные подсказки для каждого стиля
+_STYLE_INSTRUCTIONS: dict[str, str] = {
+    STYLE_QUESTION: "Ask a genuine clarifying question about the topic. Be curious.",
+    STYLE_AGREE: "Express sincere agreement with the author. Add a supporting thought.",
+    STYLE_SUPPLEMENT: "Add a new fact, argument, or insight that enriches the discussion.",
+    STYLE_JOKE: "Make a light, witty joke or ironic observation. Keep it friendly.",
+    STYLE_EXPERT: "Sound like a domain expert. Share one specific professional insight.",
+    STYLE_PERSONAL: "Share a brief personal experience related to the topic (first person).",
+    STYLE_QUOTE: "Quote the most striking phrase from the post and comment on it.",
+    STYLE_EMOJI: "React emotionally using 1-2 relevant emojis followed by a short reaction.",
+    STYLE_CONTROVERSIAL: "Politely challenge one aspect of the post. Provoke constructive thought.",
+    STYLE_GRATITUDE: "Thank the author for the post and highlight what was most valuable.",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -108,12 +167,18 @@ class CommentingConfig:
     language: str = "auto"
     frequency: str = FREQ_ALL
     keywords: list[str] = field(default_factory=list)
-    max_comments_per_hour: int = 10
+    # Research-backed safe limits: 12 comments/hour, 350-400 sec interval
+    max_comments_per_hour: int = MAX_COMMENTS_PER_HOUR_SAFE
     max_comments_per_day: int = 50
     min_existing_comments: int = 1   # не комментировать, если чужих < N
     account_rotate_every_n: int = 5  # ротация аккаунта каждые N комментариев
     use_emoji_trick: bool = True
     custom_prompt: str = ""
+    # Style rotation — если задан список стилей, использовать их по кругу
+    style_rotation: list[str] = field(default_factory=list)
+    # Минимальный интервал между комментариями (сек) — переопределяет глобальное
+    min_interval_sec: int = COMMENT_INTERVAL_MIN_SEC
+    max_interval_sec: int = COMMENT_INTERVAL_MAX_SEC
 
 
 # ---------------------------------------------------------------------------
@@ -494,10 +559,10 @@ class CommentStrategy:
                     reason="by_keywords filter: no matching keywords",
                 )
 
-        # Вычисляем задержку: случайная пауза перед комментарием
+        # Вычисляем задержку: безопасный интервал из конфига (по умолчанию 350-400 сек)
         delay = random.uniform(
-            _MIN_WAIT_BEFORE_FIRST_COMMENT_SEC,
-            _MAX_WAIT_BEFORE_FIRST_COMMENT_SEC,
+            float(config.min_interval_sec),
+            float(config.max_interval_sec),
         )
 
         return CommentDecision(
@@ -574,6 +639,11 @@ class CommentOrchestrator:
         self._day_counter: int = 0
         self._comment_counter: int = 0                 # суммарный счётчик
 
+        # Style rotation state — keeps track of which styles were used recently
+        # to avoid repeating the same style twice in a row.
+        self._style_rotation_idx: int = 0
+        self._last_style_used: Optional[str] = None
+
     # ------------------------------------------------------------------
     # Основной пайплайн
     # ------------------------------------------------------------------
@@ -649,15 +719,23 @@ class CommentOrchestrator:
                 reason=f"low opportunity_score={comment_context.opportunity_score:.2f}",
             )
 
-        # 6. Генерация комментария
-        tone = decision.tone_override or self.config.tone
+        # 6. Выбор стиля через ротацию
+        style = self._pick_next_style()
+        tone = decision.tone_override or _STYLE_TO_TONE.get(style, self.config.tone)
+        style_instruction = _STYLE_INSTRUCTIONS.get(style, "")
+        augmented_prompt = (
+            (self.config.custom_prompt + "\n" if self.config.custom_prompt else "")
+            + (f"Style directive: {style_instruction}" if style_instruction else "")
+        ).strip()
+
+        # 7. Генерация комментария
         comment_text = await self._generator.generate_viral_comment(
             post_analysis=post_analysis,
             comment_context=comment_context,
             tone=tone,
             language=self.config.language,
             tenant_id=self.tenant_id,
-            custom_prompt=self.config.custom_prompt,
+            custom_prompt=augmented_prompt,
         )
 
         if not comment_text:
@@ -668,18 +746,20 @@ class CommentOrchestrator:
             )
             return None, decision
 
-        # 7. Обновить счётчики
+        # 8. Обновить счётчики и стиль
         self._comment_counter += 1
         hour, count = self._hour_bucket
         self._hour_bucket = (hour, count + 1)
         self._day_counter += 1
+        self._last_style_used = style
 
         await self._log_event(
             event_type="comment_generated",
-            message=f"Generated comment ({len(comment_text)} chars, tone={tone})",
+            message=f"Generated comment ({len(comment_text)} chars, tone={tone}, style={style})",
             severity="info",
             metadata={
                 "tone": tone,
+                "style": style,
                 "opportunity_score": comment_context.opportunity_score,
                 "comment_preview": comment_text[:80],
                 "post_topic": post_analysis.topic,
@@ -856,6 +936,64 @@ class CommentOrchestrator:
     # Внутренние хелперы
     # ------------------------------------------------------------------
 
+    def _pick_next_style(self) -> str:
+        """
+        Выбирает следующий стиль из ротации.
+        Никогда не возвращает тот же стиль два раза подряд.
+        """
+        pool = self.config.style_rotation if self.config.style_rotation else ALL_STYLES
+
+        if len(pool) == 1:
+            return pool[0]
+
+        # Rotate through the pool
+        candidate = pool[self._style_rotation_idx % len(pool)]
+        # If it's the same as the last one used, advance one more step
+        if candidate == self._last_style_used:
+            self._style_rotation_idx += 1
+            candidate = pool[self._style_rotation_idx % len(pool)]
+
+        self._style_rotation_idx += 1
+        return candidate
+
+    async def record_ab_result(
+        self,
+        style_name: str,
+        tone: Optional[str],
+        reactions_count: int = 0,
+        replies_count: int = 0,
+        was_deleted: bool = False,
+        channel_username: Optional[str] = None,
+        account_id: Optional[int] = None,
+        posted_at: Optional[datetime] = None,
+        farm_event_id: Optional[int] = None,
+    ) -> None:
+        """
+        Записывает A/B результат комментария в таблицу comment_ab_results.
+        Вызывается асинхронно после измерения реакций (обычно через 24-48 часов).
+        """
+        try:
+            async with async_session() as sess:
+                async with sess.begin():
+                    await apply_session_rls_context(sess, tenant_id=self.tenant_id)
+                    row = CommentABResult(
+                        tenant_id=self.tenant_id,
+                        farm_event_id=farm_event_id,
+                        style_name=style_name,
+                        tone=tone,
+                        channel_username=channel_username,
+                        account_id=account_id,
+                        reactions_count=reactions_count,
+                        replies_count=replies_count,
+                        was_deleted=was_deleted,
+                        posted_at=posted_at or utcnow(),
+                        measured_at=utcnow(),
+                        created_at=utcnow(),
+                    )
+                    sess.add(row)
+        except Exception as exc:
+            log.debug(f"CommentOrchestrator.record_ab_result: {exc}")
+
     def _refresh_hourly_bucket(self) -> None:
         """Сбрасывает часовой счётчик при смене часа."""
         from datetime import timezone
@@ -957,12 +1095,15 @@ def build_orchestrator(
     language: str = "auto",
     frequency: str = FREQ_ALL,
     keywords: Optional[list[str]] = None,
-    max_comments_per_hour: int = 10,
+    max_comments_per_hour: int = MAX_COMMENTS_PER_HOUR_SAFE,
     max_comments_per_day: int = 50,
     min_existing_comments: int = 1,
     account_rotate_every_n: int = 5,
     use_emoji_trick: bool = True,
     custom_prompt: str = "",
+    style_rotation: Optional[list[str]] = None,
+    min_interval_sec: int = COMMENT_INTERVAL_MIN_SEC,
+    max_interval_sec: int = COMMENT_INTERVAL_MAX_SEC,
 ) -> CommentOrchestrator:
     """
     Создаёт CommentOrchestrator с заданными параметрами.
@@ -979,6 +1120,9 @@ def build_orchestrator(
         account_rotate_every_n=account_rotate_every_n,
         use_emoji_trick=use_emoji_trick,
         custom_prompt=custom_prompt,
+        style_rotation=[s for s in (style_rotation or []) if s in ALL_STYLES],
+        min_interval_sec=min_interval_sec,
+        max_interval_sec=max_interval_sec,
     )
     return CommentOrchestrator(
         tenant_id=tenant_id,
@@ -986,6 +1130,62 @@ def build_orchestrator(
         thread_id=thread_id,
         commenting_config=config,
     )
+
+
+def list_styles() -> list[dict]:
+    """
+    Возвращает список доступных стилей комментирования для A/B тестирования.
+    Используется эндпоинтом GET /v1/comments/styles.
+    """
+    return [
+        {
+            "id": style_id,
+            "instruction": _STYLE_INSTRUCTIONS.get(style_id, ""),
+            "default_tone": _STYLE_TO_TONE.get(style_id, TONE_POSITIVE),
+        }
+        for style_id in ALL_STYLES
+    ]
+
+
+async def get_ab_stats(tenant_id: int) -> list[dict]:
+    """
+    Агрегирует A/B результаты по стилям для текущего тенанта.
+    Возвращает список dict с полями:
+      style_name, total_comments, avg_reactions, avg_replies, deletion_rate
+    Используется эндпоинтом GET /v1/comments/styles.
+    """
+    try:
+        async with async_session() as sess:
+            async with sess.begin():
+                await apply_session_rls_context(sess, tenant_id=tenant_id)
+                result = await sess.execute(
+                    select(
+                        CommentABResult.style_name,
+                        func.count(CommentABResult.id).label("total"),
+                        func.avg(CommentABResult.reactions_count).label("avg_reactions"),
+                        func.avg(CommentABResult.replies_count).label("avg_replies"),
+                        func.avg(
+                            CommentABResult.was_deleted.cast(sa_Integer)
+                        ).label("deletion_rate"),
+                    )
+                    .where(CommentABResult.tenant_id == tenant_id)
+                    .group_by(CommentABResult.style_name)
+                    .order_by(func.avg(CommentABResult.reactions_count).desc())
+                )
+                rows = result.all()
+                return [
+                    {
+                        "style_name": row.style_name,
+                        "total_comments": int(row.total or 0),
+                        "avg_reactions": round(float(row.avg_reactions or 0), 2),
+                        "avg_replies": round(float(row.avg_replies or 0), 2),
+                        "deletion_rate": round(float(row.deletion_rate or 0), 3),
+                    }
+                    for row in rows
+                ]
+    except Exception as exc:
+        log.warning(f"get_ab_stats: {exc}")
+        return []
 
 
 def list_strategies() -> list[dict]:

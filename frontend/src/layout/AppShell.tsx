@@ -16,6 +16,7 @@ import {
   Search,
   UserSearch,
   Megaphone,
+  Rocket,
   UserCog,
   FolderOpen,
   Brain,
@@ -24,6 +25,8 @@ import {
   BarChart3,
   CreditCard,
   Settings,
+  Shield,
+  Activity,
   Menu,
   X,
   LogOut,
@@ -61,8 +64,9 @@ const NAV_GROUPS: NavGroup[] = [
   {
     section: "Контент",
     items: [
+      { to: "/comments", label: "Комментарии", icon: MessageSquare },
       { to: "/reactions", label: "Реакции", icon: Sparkles },
-      { to: "/chatting", label: "Нейрочаттинг", icon: MessageSquare },
+      { to: "/chatting", label: "Нейрочаттинг", icon: MessagesSquare },
       { to: "/dialogs", label: "Нейродиалоги", icon: MessagesSquare },
     ],
   },
@@ -77,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     section: "Маркетинг",
     items: [
+      { to: "/onboarding", label: "Запустить кампанию", icon: Rocket },
       { to: "/campaigns", label: "Кампании", icon: Megaphone },
       { to: "/profiles", label: "Фабрика профилей", icon: UserCog },
       { to: "/folders", label: "Папки", icon: FolderOpen },
@@ -94,6 +99,8 @@ const NAV_GROUPS: NavGroup[] = [
     section: "Система",
     items: [
       { to: "/analytics", label: "Аналитика", icon: BarChart3 },
+      { to: "/platform-health", label: "Platform Health", icon: Activity },
+      { to: "/admin", label: "Admin", icon: Shield },
       { to: "/billing", label: "Биллинг", icon: CreditCard },
       { to: "/settings", label: "Настройки", icon: Settings },
     ],

@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `80c9053` |
+| Last committed HEAD | `47946a6` |
 | VPS safe branch | `main` |
-| VPS safe commit | `80c9053` |
+| VPS safe commit | `47946a6` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 6 (Bug Fix + Unified Workers)` |
-| Next planned sprint | `Sprint 7 (Product Stability & Testing)` |
+| Current completed sprint | `Sprint 11 (Self-Healing & Auto-Purchase) — local only` |
+| Next planned sprint | `Deploy Sprint 11 to VPS` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -47,9 +47,13 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | 2026-03-12 | Platform Intelligence | `main` | `80c9053` | Smart Commenter + Channel Indexer + Auth Sessions | Added core/smart_commenter.py (PostAnalyzer, CommentGenerator, CommentStrategy, CommentOrchestrator with emoji-first trick and never-first rule), core/channel_indexer.py (Telethon channel metadata fetcher, bulk indexing, language detection, spam scoring), scripts/parse_cis_channels.py (CIS channel bootstrap CLI), migration 20260311_18 (topic_tags JSONB, spam_score, last_refreshed_at on channel_map_entries), auth session management (list/revoke/revoke-all in web_auth.py + ops_api.py), SettingsPage active sessions UI. All 13 tests pass, deployed to VPS. | Green | Green | Parse initial CIS channels batch, wire smart commenter into farm threads, start product stability testing. |
 
-| 2026-03-12 | Sprint 7 Task 1 | `main` | `working-tree` | Proxy Management Backend | Added 6 proxy endpoints to ops_api.py (POST /v1/proxies/bulk-import, GET /v1/proxies, POST /v1/proxies/health-check, POST /v1/proxies/cleanup, DELETE /v1/proxies/{id}, POST /v1/proxies/{id}/check); added `check_proxy_orm` helper to core/proxy_manager.py; imported Proxy ORM model and parse_proxy_line into ops_api.py; added ProxyBulkImportPayload Pydantic model. 149 tests pass. | Green | Not deployed | Deploy to VPS: no migration needed (Proxy table already exists), restart ops_api. |
+| 2026-03-12 | Sprint 7 | `main` | `47946a6` | Proxy & Account Management UI | ProxiesPage (bulk import, health check, cleanup, filters), AccountsPage v2 (stats, bulk import ZIP, bulk actions, status filters), 10 new API endpoints, check_proxy_orm(), account lifecycle job types, security fixes (proxy password masking, cross-tenant filter, async health checks). Deployed to VPS. | Green | Green | Sprint 11: Self-Healing & Auto-Purchase. |
 
-| 2026-03-12 | Sprint 7 Tasks 2+3 | `main` | `working-tree` | Account Management v2 + Lifecycle Integration | Added 4 account v2 endpoints in ops_api.py (POST /v1/accounts/bulk-import with ZIP support + auto-proxy-assign, POST /v1/accounts/mass-proxy-assign, POST /v1/accounts/bulk-action for warmup_all/start_farm/stop_farm/pause_farm, GET /v1/accounts/stats); added JOB_TYPE_ACCOUNT_HEALTH_CHECK and JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR job types + QUEUE_ACCOUNT_LIFECYCLE queue in both ops_api.py and core/farm_jobs.py; added _handle_account_health_check (proxy liveness check, warmup 48h gate, 3x dead → restricted) and _handle_account_lifecycle_monitor (frozen cooldown expiry, warmup duration, consecutive failure quarantine, digest notification on transitions). 149 tests pass, both files compile cleanly. | Green | Not deployed | Deploy to VPS: no migration needed, restart ops_api. |
+| 2026-03-12 | Sprint 11 | `main` | `working-tree` | Self-Healing & Auto-Purchase | Added core/self_healing.py (SelfHealingEngine: handle_account_ban, handle_proxy_death, handle_flood_wait, handle_freeze, run_health_sweep, predict_resource_depletion), core/auto_purchase.py (AutoPurchaseManager: check_resource_levels, create/approve/reject/execute purchase requests; ProxyProvider+AccountProvider ABCs; WebshareProvider+GrizzlySMSProvider stubs), migration 20260312_23 (healing_actions, purchase_requests, platform_alerts, alert_configs all with RLS), ORM models HealingAction/PurchaseRequest/PlatformAlert/AlertConfig in storage/models.py, Sprint 11 job types (health_sweep, auto_purchase) in farm_jobs.py, 12 new API endpoints (/v1/healing/*, /v1/purchases/*, /v1/platform/*), PlatformHealthPage.tsx (traffic-light status, gauges, predictions, healing log, purchase approvals, alert config). 149 tests pass, tsc clean. | Green | Not deployed | Run alembic upgrade head on VPS, restart ops_api, smoke-test /v1/platform/health. |
+
+| 2026-03-12 | Sprint 8 | `main` | `working-tree` | Smart Commenting v2 + Channel Intelligence v2 + Comment Dashboard | Added 10 comment styles + A/B tracking (CommentABResult/CommentStyleTemplate ORM + migration 20260312_20 with RLS); smart_commenter.py: list_styles, get_ab_stats, style rotation, record_ab_result, research-backed 350-400s interval; channel_intelligence.py: ChannelMatcher (keyword+AI niche matching) + ChannelQualityScorer (quality_score, auto-blacklist critical); anti_detection.py: toggle_online_status, simulate_channel_browse, send_random_reaction, per_account_interval, is_night_hours; 8 new API endpoints (/v1/comments/feed,stats,styles,preview; /v1/channels/recommendations,blacklist,quality-scores,refresh-scores); CommentDashboardPage (stat cards, A/B bar chart, paginated feed, style filter, preview section); /comments route in App.tsx + nav item in AppShell. 149/149 relevant tests pass, tsc clean. | Green | Not deployed | Run alembic upgrade head on VPS, restart ops_api, smoke-test /v1/comments/styles and /v1/channels/quality-scores. |
+
+| 2026-03-12 | Sprint 10 | `main` | `working-tree` | Analytics & ROI Dashboard | Added core/analytics_pipeline.py (record_event, get_daily_stats, get_channel_comparison, get_heatmap_data, get_top_comments with Redis TTL cache), core/weekly_report.py (AI-generated weekly report via weekly_marketing_report task, Telegram digest delivery, list/get helpers), migration 20260312_24 (analytics_daily_cache + weekly_reports with RLS, down_revision=20260312_23), analytics_insight TaskPolicy (worker tier) in ai_router.py, WeeklyReport + AnalyticsDailyCache ORM in storage/models.py, 8 new API endpoints (/v1/analytics/daily,channels,heatmap,top-comments; /v1/reports/weekly*; /v1/admin/platform-stats,ai-spend,tenant-health), AnalyticsPage.tsx rebuilt with 5-tab layout (Overview, Channels, Heatmap, Top Comments, Weekly Reports + heatmap 7x24 grid), new AdminPage.tsx (platform stats, account health bar chart, AI spend, tenant health table), /admin route + Shield nav item in AppShell. 149/149 tests pass, tsc --noEmit clean. | Green | Not deployed | Run alembic upgrade head on VPS, restart ops_api, smoke-test /v1/analytics/daily and /v1/admin/platform-stats. |
 
 ## Update Rules
 

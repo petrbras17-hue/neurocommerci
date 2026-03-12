@@ -318,6 +318,12 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_MANAGER,
         output_contract_type="json_object",
     ),
+    "analytics_insight": TaskPolicy(
+        task_type="analytics_insight",
+        agent_name="Analytics Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+    ),
     "roi_analysis": TaskPolicy(
         task_type="roi_analysis",
         agent_name="Analytics Agent",
@@ -342,6 +348,25 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         task_type="content_generation",
         agent_name="Content Creator Agent",
         requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    # --- Sprint 9 — Client Onboarding & Auto Campaign ---
+    "product_analysis": TaskPolicy(
+        task_type="product_analysis",
+        agent_name="Product Analyzer Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "campaign_brief_generation": TaskPolicy(
+        task_type="campaign_brief_generation",
+        agent_name="Campaign Brief Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+    ),
+    "campaign_comment_template": TaskPolicy(
+        task_type="campaign_comment_template",
+        agent_name="Campaign Comment Agent",
+        requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
 }

@@ -11,6 +11,8 @@ import { ContextPage } from "./pages/ContextPage";
 import { CreativePage } from "./pages/CreativePage";
 import { ChannelMapPage } from "./pages/ChannelMapPage";
 import { CampaignsPage } from "./pages/CampaignsPage";
+import { CampaignDetailPage } from "./pages/CampaignDetailPage";
+import { OnboardingPage } from "./pages/OnboardingPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { FarmPage } from "./pages/FarmPage";
 import { ParserPage } from "./pages/ParserPage";
@@ -25,6 +27,9 @@ import { ProfilesPage } from "./pages/ProfilesPage";
 import { BillingPage } from "./pages/BillingPage";
 import { ProxiesPage } from "./pages/ProxiesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { AdminPage } from "./pages/AdminPage";
+import { PlatformHealthPage } from "./pages/PlatformHealthPage";
+import { CommentDashboardPage } from "./pages/CommentDashboardPage";
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -68,7 +73,12 @@ export default function App() {
             <Route path="/parser" element={<ParserPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
+            <Route path="/campaigns/:id" element={<CampaignDetailPage />} />
+            <Route path="/onboarding" element={<OnboardingPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/platform-health" element={<PlatformHealthPage />} />
+            <Route path="/comments" element={<CommentDashboardPage />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route
               path="/settings"

@@ -83,29 +83,43 @@ from core.proxy_manager import ProxyConfig, ProxyManager, check_proxy_orm, parse
 from storage.models import (
     Account,
     AccountHealthScore,
+    AIBudgetCounter,
+    AIRequest,
+    AlertConfig,
+    AnalyticsDailyCache,
     AnalyticsEvent,
     AppJob,
     Campaign,
+    CampaignAccount,
+    CampaignChannel,
     CampaignRun,
     ChannelDatabase,
     ChannelEntry,
     ChannelMapEntry,
     ChattingConfig,
+    CommentABResult,
+    CommentStyleTemplate,
     DialogConfig,
     FarmConfig,
     FarmEvent,
     FarmThread,
+    HealingAction,
     Lead,
     ParsingJob,
+    PlatformAlert,
+    ProductBrief,
     ProfileTemplate,
     Proxy,
+    PurchaseRequest,
     ReactionJob,
+    Subscription,
     TeamMember,
     TelegramFolder,
     Tenant,
     UserParsingResult,
     WarmupConfig,
     WarmupSession,
+    WeeklyReport,
     Workspace,
 )
 from storage.sqlite_db import apply_session_rls_context, async_session, dispose_engine, init_db
@@ -5419,17 +5433,23 @@ async def channel_map_export(
 
 @app.get("/v1/campaigns")
 async def campaigns_list(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    rows = (
-        await session.execute(
-            select(Campaign)
-            .where(Campaign.tenant_id == tenant_context.tenant_id)
-            .order_by(Campaign.created_at.desc())
-        )
-    ).scalars().all()
-    return {"items": [_serialize_campaign(c) for c in rows], "total": len(rows)}
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    q = (
+        select(Campaign)
+        .where(Campaign.tenant_id == tenant_context.tenant_id)
+        .order_by(Campaign.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await session.execute(q)).scalars().all()
+    count_q = select(func.count(Campaign.id)).where(Campaign.tenant_id == tenant_context.tenant_id)
+    total = (await session.execute(count_q)).scalar_one_or_none() or 0
+    return {"items": [_serialize_campaign(c) for c in rows], "total": total}
 
 
 @app.post("/v1/campaigns", status_code=status.HTTP_201_CREATED)
@@ -6044,6 +6064,1291 @@ async def commenting_strategies(
         "strategies": list_strategies(),
         "tones": list_tones(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Sprint 9 — Client Onboarding & Auto Campaign endpoints
+# ---------------------------------------------------------------------------
+
+
+class AnalyzeProductPayload(BaseModel):
+    url: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def normalize_url(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+        return value
+
+
+class CampaignFromBriefPayload(BaseModel):
+    brief_id: int = Field(gt=0)
+    name: Optional[str] = Field(default=None, max_length=200)
+    max_channels: int = Field(default=50, ge=1, le=200)
+    max_accounts: int = Field(default=10, ge=1, le=50)
+
+
+def _brief_to_dict(b: "ProductBrief") -> dict[str, Any]:
+    return {
+        "id": b.id,
+        "tenant_id": b.tenant_id,
+        "workspace_id": b.workspace_id,
+        "url": b.url,
+        "product_name": b.product_name,
+        "target_audience": b.target_audience,
+        "brand_tone": b.brand_tone,
+        "usp": b.usp,
+        "keywords": b.keywords or [],
+        "suggested_styles": b.suggested_styles or [],
+        "daily_volume": b.daily_volume,
+        "created_at": b.created_at.isoformat() if b.created_at else None,
+    }
+
+
+@app.post("/v1/campaigns/analyze-product", status_code=status.HTTP_201_CREATED)
+async def campaigns_analyze_product(
+    payload: AnalyzeProductPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Analyse a product URL and create a ProductBrief record."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    from core.product_analyzer import analyze_product_url
+
+    brief = await analyze_product_url(
+        session,
+        url=payload.url,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id,
+        user_id=tenant_context.user_id,
+    )
+    return _brief_to_dict(brief)
+
+
+@app.get("/v1/campaigns/briefs")
+async def campaigns_list_briefs(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List all product briefs for the current tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    q = (
+        select(ProductBrief)
+        .where(ProductBrief.tenant_id == tenant_context.tenant_id)
+        .order_by(ProductBrief.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await session.execute(q)
+    briefs = list(result.scalars().all())
+    count_result = await session.execute(
+        select(func.count(ProductBrief.id)).where(ProductBrief.tenant_id == tenant_context.tenant_id)
+    )
+    total = count_result.scalar_one_or_none() or 0
+    return {
+        "items": [_brief_to_dict(b) for b in briefs],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/v1/campaigns/briefs/{brief_id}")
+async def campaigns_get_brief(
+    brief_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Get a specific product brief."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    brief = await session.get(ProductBrief, brief_id)
+    if brief is None or brief.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="brief_not_found")
+    return _brief_to_dict(brief)
+
+
+@app.post("/v1/campaigns/from-brief", status_code=status.HTTP_201_CREATED)
+async def campaigns_create_from_brief(
+    payload: CampaignFromBriefPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Auto-create a campaign from a product brief (channels + accounts auto-selected)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    from core.auto_campaign import AutoCampaignError, create_campaign_from_brief
+
+    try:
+        campaign = await create_campaign_from_brief(
+            session,
+            brief_id=payload.brief_id,
+            tenant_id=tenant_context.tenant_id,
+            workspace_id=int(tenant_context.workspace_id or 0),
+            user_id=tenant_context.user_id,
+            campaign_name=payload.name,
+            max_channels=payload.max_channels,
+            max_accounts=payload.max_accounts,
+        )
+    except AutoCampaignError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return {
+        "id": campaign.id,
+        "name": campaign.name,
+        "status": campaign.status,
+        "brief_id": payload.brief_id,
+        "created_at": campaign.created_at.isoformat() if campaign.created_at else None,
+    }
+
+
+@app.get("/v1/campaigns/{campaign_id}/channels")
+async def campaigns_get_channels(
+    campaign_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List channels assigned to a campaign."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    campaign = await session.get(Campaign, campaign_id)
+    if campaign is None or campaign.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="campaign_not_found")
+
+    q = (
+        select(CampaignChannel)
+        .where(
+            CampaignChannel.campaign_id == campaign_id,
+            CampaignChannel.tenant_id == tenant_context.tenant_id,
+        )
+        .order_by(CampaignChannel.id.asc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await session.execute(q)
+    rows = list(result.scalars().all())
+    count_result = await session.execute(
+        select(func.count(CampaignChannel.id)).where(
+            CampaignChannel.campaign_id == campaign_id,
+            CampaignChannel.tenant_id == tenant_context.tenant_id,
+        )
+    )
+    total = count_result.scalar_one_or_none() or 0
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "campaign_id": r.campaign_id,
+                "channel_id": r.channel_id,
+                "channel_username": r.channel_username,
+                "status": r.status,
+                "comments_count": r.comments_count,
+                "last_comment_at": r.last_comment_at.isoformat() if r.last_comment_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/v1/campaigns/{campaign_id}/comments")
+async def campaigns_get_comments(
+    campaign_id: int,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return recent analytics events (comments) for a campaign."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    campaign = await session.get(Campaign, campaign_id)
+    if campaign is None or campaign.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="campaign_not_found")
+
+    q = (
+        select(AnalyticsEvent)
+        .where(
+            AnalyticsEvent.tenant_id == tenant_context.tenant_id,
+            AnalyticsEvent.campaign_id == campaign_id,
+            AnalyticsEvent.event_type == "comment_sent",
+        )
+        .order_by(AnalyticsEvent.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await session.execute(q)
+    rows = list(result.scalars().all())
+    count_result = await session.execute(
+        select(func.count(AnalyticsEvent.id)).where(
+            AnalyticsEvent.tenant_id == tenant_context.tenant_id,
+            AnalyticsEvent.campaign_id == campaign_id,
+            AnalyticsEvent.event_type == "comment_sent",
+        )
+    )
+    total = count_result.scalar_one_or_none() or 0
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "account_id": r.account_id,
+                "channel_username": r.channel_username,
+                "event_data": r.event_data or {},
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sprint 10 — Analytics & ROI Dashboard endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/analytics/daily")
+async def analytics_daily(
+    days: int = Query(default=30, ge=1, le=90),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Daily stats breakdown for the last *days* days."""
+    from core.analytics_pipeline import get_daily_stats
+    rows = await get_daily_stats(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id or 0,
+        days=days,
+    )
+    return {"days": days, "rows": rows}
+
+
+@app.get("/v1/analytics/channels")
+async def analytics_channels(
+    days: int = Query(default=30, ge=1, le=90),
+    limit: int = Query(default=20, ge=1, le=100),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Channel comparison ranked by total actions."""
+    from core.analytics_pipeline import get_channel_comparison
+    rows = await get_channel_comparison(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id or 0,
+        days=days,
+        limit=limit,
+    )
+    return {"days": days, "channels": rows}
+
+
+@app.get("/v1/analytics/heatmap")
+async def analytics_heatmap(
+    days: int = Query(default=30, ge=1, le=90),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """7x24 hourly activity heatmap data."""
+    from core.analytics_pipeline import get_heatmap_data
+    rows = await get_heatmap_data(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id or 0,
+        days=days,
+    )
+    return {"days": days, "heatmap": rows}
+
+
+@app.get("/v1/analytics/top-comments")
+async def analytics_top_comments(
+    days: int = Query(default=30, ge=1, le=90),
+    limit: int = Query(default=20, ge=1, le=50),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Top-performing comments by reactions count."""
+    from core.analytics_pipeline import get_top_comments
+    rows = await get_top_comments(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id or 0,
+        days=days,
+        limit=limit,
+    )
+    return {"days": days, "comments": rows}
+
+
+# ---- Weekly Reports -------------------------------------------------------
+
+
+@app.get("/v1/reports/weekly")
+async def weekly_reports_list(
+    limit: int = Query(default=10, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List weekly reports for the current tenant."""
+    from core.weekly_report import list_weekly_reports
+    reports = await list_weekly_reports(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        limit=limit,
+        offset=offset,
+    )
+    items = [
+        {
+            "id": r.id,
+            "week_start": r.week_start,
+            "week_end": r.week_end,
+            "report_text": r.report_text,
+            "metrics_snapshot": r.metrics_snapshot,
+            "generated_at": r.generated_at.isoformat() if r.generated_at else None,
+            "sent_at": r.sent_at.isoformat() if r.sent_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in reports
+    ]
+    return {"items": items, "total": len(items), "limit": limit, "offset": offset}
+
+
+class GenerateWeeklyReportPayload(BaseModel):
+    week_start: Optional[str] = None
+    week_end: Optional[str] = None
+    send_telegram: bool = True
+
+
+@app.post("/v1/reports/weekly/generate", status_code=status.HTTP_201_CREATED)
+async def weekly_report_generate(
+    payload: GenerateWeeklyReportPayload = GenerateWeeklyReportPayload(),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Trigger generation of a weekly report for the current week."""
+    from core.weekly_report import generate_weekly_report
+    report = await generate_weekly_report(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id or 0,
+        send_telegram=payload.send_telegram,
+        week_start=payload.week_start,
+        week_end=payload.week_end,
+    )
+    await session.commit()
+    return {
+        "id": report.id,
+        "week_start": report.week_start,
+        "week_end": report.week_end,
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "sent_at": report.sent_at.isoformat() if report.sent_at else None,
+    }
+
+
+@app.get("/v1/reports/weekly/{report_id}")
+async def weekly_report_get(
+    report_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Get a specific weekly report."""
+    from core.weekly_report import get_weekly_report
+    report = await get_weekly_report(
+        session,
+        tenant_id=tenant_context.tenant_id,
+        report_id=report_id,
+    )
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="report_not_found")
+    return {
+        "id": report.id,
+        "week_start": report.week_start,
+        "week_end": report.week_end,
+        "report_text": report.report_text,
+        "metrics_snapshot": report.metrics_snapshot,
+        "generated_at": report.generated_at.isoformat() if report.generated_at else None,
+        "sent_at": report.sent_at.isoformat() if report.sent_at else None,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+    }
+
+
+# ---- Admin endpoints (OPS_API_TOKEN auth) ---------------------------------
+
+
+@app.get("/v1/admin/platform-stats")
+async def admin_platform_stats(
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Platform-wide aggregate statistics for the admin dashboard."""
+    async with async_session() as session:
+        async with session.begin():
+            total_tenants = (await session.execute(
+                select(func.count()).select_from(Tenant)
+            )).scalar_one()
+
+            total_accounts = (await session.execute(
+                select(func.count()).select_from(Account)
+            )).scalar_one()
+
+            alive_accounts = (await session.execute(
+                select(func.count()).select_from(Account).where(
+                    Account.health_status == "alive"
+                )
+            )).scalar_one()
+
+            banned_accounts = (await session.execute(
+                select(func.count()).select_from(Account).where(
+                    Account.health_status == "dead"
+                )
+            )).scalar_one()
+
+            frozen_accounts = (await session.execute(
+                select(func.count()).select_from(Account).where(
+                    Account.status == "frozen"
+                )
+            )).scalar_one()
+
+            from storage.models import Proxy as ProxyModel
+            total_proxies = (await session.execute(
+                select(func.count()).select_from(ProxyModel)
+            )).scalar_one()
+
+            alive_proxies = (await session.execute(
+                select(func.count()).select_from(ProxyModel).where(
+                    ProxyModel.health_status == "alive"
+                )
+            )).scalar_one()
+
+            active_subscriptions = (await session.execute(
+                select(func.count()).select_from(Subscription).where(
+                    Subscription.status.in_(["active", "trial"])
+                )
+            )).scalar_one()
+
+    return {
+        "tenants": {"total": total_tenants},
+        "accounts": {
+            "total": total_accounts,
+            "alive": alive_accounts,
+            "banned": banned_accounts,
+            "frozen": frozen_accounts,
+            "other": total_accounts - alive_accounts - banned_accounts - frozen_accounts,
+        },
+        "proxies": {
+            "total": total_proxies,
+            "alive": alive_proxies,
+            "dead": total_proxies - alive_proxies,
+        },
+        "subscriptions": {
+            "active": active_subscriptions,
+        },
+    }
+
+
+@app.get("/v1/admin/ai-spend")
+async def admin_ai_spend(
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Platform-wide AI token usage and cost estimates."""
+    from datetime import date as _date, timedelta as _td
+    async with async_session() as session:
+        async with session.begin():
+            today_str = utcnow().date()
+            month_start = today_str.replace(day=1)
+
+            today_tokens_result = await session.execute(
+                select(
+                    func.coalesce(func.sum(AIRequest.prompt_tokens + AIRequest.completion_tokens), 0),
+                    func.coalesce(func.sum(AIRequest.estimated_cost_usd), 0.0),
+                ).where(
+                    func.date(AIRequest.created_at) == today_str
+                )
+            )
+            today_row = today_tokens_result.one()
+
+            month_tokens_result = await session.execute(
+                select(
+                    func.coalesce(func.sum(AIRequest.prompt_tokens + AIRequest.completion_tokens), 0),
+                    func.coalesce(func.sum(AIRequest.estimated_cost_usd), 0.0),
+                ).where(
+                    AIRequest.created_at >= month_start
+                )
+            )
+            month_row = month_tokens_result.one()
+
+    return {
+        "today": {
+            "tokens": int(today_row[0]),
+            "estimated_cost_usd": float(today_row[1]),
+        },
+        "month": {
+            "tokens": int(month_row[0]),
+            "estimated_cost_usd": float(month_row[1]),
+        },
+    }
+
+
+@app.get("/v1/admin/tenant-health")
+async def admin_tenant_health(
+    limit: int = Query(default=20, ge=1, le=100),
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Per-tenant health overview for the admin dashboard."""
+    async with async_session() as session:
+        async with session.begin():
+            tenants_result = await session.execute(
+                select(Tenant).order_by(Tenant.created_at.desc()).limit(limit)
+            )
+            tenants = tenants_result.scalars().all()
+
+            items = []
+            for t in tenants:
+                account_count = (await session.execute(
+                    select(func.count()).select_from(Account).where(
+                        Account.tenant_id == t.id
+                    )
+                )).scalar_one()
+                alive_count = (await session.execute(
+                    select(func.count()).select_from(Account).where(
+                        Account.tenant_id == t.id,
+                        Account.health_status == "alive",
+                    )
+                )).scalar_one()
+                items.append({
+                    "tenant_id": t.id,
+                    "name": t.name,
+                    "slug": t.slug,
+                    "status": t.status,
+                    "accounts_total": account_count,
+                    "accounts_alive": alive_count,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                })
+
+    return {"items": items, "total": len(items)}
+
+
+# ===========================================================================
+# Sprint 11 — Self-Healing & Auto-Purchase API
+# ===========================================================================
+
+# Job type constants for Sprint 11 queues (mirrored from farm_jobs.py)
+JOB_TYPE_HEALTH_SWEEP = "health_sweep"
+JOB_TYPE_AUTO_PURCHASE = "auto_purchase"
+QUEUE_HEALING = "healing_tasks"
+
+# Register Sprint 11 queues in the farm job type → queue mapping.
+_FARM_JOB_TYPE_TO_QUEUE[JOB_TYPE_HEALTH_SWEEP] = QUEUE_HEALING
+_FARM_JOB_TYPE_TO_QUEUE[JOB_TYPE_AUTO_PURCHASE] = QUEUE_HEALING
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
+
+
+class PurchaseRequestCreatePayload(BaseModel):
+    resource_type: str = Field(..., pattern="^(proxy|account)$")
+    quantity: int = Field(..., ge=1, le=10000)
+    provider_name: str = Field(..., min_length=1, max_length=100)
+    estimated_cost_usd: Optional[float] = None
+    details: Optional[dict[str, Any]] = None
+
+
+class AlertConfigUpdatePayload(BaseModel):
+    resource_type: str = Field(..., pattern="^(proxy|account)$")
+    threshold_percent: int = Field(..., ge=1, le=99)
+    auto_purchase_enabled: bool = False
+    notify_telegram: bool = True
+    notify_email: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Self-Healing endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/healing/sweep", status_code=status.HTTP_200_OK)
+async def healing_sweep(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Trigger an immediate health sweep for the current tenant."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    result = await _enqueue_within_session(
+        session=session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=int(tenant_context.workspace_id or 0),
+        user_id=int(tenant_context.user_id or 0),
+        job_type=JOB_TYPE_HEALTH_SWEEP,
+        payload={},
+    )
+    return result
+
+
+@app.get("/v1/healing/log")
+async def healing_log(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return paginated self-healing action log for the current tenant."""
+    rows = (
+        await session.execute(
+            select(HealingAction)
+            .where(HealingAction.tenant_id == tenant_context.tenant_id)
+            .order_by(HealingAction.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    total = (
+        await session.execute(
+            select(func.count(HealingAction.id)).where(
+                HealingAction.tenant_id == tenant_context.tenant_id
+            )
+        )
+    ).scalar_one()
+
+    items = [
+        {
+            "id": int(r.id),
+            "action_type": r.action_type,
+            "target_type": r.target_type,
+            "target_id": r.target_id,
+            "details": r.details or {},
+            "outcome": r.outcome,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.get("/v1/healing/predictions")
+async def healing_predictions(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Return resource depletion predictions for the current tenant."""
+    from core.self_healing import SelfHealingEngine
+    engine = SelfHealingEngine()
+    return await engine.predict_resource_depletion(tenant_context.tenant_id)
+
+
+# ---------------------------------------------------------------------------
+# Auto-Purchase endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/purchases/requests")
+async def list_purchase_requests(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List all purchase requests for the current tenant."""
+    rows = (
+        await session.execute(
+            select(PurchaseRequest)
+            .where(PurchaseRequest.tenant_id == tenant_context.tenant_id)
+            .order_by(PurchaseRequest.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    total = (
+        await session.execute(
+            select(func.count(PurchaseRequest.id)).where(
+                PurchaseRequest.tenant_id == tenant_context.tenant_id
+            )
+        )
+    ).scalar_one()
+
+    items = [
+        {
+            "id": int(r.id),
+            "resource_type": r.resource_type,
+            "quantity": r.quantity,
+            "provider_name": r.provider_name,
+            "status": r.status,
+            "requested_by": r.requested_by,
+            "approved_by": r.approved_by,
+            "estimated_cost_usd": r.estimated_cost_usd,
+            "actual_cost_usd": r.actual_cost_usd,
+            "details": r.details or {},
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "approved_at": r.approved_at.isoformat() if r.approved_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.post("/v1/purchases/requests", status_code=status.HTTP_201_CREATED)
+async def create_purchase_request(
+    payload: PurchaseRequestCreatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Create a manual purchase request (pending admin approval)."""
+    from core.auto_purchase import AutoPurchaseManager
+    mgr = AutoPurchaseManager()
+    req = await mgr.create_purchase_request(
+        tenant_id=tenant_context.tenant_id,
+        resource_type=payload.resource_type,
+        quantity=payload.quantity,
+        provider_name=payload.provider_name,
+        requested_by=int(tenant_context.user_id or 0) or None,
+        estimated_cost_usd=payload.estimated_cost_usd,
+        details=payload.details,
+        session=session,
+    )
+    return {
+        "id": int(req.id),
+        "resource_type": req.resource_type,
+        "quantity": req.quantity,
+        "provider_name": req.provider_name,
+        "status": req.status,
+        "created_at": req.created_at.isoformat() if req.created_at else None,
+    }
+
+
+@app.post("/v1/purchases/requests/{request_id}/approve")
+async def approve_purchase_request(
+    request_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Approve a pending purchase request."""
+    from core.auto_purchase import AutoPurchaseManager
+    mgr = AutoPurchaseManager()
+    try:
+        req = await mgr.approve_purchase(
+            request_id=request_id,
+            approved_by=int(tenant_context.user_id or 0),
+            session=session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"id": int(req.id), "status": req.status, "approved_at": req.approved_at.isoformat() if req.approved_at else None}
+
+
+@app.post("/v1/purchases/requests/{request_id}/reject")
+async def reject_purchase_request(
+    request_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Reject a pending purchase request."""
+    from core.auto_purchase import AutoPurchaseManager
+    mgr = AutoPurchaseManager()
+    try:
+        req = await mgr.reject_purchase(
+            request_id=request_id,
+            rejected_by=int(tenant_context.user_id or 0),
+            session=session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {"id": int(req.id), "status": req.status}
+
+
+@app.get("/v1/purchases/providers")
+async def list_purchase_providers(
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """List available provider names grouped by resource type."""
+    from core.auto_purchase import list_providers
+    return list_providers()
+
+
+# ---------------------------------------------------------------------------
+# Platform Health endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/platform/health")
+async def platform_health_status(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return overall platform health status (green / yellow / red)."""
+    tenant_id = tenant_context.tenant_id
+
+    acc_total = (
+        await session.execute(
+            select(func.count(Account.id)).where(Account.tenant_id == tenant_id)
+        )
+    ).scalar() or 0
+    acc_alive = (
+        await session.execute(
+            select(func.count(Account.id)).where(
+                Account.tenant_id == tenant_id,
+                Account.status == "active",
+            )
+        )
+    ).scalar() or 0
+
+    px_total = (
+        await session.execute(
+            select(func.count(Proxy.id)).where(Proxy.tenant_id == tenant_id)
+        )
+    ).scalar() or 0
+    px_alive = (
+        await session.execute(
+            select(func.count(Proxy.id)).where(
+                Proxy.tenant_id == tenant_id,
+                Proxy.health_status == "alive",
+                Proxy.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalar() or 0
+
+    threads_active = (
+        await session.execute(
+            select(func.count(FarmThread.id)).where(
+                FarmThread.tenant_id == tenant_id,
+                FarmThread.status.in_(["monitoring", "commenting", "subscribing"]),
+            )
+        )
+    ).scalar() or 0
+
+    unresolved_critical = (
+        await session.execute(
+            select(func.count(PlatformAlert.id)).where(
+                PlatformAlert.tenant_id == tenant_id,
+                PlatformAlert.severity == "critical",
+                PlatformAlert.is_resolved == False,  # noqa: E712
+            )
+        )
+    ).scalar() or 0
+
+    unresolved_warnings = (
+        await session.execute(
+            select(func.count(PlatformAlert.id)).where(
+                PlatformAlert.tenant_id == tenant_id,
+                PlatformAlert.severity == "warning",
+                PlatformAlert.is_resolved == False,  # noqa: E712
+            )
+        )
+    ).scalar() or 0
+
+    acc_pct = int(acc_alive * 100 / acc_total) if acc_total else 100
+    px_pct = int(px_alive * 100 / px_total) if px_total else 100
+
+    if unresolved_critical > 0 or acc_pct < 10 or px_pct < 10:
+        overall = "red"
+    elif unresolved_warnings > 0 or acc_pct < 30 or px_pct < 30:
+        overall = "yellow"
+    else:
+        overall = "green"
+
+    return {
+        "overall": overall,
+        "accounts": {
+            "alive": int(acc_alive),
+            "total": int(acc_total),
+            "alive_percent": acc_pct,
+        },
+        "proxies": {
+            "alive": int(px_alive),
+            "total": int(px_total),
+            "alive_percent": px_pct,
+        },
+        "threads_active": int(threads_active),
+        "unresolved_critical_alerts": int(unresolved_critical),
+        "unresolved_warning_alerts": int(unresolved_warnings),
+    }
+
+
+@app.get("/v1/platform/resources")
+async def platform_resources(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return resource gauges and a short depletion forecast."""
+    from core.self_healing import SelfHealingEngine
+    engine = SelfHealingEngine()
+    predictions = await engine.predict_resource_depletion(tenant_context.tenant_id)
+    return predictions
+
+
+@app.get("/v1/platform/alerts")
+async def platform_alerts(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    include_resolved: bool = Query(default=False),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return active (and optionally resolved) platform alerts."""
+    stmt = select(PlatformAlert).where(
+        PlatformAlert.tenant_id == tenant_context.tenant_id
+    )
+    if not include_resolved:
+        stmt = stmt.where(PlatformAlert.is_resolved == False)  # noqa: E712
+
+    rows = (
+        await session.execute(
+            stmt.order_by(PlatformAlert.created_at.desc()).offset(offset).limit(limit)
+        )
+    ).scalars().all()
+
+    total = (
+        await session.execute(
+            select(func.count(PlatformAlert.id)).where(
+                PlatformAlert.tenant_id == tenant_context.tenant_id,
+                *([] if include_resolved else [PlatformAlert.is_resolved == False]),  # noqa: E712
+            )
+        )
+    ).scalar_one()
+
+    items = [
+        {
+            "id": int(a.id),
+            "alert_type": a.alert_type,
+            "severity": a.severity,
+            "message": a.message,
+            "is_resolved": a.is_resolved,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+            "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
+        }
+        for a in rows
+    ]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.post("/v1/platform/alerts/configure")
+async def configure_platform_alerts(
+    payload: AlertConfigUpdatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Upsert alert threshold configuration for a resource type."""
+    existing = (
+        await session.execute(
+            select(AlertConfig).where(
+                AlertConfig.tenant_id == tenant_context.tenant_id,
+                AlertConfig.resource_type == payload.resource_type,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing is None:
+        cfg = AlertConfig(
+            tenant_id=tenant_context.tenant_id,
+            resource_type=payload.resource_type,
+            threshold_percent=payload.threshold_percent,
+            auto_purchase_enabled=payload.auto_purchase_enabled,
+            notify_telegram=payload.notify_telegram,
+            notify_email=payload.notify_email,
+        )
+        session.add(cfg)
+    else:
+        existing.threshold_percent = payload.threshold_percent
+        existing.auto_purchase_enabled = payload.auto_purchase_enabled
+        existing.notify_telegram = payload.notify_telegram
+        existing.notify_email = payload.notify_email
+        cfg = existing
+
+    await session.flush()
+    return {
+        "resource_type": cfg.resource_type,
+        "threshold_percent": cfg.threshold_percent,
+        "auto_purchase_enabled": cfg.auto_purchase_enabled,
+        "notify_telegram": cfg.notify_telegram,
+        "notify_email": cfg.notify_email,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8 — Comment Quality Dashboard API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/comments/feed")
+async def comments_feed(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    account_id: Optional[int] = Query(default=None),
+    channel_username: Optional[str] = Query(default=None),
+    style_name: Optional[str] = Query(default=None),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Лента последних A/B результатов комментариев с пагинацией."""
+    stmt = (
+        select(CommentABResult)
+        .where(CommentABResult.tenant_id == tenant_context.tenant_id)
+    )
+    if account_id is not None:
+        stmt = stmt.where(CommentABResult.account_id == account_id)
+    if channel_username:
+        stmt = stmt.where(CommentABResult.channel_username.ilike(f"%{channel_username}%"))
+    if style_name:
+        stmt = stmt.where(CommentABResult.style_name == style_name)
+
+    count_result = await session.execute(select(func.count()).select_from(stmt.subquery()))
+    total = int(count_result.scalar_one() or 0)
+
+    rows = (
+        await session.execute(
+            stmt.order_by(CommentABResult.posted_at.desc().nullslast())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    items = [
+        {
+            "id": r.id,
+            "style_name": r.style_name,
+            "tone": r.tone,
+            "channel_username": r.channel_username,
+            "account_id": r.account_id,
+            "reactions_count": r.reactions_count,
+            "replies_count": r.replies_count,
+            "was_deleted": r.was_deleted,
+            "posted_at": r.posted_at.isoformat() if r.posted_at else None,
+            "measured_at": r.measured_at.isoformat() if r.measured_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/v1/comments/stats")
+async def comments_stats(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Агрегированная статистика: сегодня, неделя, месяц."""
+    from datetime import timedelta
+    from sqlalchemy import Integer as _Integer
+
+    now = utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=7)
+    month_start = today_start - timedelta(days=30)
+
+    base_filter = CommentABResult.tenant_id == tenant_context.tenant_id
+
+    async def _count(start: Any) -> int:
+        res = await session.execute(
+            select(func.count(CommentABResult.id))
+            .where(base_filter, CommentABResult.posted_at >= start)
+        )
+        return int(res.scalar_one() or 0)
+
+    async def _avg_reactions(start: Any) -> float:
+        res = await session.execute(
+            select(func.avg(CommentABResult.reactions_count))
+            .where(base_filter, CommentABResult.posted_at >= start)
+        )
+        return round(float(res.scalar_one() or 0), 2)
+
+    async def _ban_rate(start: Any) -> float:
+        res = await session.execute(
+            select(func.avg(func.cast(CommentABResult.was_deleted, _Integer)))
+            .where(base_filter, CommentABResult.posted_at >= start)
+        )
+        return round(float(res.scalar_one() or 0), 3)
+
+    today_count, week_count, month_count = (
+        await _count(today_start),
+        await _count(week_start),
+        await _count(month_start),
+    )
+    today_avg_reactions = await _avg_reactions(today_start)
+    week_ban_rate = await _ban_rate(week_start)
+
+    # Top performing style this week by avg reactions
+    top_row = (
+        await session.execute(
+            select(CommentABResult.style_name, func.avg(CommentABResult.reactions_count).label("avg_r"))
+            .where(base_filter, CommentABResult.posted_at >= week_start)
+            .group_by(CommentABResult.style_name)
+            .order_by(func.avg(CommentABResult.reactions_count).desc())
+            .limit(1)
+        )
+    ).one_or_none()
+    top_style = top_row[0] if top_row else None
+
+    return {
+        "today": {"comments": today_count, "avg_reactions": today_avg_reactions},
+        "week": {"comments": week_count, "ban_rate": week_ban_rate, "top_style": top_style},
+        "month": {"comments": month_count},
+    }
+
+
+@app.get("/v1/comments/styles")
+async def comments_ab_styles(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Список стилей с A/B результатами."""
+    from core.smart_commenter import get_ab_stats, list_styles
+
+    available_styles = list_styles()
+    ab_data = await get_ab_stats(tenant_context.tenant_id)
+    ab_map = {row["style_name"]: row for row in ab_data}
+    for style in available_styles:
+        stats = ab_map.get(style["id"], {})
+        style["ab_stats"] = {
+            "total_comments": stats.get("total_comments", 0),
+            "avg_reactions": stats.get("avg_reactions", 0.0),
+            "avg_replies": stats.get("avg_replies", 0.0),
+            "deletion_rate": stats.get("deletion_rate", 0.0),
+        }
+    return {"styles": available_styles, "ab_results": ab_data}
+
+
+class CommentPreviewPayload(BaseModel):
+    post_text: str = Field(min_length=1, max_length=5000)
+    channel_title: str = Field(default="", max_length=300)
+    channel_username: str = Field(default="", max_length=100)
+    channel_category: str = Field(default="", max_length=100)
+    existing_comments: list[str] = Field(default_factory=list)
+    tone: str = Field(default="positive", max_length=50)
+    style: str = Field(default="", max_length=50)
+    language: str = Field(default="auto", max_length=10)
+
+
+@app.post("/v1/comments/preview")
+async def comments_preview(
+    payload: CommentPreviewPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Предпросмотр комментария по стилю + тональности без публикации."""
+    from core.smart_commenter import ALL_STYLES, build_orchestrator
+
+    style_rotation = [payload.style] if payload.style in ALL_STYLES else []
+    orchestrator = build_orchestrator(
+        tenant_id=tenant_context.tenant_id,
+        farm_id=0,
+        thread_id=None,
+        tone=payload.tone,
+        language=payload.language,
+        style_rotation=style_rotation,
+    )
+    channel_info = {
+        "title": payload.channel_title,
+        "username": payload.channel_username,
+        "category": payload.channel_category,
+    }
+    result = await orchestrator.preview_comment(
+        post_text=payload.post_text,
+        channel_info=channel_info,
+        existing_comments=payload.existing_comments,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Sprint 8 — Channel Intelligence v2 API
+# ---------------------------------------------------------------------------
+
+
+class ChannelRecommendationsPayload(BaseModel):
+    niche_description: str = Field(min_length=1, max_length=2000)
+    keywords: list[str] = Field(default_factory=list)
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+@app.post("/v1/channels/recommendations")
+async def channels_recommendations(
+    payload: ChannelRecommendationsPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """AI-рекомендации каналов по нише тенанта."""
+    from core.ai_router import route_ai_task as _route_ai
+    from core.channel_intelligence import ChannelMatcher
+    try:
+        from storage.sqlite_db import get_redis_client
+        redis = await get_redis_client()
+    except Exception:
+        redis = None
+
+    matcher = ChannelMatcher(redis_client=redis, ai_router_func=_route_ai)
+    channels = await matcher.find_matching_channels(
+        tenant_id=tenant_context.tenant_id,
+        niche_description=payload.niche_description,
+        keywords=payload.keywords,
+        limit=payload.limit,
+    )
+    return {"channels": channels, "total": len(channels)}
+
+
+@app.post("/v1/channels/blacklist/{channel_entry_id}")
+async def channels_blacklist(
+    channel_entry_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Вручную добавить канал в чёрный список."""
+    entry = (
+        await session.execute(
+            select(ChannelEntry).where(
+                ChannelEntry.id == channel_entry_id,
+                ChannelEntry.tenant_id == tenant_context.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel_entry_not_found")
+    entry.blacklisted = True
+    return {"id": channel_entry_id, "blacklisted": True}
+
+
+@app.get("/v1/channels/quality-scores")
+async def channels_quality_scores(
+    limit: int = Query(default=50, ge=1, le=200),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Рейтинг качества каналов по success_rate, банам, slow_mode."""
+    from core.ai_router import route_ai_task as _route_ai
+    from core.channel_intelligence import ChannelQualityScorer
+    try:
+        from storage.sqlite_db import get_redis_client
+        redis = await get_redis_client()
+    except Exception:
+        redis = None
+
+    scorer = ChannelQualityScorer(redis_client=redis, ai_router_func=_route_ai)
+    rankings = await scorer.get_quality_rankings(
+        tenant_id=tenant_context.tenant_id,
+        limit=limit,
+    )
+    return {"channels": rankings, "total": len(rankings)}
+
+
+@app.post("/v1/channels/refresh-scores")
+async def channels_refresh_scores(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Пересчёт quality_score для всех каналов тенанта."""
+    _check_rate_limit("api", f"refresh_scores:{tenant_context.tenant_id}", max_calls=3, window_seconds=300)
+
+    from core.ai_router import route_ai_task as _route_ai
+    from core.channel_intelligence import ChannelQualityScorer
+    try:
+        from storage.sqlite_db import get_redis_client
+        redis = await get_redis_client()
+    except Exception:
+        redis = None
+
+    scorer = ChannelQualityScorer(redis_client=redis, ai_router_func=_route_ai)
+    count = await scorer.score_all(tenant_id=tenant_context.tenant_id)
+    return {"scored": count}
 
 
 # ---------------------------------------------------------------------------

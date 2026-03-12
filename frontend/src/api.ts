@@ -595,10 +595,61 @@ export type DashboardData = {
   account_activity: Array<{account_id: number; phone: string | null; actions: number; health_score: number}>;
 };
 
+// Sprint 10 extended analytics types
+export type DailyStatsRow = { date: string; comments: number; reactions: number; errors: number };
+export type ChannelComparisonRow = {
+  channel: string; comments: number; reactions: number; ctr: number;
+  total_actions: number; rank: number;
+};
+export type HeatmapCell = { weekday: number; hour: number; count: number };
+export type TopCommentRow = {
+  id: number; channel: string; text: string; reactions: number;
+  account_id: number | null; created_at: string | null;
+};
+export type WeeklyReportItem = {
+  id: number; week_start: string; week_end: string;
+  report_text: string | null; metrics_snapshot: Record<string, unknown> | null;
+  generated_at: string | null; sent_at: string | null; created_at: string | null;
+};
+export type AdminPlatformStats = {
+  tenants: { total: number };
+  accounts: { total: number; alive: number; banned: number; frozen: number; other: number };
+  proxies: { total: number; alive: number; dead: number };
+  subscriptions: { active: number };
+};
+export type AdminAiSpend = {
+  today: { tokens: number; estimated_cost_usd: number };
+  month: { tokens: number; estimated_cost_usd: number };
+};
+export type AdminTenantHealthItem = {
+  tenant_id: number; name: string; slug: string; status: string;
+  accounts_total: number; accounts_alive: number; created_at: string | null;
+};
+
 export const analyticsApi = {
   dashboard: (token: string, days = 7) =>
     apiFetch<DashboardData>(`/v1/analytics/dashboard?days=${days}`, {accessToken: token}),
   roi: (token: string) => apiFetch<Record<string, unknown>>("/v1/analytics/roi", {accessToken: token}),
+  // Sprint 10
+  daily: (token: string, days = 30) =>
+    apiFetch<{days: number; rows: DailyStatsRow[]}>(`/v1/analytics/daily?days=${days}`, {accessToken: token}),
+  channels: (token: string, days = 30, limit = 20) =>
+    apiFetch<{days: number; channels: ChannelComparisonRow[]}>(`/v1/analytics/channels?days=${days}&limit=${limit}`, {accessToken: token}),
+  heatmap: (token: string, days = 30) =>
+    apiFetch<{days: number; heatmap: HeatmapCell[]}>(`/v1/analytics/heatmap?days=${days}`, {accessToken: token}),
+  topComments: (token: string, days = 30, limit = 20) =>
+    apiFetch<{days: number; comments: TopCommentRow[]}>(`/v1/analytics/top-comments?days=${days}&limit=${limit}`, {accessToken: token}),
+};
+
+export const weeklyReportApi = {
+  list: (token: string, limit = 10, offset = 0) =>
+    apiFetch<{items: WeeklyReportItem[]; total: number}>(`/v1/reports/weekly?limit=${limit}&offset=${offset}`, {accessToken: token}),
+  generate: (token: string, body: {week_start?: string; week_end?: string; send_telegram?: boolean} = {}) =>
+    apiFetch<{id: number; week_start: string; week_end: string; generated_at: string | null; sent_at: string | null}>(
+      "/v1/reports/weekly/generate", {method: "POST", json: body, accessToken: token}
+    ),
+  get: (token: string, id: number) =>
+    apiFetch<WeeklyReportItem>(`/v1/reports/weekly/${id}`, {accessToken: token}),
 };
 
 // --- Billing API ---
@@ -625,6 +676,88 @@ export const billingApi = {
     apiFetch<{items: PlanInfo[]}>("/v1/plans"),
   subscription: (token: string) =>
     apiFetch<{subscription: SubscriptionInfo | null; plan: PlanInfo | null}>("/v1/billing/subscription", {accessToken: token}),
+};
+
+// ─── Sprint 9 — Product Briefs & Auto Campaign API ────────────────────────────
+
+export type ProductBrief = {
+  id: number;
+  tenant_id: number;
+  workspace_id: number | null;
+  url: string | null;
+  product_name: string | null;
+  target_audience: string | null;
+  brand_tone: string | null;
+  usp: string | null;
+  keywords: string[];
+  suggested_styles: string[];
+  daily_volume: number | null;
+  created_at: string | null;
+};
+
+export type CampaignChannelRow = {
+  id: number;
+  campaign_id: number;
+  channel_id: number | null;
+  channel_username: string | null;
+  status: string;
+  comments_count: number;
+  last_comment_at: string | null;
+  created_at: string | null;
+};
+
+export type CampaignCommentRow = {
+  id: number;
+  account_id: number | null;
+  channel_username: string | null;
+  event_data: Record<string, unknown>;
+  created_at: string | null;
+};
+
+export const productBriefApi = {
+  analyze: (token: string, url: string) =>
+    apiFetch<ProductBrief>("/v1/campaigns/analyze-product", {
+      method: "POST",
+      accessToken: token,
+      json: { url },
+    }),
+
+  list: (token: string, limit = 20, offset = 0) =>
+    apiFetch<{ items: ProductBrief[]; total: number; limit: number; offset: number }>(
+      `/v1/campaigns/briefs?limit=${limit}&offset=${offset}`,
+      { accessToken: token }
+    ),
+
+  get: (token: string, id: number) =>
+    apiFetch<ProductBrief>(`/v1/campaigns/briefs/${id}`, { accessToken: token }),
+
+  createCampaign: (
+    token: string,
+    briefId: number,
+    opts?: { name?: string; max_channels?: number; max_accounts?: number }
+  ) =>
+    apiFetch<{ id: number; name: string; status: string; brief_id: number; created_at: string | null }>(
+      "/v1/campaigns/from-brief",
+      {
+        method: "POST",
+        accessToken: token,
+        json: { brief_id: briefId, ...opts },
+      }
+    ),
+};
+
+export const campaignDetailApi = {
+  channels: (token: string, campaignId: number, limit = 50) =>
+    apiFetch<{ items: CampaignChannelRow[]; total: number }>(
+      `/v1/campaigns/${campaignId}/channels?limit=${limit}`,
+      { accessToken: token }
+    ),
+
+  comments: (token: string, campaignId: number, limit = 20) =>
+    apiFetch<{ items: CampaignCommentRow[]; total: number }>(
+      `/v1/campaigns/${campaignId}/comments?limit=${limit}`,
+      { accessToken: token }
+    ),
 };
 
 // ─── Job polling ──────────────────────────────────────────────────────────────

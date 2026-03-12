@@ -21,11 +21,11 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
-from storage.models import ChannelBanEvent, ChannelJoinRequest, ChannelProfile
+from storage.models import ChannelBanEvent, ChannelEntry, ChannelJoinRequest, ChannelProfile
 from storage.sqlite_db import apply_session_rls_context, async_session
 from utils.helpers import utcnow
 
@@ -815,3 +815,355 @@ class BanPatternLearner:
                 asyncio.ensure_future(_delete())
         except RuntimeError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# ChannelMatcher — auto-match channels to tenant niche
+# ---------------------------------------------------------------------------
+
+_NICHE_MATCH_PROMPT = (
+    "You are a Telegram channel discovery assistant. "
+    "Given a tenant's niche description and a list of candidate channels, "
+    "score each channel's relevance from 0.0 to 1.0 and explain why in one sentence. "
+    "Return ONLY a valid JSON array of objects with keys: "
+    '  "username" (string), "relevance_score" (float), "reason" (string). '
+    "Sort by relevance_score descending. Do not include any explanation outside the JSON."
+)
+
+_QUALITY_SCORE_PROMPT = (
+    "You are a Telegram channel quality analyst. "
+    "Given channel metadata, estimate the following quality metrics: "
+    "  engagement_rate (float 0-1): ratio of active commenters to members, "
+    "  admin_response_time (string: 'fast' | 'slow' | 'unknown'): how quickly admins respond, "
+    "  ban_risk (string: 'low' | 'medium' | 'high'): how risky it is to comment here. "
+    "Return ONLY a valid JSON object with these three keys. "
+    "No explanation outside the JSON."
+)
+
+
+class ChannelMatcher:
+    """Matches channels to a tenant's niche using keyword search + AI scoring.
+
+    Parameters
+    ----------
+    redis_client:
+        Async Redis client. May be None.
+    ai_router_func:
+        Async callable matching ``route_ai_task`` signature. May be None.
+    """
+
+    def __init__(self, redis_client: Any, ai_router_func: Any) -> None:
+        self.redis = redis_client
+        self._route_ai = ai_router_func
+
+    async def find_matching_channels(
+        self,
+        tenant_id: int,
+        niche_description: str,
+        keywords: list[str],
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return channels from channel_map_entries that match the tenant niche.
+
+        Uses keyword search first, then optionally re-ranks with AI.
+
+        Parameters
+        ----------
+        tenant_id:
+            Tenant context for RLS.
+        niche_description:
+            Free-text description of the tenant's business/niche.
+        keywords:
+            List of keywords to search channels by title/category/tags.
+        limit:
+            Maximum channels to return.
+
+        Returns
+        -------
+        List of channel dicts sorted by relevance score (highest first).
+        """
+        # Import here to avoid circular at module level
+        try:
+            from storage.models import ChannelMapEntry
+        except ImportError:
+            return []
+
+        candidates: list[dict] = []
+        async with async_session() as session:
+            async with session.begin():
+                await apply_session_rls_context(session, tenant_id=tenant_id)
+                stmt = (
+                    select(ChannelMapEntry)
+                    .where(ChannelMapEntry.is_spam.is_(False))
+                    .order_by(ChannelMapEntry.member_count.desc().nullslast())
+                    .limit(200)
+                )
+                rows = (await session.execute(stmt)).scalars().all()
+                for row in rows:
+                    title = (row.title or "").lower()
+                    tags = " ".join(row.topic_tags or []).lower() if hasattr(row, "topic_tags") else ""
+                    category = (row.category or "").lower()
+                    text_blob = f"{title} {category} {tags}"
+                    if any(kw.lower() in text_blob for kw in keywords):
+                        candidates.append(
+                            {
+                                "username": row.username or "",
+                                "title": row.title or "",
+                                "member_count": row.member_count or 0,
+                                "category": row.category or "",
+                                "language": row.language or "unknown",
+                                "relevance_score": 0.5,  # placeholder before AI scoring
+                                "reason": "keyword match",
+                            }
+                        )
+
+        if not candidates:
+            return []
+
+        # Limit AI input to top 30 keyword-matched candidates
+        top_candidates = candidates[:30]
+
+        if self._route_ai is not None and niche_description:
+            try:
+                channel_list_text = "\n".join(
+                    f"- @{c['username']}: {c['title']} ({c['member_count']} members, {c['category']})"
+                    for c in top_candidates
+                )
+                prompt = (
+                    f"Niche description: {niche_description}\n\n"
+                    f"Candidate channels:\n{channel_list_text}"
+                )
+                async with async_session() as session:
+                    async with session.begin():
+                        await apply_session_rls_context(session, tenant_id=tenant_id)
+                        result = await self._route_ai(
+                            session,
+                            task_type="farm_comment",
+                            prompt=prompt,
+                            system_instruction=_NICHE_MATCH_PROMPT,
+                            tenant_id=tenant_id,
+                            max_output_tokens=600,
+                            temperature=0.2,
+                            surface="channel_matcher",
+                        )
+                        if result.ok and result.parsed and isinstance(result.parsed, list):
+                            scored_map: dict[str, dict] = {
+                                item["username"]: item
+                                for item in result.parsed
+                                if isinstance(item, dict) and "username" in item
+                            }
+                            for c in top_candidates:
+                                scored = scored_map.get(c["username"])
+                                if scored:
+                                    c["relevance_score"] = float(scored.get("relevance_score", 0.5))
+                                    c["reason"] = str(scored.get("reason", "keyword match"))
+            except Exception as exc:
+                log.warning("channel_matcher: AI scoring failed: %s", exc)
+
+        top_candidates.sort(key=lambda x: x["relevance_score"], reverse=True)
+        return top_candidates[:limit]
+
+
+# ---------------------------------------------------------------------------
+# ChannelQualityScorer — score channels by engagement + admin response + ban risk
+# ---------------------------------------------------------------------------
+
+
+class ChannelQualityScorer:
+    """Scores channels stored in channel_profiles by quality metrics.
+
+    Computes an overall quality_score (0.0–1.0) from:
+    - success_rate    (inverse of ban_risk)
+    - member_count    (logarithmic scaling)
+    - slow_mode_seconds (lower = better)
+    - AI-estimated engagement_rate and admin_response_time
+
+    Also manages blacklist: channels with ban_risk='critical' auto-blacklisted.
+
+    Parameters
+    ----------
+    redis_client:
+        Async Redis client. May be None.
+    ai_router_func:
+        Async callable. May be None.
+    """
+
+    def __init__(self, redis_client: Any, ai_router_func: Any) -> None:
+        self.redis = redis_client
+        self._route_ai = ai_router_func
+
+    async def score_channel(
+        self,
+        tenant_id: int,
+        profile: ChannelProfile,
+    ) -> float:
+        """Compute and persist the quality_score for a single channel profile.
+
+        Returns the computed score (0.0–1.0).
+        """
+        import math
+
+        # Base score from success_rate
+        success = float(profile.success_rate or 1.0)
+
+        # Slow mode penalty: 0 sec = no penalty; 3600 sec (1hr) = heavy penalty
+        slow_mode = min(int(profile.slow_mode_seconds or 0), 3600)
+        slow_penalty = slow_mode / 7200.0  # max 0.5 penalty at 1-hour slow mode
+
+        # Members bonus (logarithmic, capped at 0.3 bonus)
+        member_count = 0
+        if profile.channel_entry_id:
+            try:
+                async with async_session() as session:
+                    async with session.begin():
+                        await apply_session_rls_context(session, tenant_id=tenant_id)
+                        entry_row = await session.get(ChannelEntry, profile.channel_entry_id)
+                        if entry_row:
+                            member_count = int(entry_row.member_count or 0)
+            except Exception:
+                pass
+        member_bonus = min(math.log10(max(member_count, 1)) / 7.0, 0.3)  # log10(10M)/7 ≈ 1
+
+        score = max(0.0, min(1.0, success - slow_penalty + member_bonus))
+
+        # Persist score on the profile
+        async with async_session() as session:
+            async with session.begin():
+                await apply_session_rls_context(session, tenant_id=tenant_id)
+                row = await session.get(ChannelProfile, profile.id)
+                if row is not None:
+                    row.quality_score = score
+                    row.quality_scored_at = utcnow()
+
+        # Auto-blacklist critical channels in their channel_entry
+        if profile.ban_risk == "critical" and profile.channel_entry_id:
+            await self._auto_blacklist_entry(tenant_id, profile.channel_entry_id)
+
+        # Invalidate Redis cache
+        if self.redis is not None:
+            key = _KEY_CHANNEL_PROFILE.format(
+                tenant_id=tenant_id,
+                telegram_id=profile.telegram_id,
+            )
+            import asyncio
+
+            async def _del() -> None:
+                try:
+                    await self.redis.delete(key)
+                except Exception:
+                    pass
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(_del())
+            except RuntimeError:
+                pass
+
+        return score
+
+    async def score_all(self, tenant_id: int) -> int:
+        """Re-score all channel profiles for the tenant.
+
+        Returns the number of profiles scored.
+        """
+        async with async_session() as session:
+            async with session.begin():
+                await apply_session_rls_context(session, tenant_id=tenant_id)
+                rows = (
+                    await session.execute(
+                        select(ChannelProfile).where(
+                            ChannelProfile.tenant_id == tenant_id,
+                        )
+                    )
+                ).scalars().all()
+
+        count = 0
+        for profile in rows:
+            try:
+                await self.score_channel(tenant_id, profile)
+                count += 1
+            except Exception as exc:
+                log.warning(
+                    "channel_quality_scorer: score_channel failed profile_id=%s: %s",
+                    profile.id,
+                    exc,
+                )
+        return count
+
+    async def get_quality_rankings(
+        self,
+        tenant_id: int,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Return channel profiles sorted by quality_score descending."""
+        async with async_session() as session:
+            async with session.begin():
+                await apply_session_rls_context(session, tenant_id=tenant_id)
+                rows = (
+                    await session.execute(
+                        select(ChannelProfile)
+                        .where(ChannelProfile.tenant_id == tenant_id)
+                        .order_by(
+                            ChannelProfile.quality_score.desc().nullslast()
+                        )
+                        .limit(limit)
+                    )
+                ).scalars().all()
+                return [
+                    {
+                        "id": r.id,
+                        "telegram_id": r.telegram_id,
+                        "username": r.username,
+                        "title": r.title,
+                        "ban_risk": r.ban_risk,
+                        "success_rate": round(float(r.success_rate or 1.0), 3),
+                        "total_comments": r.total_comments or 0,
+                        "total_bans": r.total_bans or 0,
+                        "quality_score": round(float(r.quality_score or 0.0), 3) if hasattr(r, "quality_score") else None,
+                        "quality_scored_at": r.quality_scored_at.isoformat() if hasattr(r, "quality_scored_at") and r.quality_scored_at else None,
+                        "slow_mode_seconds": r.slow_mode_seconds or 0,
+                        "safe_comment_interval_sec": r.safe_comment_interval_sec or 0,
+                        "channel_entry_id": r.channel_entry_id,
+                    }
+                    for r in rows
+                ]
+
+    async def blacklist_channel(
+        self,
+        tenant_id: int,
+        channel_entry_id: int,
+    ) -> bool:
+        """Manually blacklist a channel entry.
+
+        Returns True if the entry was found and updated, False otherwise.
+        """
+        return await self._auto_blacklist_entry(tenant_id, channel_entry_id)
+
+    async def _auto_blacklist_entry(
+        self,
+        tenant_id: int,
+        channel_entry_id: int,
+    ) -> bool:
+        """Set blacklisted=True on a channel_entry row."""
+        try:
+            async with async_session() as session:
+                async with session.begin():
+                    await apply_session_rls_context(session, tenant_id=tenant_id)
+                    row = await session.get(ChannelEntry, channel_entry_id)
+                    if row is None:
+                        return False
+                    row.blacklisted = True
+                    log.info(
+                        "channel_quality_scorer: auto-blacklisted entry_id=%s tenant_id=%s",
+                        channel_entry_id,
+                        tenant_id,
+                    )
+                    return True
+        except Exception as exc:
+            log.warning(
+                "channel_quality_scorer: _auto_blacklist_entry failed entry_id=%s: %s",
+                channel_entry_id,
+                exc,
+            )
+            return False
