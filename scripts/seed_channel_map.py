@@ -297,16 +297,19 @@ async def seed_database(channels: list[dict]) -> int:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    # Read DATABASE_URL from .env
-    db_url = os.environ.get("DATABASE_URL", "")
+    # Read SEED_DATABASE_URL or DATABASE_URL from env/.env
+    # SEED_DATABASE_URL should point to a superuser connection to bypass RLS
+    db_url = os.environ.get("SEED_DATABASE_URL", "") or os.environ.get("DATABASE_URL", "")
     if not db_url:
         env_path = Path(__file__).resolve().parent.parent / ".env"
         if env_path.exists():
             for line in env_path.read_text().splitlines():
                 line = line.strip()
-                if line.startswith("DATABASE_URL="):
+                if line.startswith("SEED_DATABASE_URL="):
                     db_url = line.split("=", 1)[1].strip()
                     break
+                if line.startswith("DATABASE_URL=") and not db_url:
+                    db_url = line.split("=", 1)[1].strip()
     if not db_url:
         print("ERROR: DATABASE_URL not found in .env or environment")
         sys.exit(1)
@@ -363,19 +366,43 @@ async def seed_database(channels: list[dict]) -> int:
 
 
 def main():
-    print("Generating 5000 channel records...")
+    import json as _json
+
+    mode = sys.argv[1] if len(sys.argv) > 1 else "db"
+
+    print("Generating 5000 channel records...", file=sys.stderr)
     rng = random.Random(42)
     channels = generate_channels(rng)
-    print(f"  Generated {len(channels)} channels across {len(CATEGORIES)} categories")
+    print(f"  Generated {len(channels)} channels across {len(CATEGORIES)} categories", file=sys.stderr)
 
     # Verify uniqueness
     usernames = [ch["username"] for ch in channels]
     assert len(usernames) == len(set(usernames)), "Duplicate usernames detected!"
-    print("  All usernames unique ✓")
+    print("  All usernames unique ✓", file=sys.stderr)
 
-    print("\nInserting into database...")
+    if mode == "sql":
+        # Output raw SQL to stdout for piping to psql
+        print("BEGIN;")
+        for ch in channels:
+            tags_json = _json.dumps(ch["topic_tags"]).replace("'", "''")
+            desc = ch["description"].replace("'", "''")
+            title = ch["title"].replace("'", "''")
+            print(f"INSERT INTO channel_map_entries "
+                  f"(telegram_id, username, title, member_count, category, "
+                  f"subcategory, language, region, engagement_rate, "
+                  f"avg_comments_per_post, avg_post_reach, topic_tags, source, description) "
+                  f"VALUES ({ch['telegram_id']}, '{ch['username']}', '{title}', "
+                  f"{ch['member_count']}, '{ch['category']}', '{ch['subcategory']}', "
+                  f"'{ch['language']}', '{ch['region']}', {ch['engagement_rate']}, "
+                  f"{ch['avg_comments_per_post']}, {ch['avg_post_reach']}, "
+                  f"'{tags_json}'::jsonb, '{ch['source']}', '{desc}');")
+        print("COMMIT;")
+        print(f"-- {len(channels)} INSERT statements generated", file=sys.stderr)
+        return
+
+    print("\nInserting into database...", file=sys.stderr)
     inserted = asyncio.run(seed_database(channels))
-    print(f"\nDone! {inserted} new channels inserted (existing skipped).")
+    print(f"\nDone! {inserted} new channels inserted (existing skipped).", file=sys.stderr)
 
 
 if __name__ == "__main__":

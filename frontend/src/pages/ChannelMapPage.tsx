@@ -15,6 +15,7 @@ import {
   ExternalLink,
   X,
   Layers,
+  RotateCcw,
 } from "lucide-react";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -69,6 +70,15 @@ function highlight(text: string, re: RegExp | null): string {
   const safe = escapeHtml(text);
   if (!re) return safe;
   return safe.replace(re, "<mark>$1</mark>");
+}
+
+function getInitials(title: string | null | undefined, username: string | null | undefined): string {
+  const src = (title ?? username ?? "??").trim();
+  const words = src.split(/\s+/);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  return src.slice(0, 2).toUpperCase();
 }
 
 // ── constants ────────────────────────────────────────────────────────────────
@@ -339,6 +349,20 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
 
 type Tooltip = { x: number; y: number; ch: ChannelMapEntry } | null;
 
+type AnimTarget = {
+  zoom: number;
+  panX: number;
+  panY: number;
+  startZoom: number;
+  startPanX: number;
+  startPanY: number;
+  startTime: number;
+  duration: number;
+} | null;
+
+const MINIMAP_W = 200;
+const MINIMAP_H = 150;
+
 function BubbleMapCanvas({
   layout,
   filterCategory,
@@ -351,16 +375,91 @@ function BubbleMapCanvas({
   onSelect: (ch: ChannelMapEntry | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const minimapRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number>(0);
   const stateRef = useRef({ zoom: 1, panX: 0, panY: 0, dragging: false, lastX: 0, lastY: 0 });
+  const animTargetRef = useRef<AnimTarget>(null);
+  const initViewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const [tooltip, setTooltip] = useState<Tooltip>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const hoveredRef = useRef<number | null>(null);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [focusedChannelId, setFocusedChannelId] = useState<number | null>(null);
 
   // Build lookup for fast hover detection
   const nodesRef = useRef<BubbleNode[]>([]);
   nodesRef.current = layout.nodes;
+
+  // Ease-out function
+  const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
+  // Draw minimap
+  const drawMinimap = useCallback(() => {
+    const minimap = minimapRef.current;
+    if (!minimap || layout.nodes.length === 0) return;
+    const mctx = minimap.getContext("2d");
+    if (!mctx) return;
+    const dpr = window.devicePixelRatio || 1;
+
+    mctx.clearRect(0, 0, minimap.width, minimap.height);
+
+    // Background
+    mctx.fillStyle = "rgba(10,10,11,0.8)";
+    mctx.fillRect(0, 0, minimap.width, minimap.height);
+
+    // Scale factor to fit layout into minimap
+    const mw = MINIMAP_W * dpr;
+    const mh = MINIMAP_H * dpr;
+    const pad = 8 * dpr;
+    const scaleX = (mw - pad * 2) / layout.width;
+    const scaleY = (mh - pad * 2) / layout.height;
+    const sc = Math.min(scaleX, scaleY);
+
+    const offX = pad + (mw - pad * 2 - layout.width * sc) / 2;
+    const offY = pad + (mh - pad * 2 - layout.height * sc) / 2;
+
+    // Draw bubbles as small dots
+    for (const node of layout.nodes) {
+      const mx = offX + node.x * sc;
+      const my = offY + node.y * sc;
+      const mr = Math.max(node.r * sc, 1.5 * dpr);
+      mctx.beginPath();
+      mctx.arc(mx, my, mr, 0, Math.PI * 2);
+      mctx.fillStyle = node.color + "88";
+      mctx.fill();
+    }
+
+    // Draw viewport rectangle
+    const wrap = wrapRef.current;
+    if (wrap) {
+      const { zoom, panX, panY } = stateRef.current;
+      const W = wrap.clientWidth;
+      const H = wrap.clientHeight;
+
+      // Visible world coordinates
+      const worldLeft = -panX / zoom;
+      const worldTop = -panY / zoom;
+      const worldRight = (W - panX) / zoom;
+      const worldBottom = (H - panY) / zoom;
+
+      const rx = offX + worldLeft * sc;
+      const ry = offY + worldTop * sc;
+      const rw = (worldRight - worldLeft) * sc;
+      const rh = (worldBottom - worldTop) * sc;
+
+      mctx.strokeStyle = "#00ff88";
+      mctx.lineWidth = 1.5 * dpr;
+      mctx.strokeRect(rx, ry, rw, rh);
+      mctx.fillStyle = "rgba(0,255,136,0.05)";
+      mctx.fillRect(rx, ry, rw, rh);
+    }
+
+    // Border
+    mctx.strokeStyle = "#00ff88";
+    mctx.lineWidth = 1 * dpr;
+    mctx.strokeRect(0, 0, minimap.width, minimap.height);
+  }, [layout]);
 
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -369,8 +468,6 @@ function BubbleMapCanvas({
     if (!ctx) return;
     const { zoom, panX, panY } = stateRef.current;
     const dpr = window.devicePixelRatio || 1;
-    const W = canvas.width / dpr;
-    const H = canvas.height / dpr;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -412,18 +509,19 @@ function BubbleMapCanvas({
         (queryLower === "" || (node.ch.title?.toLowerCase().includes(queryLower) ?? false) || (node.ch.username?.toLowerCase().includes(queryLower) ?? false));
 
       const isHovered = hoveredRef.current === node.ch.id;
+      const isFocused = focusedChannelId === node.ch.id;
       const alpha = isFiltering && !isMatch ? 0.08 : 1;
-      const scale = isHovered ? 1.18 : 1;
+      const scale = isHovered || isFocused ? 1.18 : 1;
       const r = node.r * scale;
 
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.translate(node.x, node.y);
 
-      // Glow for hovered/matched
-      if (isHovered || (isFiltering && isMatch)) {
+      // Glow for hovered/matched/focused
+      if (isHovered || isFocused || (isFiltering && isMatch)) {
         ctx.shadowColor = node.color;
-        ctx.shadowBlur = isHovered ? 22 : 10;
+        ctx.shadowBlur = isHovered || isFocused ? 22 : 10;
       }
 
       // Bubble fill
@@ -436,20 +534,40 @@ function BubbleMapCanvas({
       ctx.fill();
 
       // Border
-      ctx.strokeStyle = isHovered ? node.color : node.color + "88";
-      ctx.lineWidth = isHovered ? 2.5 : 1.2;
+      ctx.strokeStyle = isHovered || isFocused ? node.color : node.color + "88";
+      ctx.lineWidth = isHovered || isFocused ? 2.5 : 1.2;
       ctx.stroke();
 
       ctx.shadowBlur = 0;
 
-      // Label inside bubble for large ones
-      if (r > 18) {
+      // Enhancement 1: Avatar initials for large bubbles, truncated title for medium
+      if (r > 30) {
+        // Large bubble: show 2-letter initials centered
+        const initials = getInitials(node.ch.title, node.ch.username);
+        const fontSize = Math.round(r * 0.6);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${fontSize}px 'Geist Sans', system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(initials, 0, 0);
+      } else if (r > 18) {
         ctx.fillStyle = "#ffffffcc";
         ctx.font = `bold ${Math.min(r * 0.45, 13)}px 'Geist Sans', system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         const label = (node.ch.title ?? node.ch.username ?? "?").slice(0, r > 26 ? 12 : 6);
         ctx.fillText(label, 0, 0);
+      }
+
+      // Focus ring for searched channel
+      if (isFocused) {
+        ctx.beginPath();
+        ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+        ctx.strokeStyle = "#00ff88";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
 
       ctx.restore();
@@ -482,7 +600,10 @@ function BubbleMapCanvas({
     }
 
     ctx.restore();
-  }, [layout, filterCategory, filterQuery]);
+
+    // Draw minimap after main canvas
+    drawMinimap();
+  }, [layout, filterCategory, filterQuery, focusedChannelId, drawMinimap]);
 
   // Kick off render loop
   const scheduleRender = useCallback(() => {
@@ -492,12 +613,81 @@ function BubbleMapCanvas({
     });
   }, [drawCanvas]);
 
+  // Smooth animation loop
+  const runAnimation = useCallback(() => {
+    const target = animTargetRef.current;
+    if (!target) {
+      setIsAnimating(false);
+      return;
+    }
+
+    const now = performance.now();
+    const elapsed = now - target.startTime;
+    const progress = Math.min(elapsed / target.duration, 1);
+    const eased = easeOutCubic(progress);
+
+    stateRef.current.zoom = target.startZoom + (target.zoom - target.startZoom) * eased;
+    stateRef.current.panX = target.startPanX + (target.panX - target.startPanX) * eased;
+    stateRef.current.panY = target.startPanY + (target.panY - target.startPanY) * eased;
+
+    drawCanvas();
+
+    if (progress < 1) {
+      animRef.current = requestAnimationFrame(runAnimation);
+    } else {
+      animTargetRef.current = null;
+      setIsAnimating(false);
+    }
+  }, [drawCanvas]);
+
+  // Animate to a target view
+  const animateTo = useCallback((targetZoom: number, targetPanX: number, targetPanY: number, duration: number = 300) => {
+    animTargetRef.current = {
+      zoom: targetZoom,
+      panX: targetPanX,
+      panY: targetPanY,
+      startZoom: stateRef.current.zoom,
+      startPanX: stateRef.current.panX,
+      startPanY: stateRef.current.panY,
+      startTime: performance.now(),
+      duration,
+    };
+    setIsAnimating(true);
+    cancelAnimationFrame(animRef.current);
+    animRef.current = requestAnimationFrame(runAnimation);
+  }, [runAnimation]);
+
+  // Enhancement 2: Focus on a specific channel (search zoom)
+  const focusOnChannel = useCallback((channelId: number) => {
+    const node = layout.nodes.find((n) => n.ch.id === channelId);
+    if (!node) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const W = wrap.clientWidth;
+    const H = wrap.clientHeight;
+    const targetZoom = 3;
+    const targetPanX = W / 2 - node.x * targetZoom;
+    const targetPanY = H / 2 - node.y * targetZoom;
+
+    setFocusedChannelId(channelId);
+    animateTo(targetZoom, targetPanX, targetPanY, 300);
+  }, [layout, animateTo]);
+
+  // Enhancement 2: Reset view to initial
+  const resetView = useCallback(() => {
+    const init = initViewRef.current;
+    setFocusedChannelId(null);
+    animateTo(init.zoom, init.panX, init.panY, 300);
+  }, [animateTo]);
+
   // Resize observer
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const minimap = minimapRef.current;
 
     const onResize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -507,6 +697,12 @@ function BubbleMapCanvas({
       canvas.height = h * dpr;
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
+      if (minimap) {
+        minimap.width = MINIMAP_W * dpr;
+        minimap.height = MINIMAP_H * dpr;
+        minimap.style.width = `${MINIMAP_W}px`;
+        minimap.style.height = `${MINIMAP_H}px`;
+      }
       scheduleRender();
     };
 
@@ -531,6 +727,8 @@ function BubbleMapCanvas({
     stateRef.current.zoom = initZoom;
     stateRef.current.panX = (W - layout.width * initZoom) / 2;
     stateRef.current.panY = (H - layout.height * initZoom) / 2;
+    initViewRef.current = { zoom: initZoom, panX: stateRef.current.panX, panY: stateRef.current.panY };
+    setFocusedChannelId(null);
     scheduleRender();
   }, [layout, scheduleRender]);
 
@@ -556,6 +754,7 @@ function BubbleMapCanvas({
 
   // Mouse events
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (isAnimating) return;
     const { wx, wy } = toWorld(e.clientX, e.clientY);
     const st = stateRef.current;
 
@@ -584,14 +783,15 @@ function BubbleMapCanvas({
     } else {
       setTooltip(null);
     }
-  }, [toWorld, hitTest, scheduleRender]);
+  }, [toWorld, hitTest, scheduleRender, isAnimating]);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (isAnimating) return;
     stateRef.current.dragging = true;
     stateRef.current.lastX = e.clientX;
     stateRef.current.lastY = e.clientY;
     setTooltip(null);
-  }, []);
+  }, [isAnimating]);
 
   const handleMouseUp = useCallback((e: React.MouseEvent) => {
     const wasDragging = stateRef.current.dragging;
@@ -609,10 +809,16 @@ function BubbleMapCanvas({
   const handleClick = useCallback((e: React.MouseEvent) => {
     const { wx, wy } = toWorld(e.clientX, e.clientY);
     const hit = hitTest(wx, wy);
-    onSelect(hit ? hit.ch : null);
-  }, [toWorld, hitTest, onSelect]);
+    if (hit) {
+      onSelect(hit.ch);
+      focusOnChannel(hit.ch.id);
+    } else {
+      onSelect(null);
+    }
+  }, [toWorld, hitTest, onSelect, focusOnChannel]);
 
   const handleWheel = useCallback((e: WheelEvent) => {
+    if (isAnimating) return;
     e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -627,7 +833,7 @@ function BubbleMapCanvas({
     st.panY = cy - scale * (cy - st.panY);
     st.zoom = newZoom;
     scheduleRender();
-  }, [scheduleRender]);
+  }, [scheduleRender, isAnimating]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -635,6 +841,57 @@ function BubbleMapCanvas({
     canvas.addEventListener("wheel", handleWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
+
+  // Enhancement 3: Minimap click handler
+  const handleMinimapClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const minimap = minimapRef.current;
+    const wrap = wrapRef.current;
+    if (!minimap || !wrap || layout.nodes.length === 0) return;
+
+    const rect = minimap.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Compute same scale as drawMinimap
+    const pad = 8;
+    const scaleX = (MINIMAP_W - pad * 2) / layout.width;
+    const scaleY = (MINIMAP_H - pad * 2) / layout.height;
+    const sc = Math.min(scaleX, scaleY);
+    const offX = pad + (MINIMAP_W - pad * 2 - layout.width * sc) / 2;
+    const offY = pad + (MINIMAP_H - pad * 2 - layout.height * sc) / 2;
+
+    // Convert minimap coords to world coords
+    const worldX = (clickX - offX) / sc;
+    const worldY = (clickY - offY) / sc;
+
+    // Pan so that this world point is centered
+    const W = wrap.clientWidth;
+    const H = wrap.clientHeight;
+    const currentZoom = stateRef.current.zoom;
+    const targetPanX = W / 2 - worldX * currentZoom;
+    const targetPanY = H / 2 - worldY * currentZoom;
+
+    animateTo(currentZoom, targetPanX, targetPanY, 200);
+  }, [layout, animateTo]);
+
+  // Search match results for external focus
+  const searchMatches = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return [] as BubbleNode[];
+    return layout.nodes.filter((n) =>
+      (n.ch.title?.toLowerCase().includes(q) ?? false) ||
+      (n.ch.username?.toLowerCase().includes(q) ?? false)
+    );
+  }, [layout.nodes, filterQuery]);
+
+  // Auto-focus first search result when search changes
+  useEffect(() => {
+    if (searchMatches.length === 1) {
+      focusOnChannel(searchMatches[0].ch.id);
+    } else if (searchMatches.length === 0 && filterQuery.trim() === "") {
+      setFocusedChannelId(null);
+    }
+  }, [searchMatches, filterQuery, focusOnChannel]);
 
   return (
     <div
@@ -647,7 +904,7 @@ function BubbleMapCanvas({
         overflow: "hidden",
         background: "#0a0a0b",
         border: "1px solid var(--border)",
-        cursor: stateRef.current.dragging ? "grabbing" : "grab",
+        cursor: isAnimating ? "default" : stateRef.current.dragging ? "grabbing" : "grab",
       }}
     >
       <canvas
@@ -698,6 +955,83 @@ function BubbleMapCanvas({
         </div>
       )}
 
+      {/* Search result list on map */}
+      {searchMatches.length > 1 && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 14,
+            background: "rgba(10,10,11,0.92)",
+            border: "1px solid var(--border)",
+            borderRadius: 10,
+            padding: "8px 0",
+            maxHeight: 200,
+            overflowY: "auto",
+            zIndex: 12,
+            minWidth: 180,
+          }}
+        >
+          <div style={{ padding: "4px 12px 8px", fontSize: 11, color: "var(--muted)" }}>
+            {searchMatches.length} sovpadeniy
+          </div>
+          {searchMatches.slice(0, 20).map((node) => (
+            <button
+              key={node.ch.id}
+              type="button"
+              onClick={() => {
+                focusOnChannel(node.ch.id);
+                onSelect(node.ch);
+              }}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                display: "block",
+                width: "100%",
+                padding: "6px 12px",
+                fontSize: 12,
+                color: focusedChannelId === node.ch.id ? "#00ff88" : "var(--text-secondary)",
+                background: focusedChannelId === node.ch.id ? "rgba(0,255,136,0.08)" : "transparent",
+                boxSizing: "border-box",
+              }}
+              onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(0,255,136,0.08)"; }}
+              onMouseLeave={(ev) => {
+                ev.currentTarget.style.background = focusedChannelId === node.ch.id ? "rgba(0,255,136,0.08)" : "transparent";
+              }}
+            >
+              {node.ch.title ?? node.ch.username ?? `#${node.ch.id}`}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Reset View button */}
+      {focusedChannelId != null && (
+        <button
+          type="button"
+          onClick={resetView}
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 14,
+            background: "rgba(10,10,11,0.88)",
+            border: "1px solid #00ff88",
+            borderRadius: 8,
+            padding: "6px 14px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontSize: 12,
+            color: "#00ff88",
+            zIndex: 12,
+          }}
+        >
+          <RotateCcw size={12} />
+          Сбросить вид
+        </button>
+      )}
+
       {/* Controls hint */}
       <div
         style={{
@@ -709,14 +1043,14 @@ function BubbleMapCanvas({
           pointerEvents: "none",
         }}
       >
-        \u041a\u043e\u043b\u0435\u0441\u0438\u043a\u043e \u2014 \u0437\u0443\u043c \u00b7 \u0422\u0430\u0449\u0438\u0442\u0435 \u0438 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u2014 \u043f\u0430\u043d
+        {"\u041a\u043e\u043b\u0435\u0441\u0438\u043a\u043e \u2014 \u0437\u0443\u043c \u00b7 \u0422\u0430\u0449\u0438\u0442\u0435 \u0438 \u043f\u0435\u0440\u0435\u0442\u0430\u0449\u0438\u0442\u0435 \u2014 \u043f\u0430\u043d"}
       </div>
 
       {/* Stats bar */}
       <div
         style={{
           position: "absolute",
-          bottom: 12,
+          bottom: MINIMAP_H + 24,
           right: 14,
           fontSize: 11,
           color: "var(--text-secondary)",
@@ -724,8 +1058,24 @@ function BubbleMapCanvas({
           pointerEvents: "none",
         }}
       >
-        {layout.nodes.length} \u043a\u0430\u043d\u0430\u043b\u043e\u0432 \u00b7 {layout.labels.length} \u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u0439
+        {layout.nodes.length} {"\u043a\u0430\u043d\u0430\u043b\u043e\u0432"} {"\u00b7"} {layout.labels.length} {"\u043a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u0439"}
       </div>
+
+      {/* Enhancement 3: Mini-map navigator */}
+      <canvas
+        ref={minimapRef}
+        onClick={handleMinimapClick}
+        style={{
+          position: "absolute",
+          bottom: 12,
+          right: 14,
+          width: MINIMAP_W,
+          height: MINIMAP_H,
+          borderRadius: 8,
+          cursor: "crosshair",
+          zIndex: 11,
+        }}
+      />
     </div>
   );
 }
