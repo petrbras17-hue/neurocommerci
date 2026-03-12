@@ -900,6 +900,84 @@ class FarmEvent(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Channel Intelligence Engine
+# ---------------------------------------------------------------------------
+
+
+class ChannelProfile(Base):
+    """AI-профиль канала: правила, риски, статистика банов."""
+    __tablename__ = "channel_profiles"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "telegram_id", name="uq_channel_profiles_tenant_telegram"),
+        Index("ix_channel_profiles_tenant_id", "tenant_id"),
+        Index("ix_channel_profiles_telegram_id", "telegram_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    channel_entry_id = Column(Integer, ForeignKey("channel_entries.id"), nullable=True)
+    telegram_id = Column(BigInteger, nullable=False)
+    username = Column(String(100), nullable=True)
+    title = Column(String(300), nullable=True)
+    channel_type = Column(String(20), default="channel")  # channel/supergroup/megagroup/chat
+    is_private = Column(Boolean, default=False)
+    slow_mode_seconds = Column(Integer, default=0)
+    no_links = Column(Boolean, default=False)
+    no_forwards = Column(Boolean, default=False)
+    linked_chat_id = Column(BigInteger, nullable=True)
+    pinned_rules_text = Column(Text, nullable=True)
+    ai_extracted_rules = Column(JSONType, nullable=True)
+    learned_rules = Column(JSONType, nullable=True)
+    ban_risk = Column(String(10), default="low")  # low/medium/high/critical
+    success_rate = Column(Float, default=1.0)
+    total_comments = Column(Integer, default=0)
+    total_bans = Column(Integer, default=0)
+    safe_comment_interval_sec = Column(Integer, default=0)
+    last_profiled_at = Column(DateTime, nullable=True)
+    last_ban_analysis_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ChannelBanEvent(Base):
+    """Событие бана/ограничения аккаунта в канале для обучения системы."""
+    __tablename__ = "channel_ban_events"
+    __table_args__ = (
+        Index("ix_channel_ban_events_tenant_id", "tenant_id"),
+        Index("ix_channel_ban_events_channel_profile_id", "channel_profile_id"),
+        Index("ix_channel_ban_events_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    channel_profile_id = Column(Integer, ForeignKey("channel_profiles.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    ban_type = Column(String(20), nullable=False)  # mute/kicked/banned/restricted/slow_mode_hit/flood_severe
+    last_action_before_ban = Column(JSONType, nullable=True)
+    ai_analysis = Column(JSONType, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+
+class ChannelJoinRequest(Base):
+    """Запрос на вступление аккаунта в закрытый канал."""
+    __tablename__ = "channel_join_requests"
+    __table_args__ = (
+        Index("ix_channel_join_requests_tenant_id", "tenant_id"),
+        Index("ix_channel_join_requests_status", "status"),
+        Index("ix_channel_join_requests_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    channel_profile_id = Column(Integer, ForeignKey("channel_profiles.id"), nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    telegram_id = Column(BigInteger, nullable=False)
+    status = Column(String(10), default="pending")  # pending/accepted/rejected/expired
+    requested_at = Column(DateTime, default=utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
 class WarmupConfig(Base):
     """Конфигурация автопрогрева аккаунтов."""
     __tablename__ = "warmup_configs"
