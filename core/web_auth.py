@@ -509,6 +509,12 @@ async def register_with_email(
         auth_user=auth_user,
     )
 
+    # Re-apply RLS context with newly created tenant so subsequent
+    # INSERTs (refresh_tokens, onboarding) pass FORCE RLS policies
+    await apply_session_rls_context(
+        session, tenant_id=tenant.id, user_id=auth_user.id
+    )
+
     access_token = make_access_token(
         user_id=auth_user.id,
         tenant_id=tenant.id,
@@ -566,6 +572,11 @@ async def login_with_email(
     tenant, workspace, membership = await _bootstrap_membership_email(
         session,
         auth_user=auth_user,
+    )
+
+    # Set RLS context to the resolved tenant for refresh_tokens INSERT
+    await apply_session_rls_context(
+        session, tenant_id=tenant.id, user_id=auth_user.id
     )
 
     access_token = make_access_token(
@@ -652,6 +663,11 @@ async def verify_telegram_login(
         session,
         auth_user=auth_user,
         telegram_identity=telegram_identity,
+    )
+
+    # Set RLS context to the resolved tenant for refresh_tokens INSERT
+    await apply_session_rls_context(
+        session, tenant_id=tenant.id, user_id=auth_user.id
     )
 
     profile_complete = bool(str(auth_user.email or "").strip()) and bool(str(auth_user.company or "").strip())

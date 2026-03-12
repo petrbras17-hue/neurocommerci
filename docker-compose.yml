@@ -53,6 +53,32 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  liveliness:
+    build: .
+    command: python liveliness_service.py
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nc:${DB_PASSWORD}@db:5432/neurocomment
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
   worker:
     profiles: ["dynamic"]
     build: .

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time as _time
+from datetime import datetime as _dt, timezone as _tz
 from html import escape
 from typing import Any
 
@@ -11,6 +15,10 @@ from sqlalchemy import select
 from config import settings
 from storage.models import Channel
 from storage.sqlite_db import async_session
+
+_log = logging.getLogger(__name__)
+
+TELEGRAM_MESSAGE_LIMIT = 4096
 
 
 def digest_configured() -> bool:
@@ -162,3 +170,147 @@ async def send_daily_digest_summary(*, user_id: int | None = None) -> dict[str, 
     payload = await send_digest_text(text)
     payload["kind"] = "daily_summary"
     return payload
+
+
+# ---------------------------------------------------------------------------
+# DigestReporter — real-time event → Telegram delivery
+# ---------------------------------------------------------------------------
+
+from core.event_bus import EventBus  # noqa: E402
+
+_CATEGORIES = {
+    "deploy":  ("DEPLOY",  "\U0001f680"),   # rocket
+    "account": ("ACCOUNT", "\U0001f464"),   # person
+    "health":  ("HEALTH",  "\U0001f4ca"),   # chart
+    "parsing": ("PARSING", "\U0001f50d"),   # magnifying glass
+    "farm":    ("FARM",    "\U0001f69c"),   # tractor
+    "error":   ("ERROR",   "\U0001f6a8"),   # alert
+    "system":  ("SYSTEM",  "\u2699\ufe0f"), # gear
+}
+
+_SKIP_KEYS = frozenset({"ts", "type", "category"})
+
+
+def format_event_message(channel: str, data: dict) -> str:
+    """Format a Redis event into a Telegram-ready text message."""
+    category = channel.replace("nc:event:", "").split(":")[0] if "nc:event:" in channel else "system"
+    label, emoji = _CATEGORIES.get(category, ("SYSTEM", "\u2699\ufe0f"))
+
+    ts = data.get("ts", "")
+    if ts:
+        try:
+            dt_obj = _dt.fromisoformat(ts)
+            time_str = dt_obj.strftime("%H:%M")
+        except (ValueError, TypeError):
+            time_str = str(ts)[:5]
+    else:
+        time_str = _dt.now(_tz.utc).strftime("%H:%M")
+
+    header = f"{emoji} <b>{label}</b> | {time_str}"
+
+    lines = [header]
+    for key, value in data.items():
+        if key in _SKIP_KEYS:
+            continue
+        display_key = key.replace("_", " ").capitalize()
+        lines.append(f"{display_key}: {value}")
+
+    return "\n".join(lines)
+
+
+class DigestReporter:
+    """Listens to Redis pub/sub events and sends formatted messages to Telegram digest chat.
+
+    Batches messages within a time window to avoid Telegram rate limits.
+    """
+
+    def __init__(
+        self,
+        event_bus: EventBus,
+        batch_window_sec: float = 2.0,
+        max_per_minute: int = 30,
+    ) -> None:
+        self._bus = event_bus
+        self._batch_window = batch_window_sec
+        self._max_per_minute = max_per_minute
+        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=1000)
+        self._sent_count = 0
+        self._sent_reset_at = 0.0
+        self._dropped_count = 0
+
+    async def start(self) -> None:
+        """Start listener and sender tasks. Blocks forever."""
+        await asyncio.gather(
+            self._listen(),
+            self._sender_loop(),
+        )
+
+    async def _listen(self) -> None:
+        """Subscribe to all nc:event:* channels."""
+        await self._bus.subscribe(
+            ["nc:event:*"],
+            self._on_event,
+        )
+
+    async def _on_event(self, channel: str, data: dict) -> None:
+        """Format event and enqueue for batched sending. Drop if queue full."""
+        text = format_event_message(channel, data)
+        try:
+            self._queue.put_nowait(text)
+        except asyncio.QueueFull:
+            self._dropped_count += 1
+
+    async def _sender_loop(self) -> None:
+        """Drain queue and send messages respecting rate limits."""
+        loop = asyncio.get_running_loop()
+        while True:
+            messages: list[str] = []
+            try:
+                msg = await asyncio.wait_for(self._queue.get(), timeout=10.0)
+                messages.append(msg)
+            except asyncio.TimeoutError:
+                continue
+
+            deadline = loop.time() + self._batch_window
+            while loop.time() < deadline:
+                try:
+                    msg = await asyncio.wait_for(
+                        self._queue.get(),
+                        timeout=max(0.01, deadline - loop.time()),
+                    )
+                    messages.append(msg)
+                except asyncio.TimeoutError:
+                    break
+
+            now = _time.monotonic()
+            if now - self._sent_reset_at > 60:
+                self._sent_count = 0
+                self._sent_reset_at = now
+
+            if self._sent_count >= self._max_per_minute:
+                self._dropped_count += len(messages)
+                _log.warning(
+                    "digest_reporter: rate limit hit, dropping %d messages (total dropped: %d)",
+                    len(messages), self._dropped_count,
+                )
+                # Sleep until window resets instead of busy-looping
+                await asyncio.sleep(max(1, 60 - (now - self._sent_reset_at)))
+                continue
+
+            # Prepend drop count warning if any
+            if self._dropped_count > 0:
+                messages.insert(0, f"\u26a0\ufe0f Пропущено сообщений: {self._dropped_count}")
+                self._dropped_count = 0
+
+            combined = "\n\n".join(messages)
+            if len(combined) > TELEGRAM_MESSAGE_LIMIT:
+                for msg in messages:
+                    if self._sent_count >= self._max_per_minute:
+                        break
+                    if digest_configured():
+                        await send_digest_text(msg)
+                    self._sent_count += 1
+            else:
+                if digest_configured():
+                    await send_digest_text(combined)
+                self._sent_count += 1

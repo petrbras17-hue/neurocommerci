@@ -499,6 +499,7 @@ export type ChannelMapEntry = {
   avg_post_reach: number | null; engagement_rate: number | null;
   post_frequency_daily: number | null; verified: boolean;
   source: string | null;
+  avatar_url: string | null;
   last_indexed_at: string | null; created_at: string | null;
 };
 
