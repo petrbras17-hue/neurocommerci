@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import type { RootState } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import {
@@ -101,17 +102,26 @@ function isWebGLAvailable(): boolean {
 
 class WebGLErrorBoundary extends Component<
   { fallback: ReactNode; children: ReactNode },
-  { hasError: boolean }
+  { hasError: boolean; errorMsg: string }
 > {
-  state = { hasError: false };
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  state = { hasError: false, errorMsg: "" };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMsg: error?.message ?? "Unknown WebGL error" };
   }
   componentDidCatch(error: Error) {
-    console.warn("WebGL/Three.js error:", error.message);
+    console.warn("WebGL/Three.js error:", error.message, error.stack);
   }
   render() {
-    return this.state.hasError ? this.props.fallback : this.props.children;
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    // Wrap in a try — some Three.js errors escape getDerivedStateFromError
+    try {
+      return this.props.children;
+    } catch (e) {
+      console.warn("WebGL render error:", e);
+      return this.props.fallback;
+    }
   }
 }
 
@@ -1842,8 +1852,16 @@ export function ChannelMapPage() {
               gl={{
                 antialias: true,
                 alpha: false,
-                toneMapping: THREE.ACESFilmicToneMapping,
-                toneMappingExposure: 1.1,
+                powerPreference: "default",
+                failIfMajorPerformanceCaveat: false,
+              }}
+              onCreated={(state: RootState) => {
+                try {
+                  state.gl.toneMapping = THREE.ACESFilmicToneMapping;
+                  state.gl.toneMappingExposure = 1.1;
+                } catch {
+                  // iOS Safari may not support tone mapping — ignore
+                }
               }}
               style={{ width: "100%", height: "100%" }}
             >
