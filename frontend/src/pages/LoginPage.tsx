@@ -84,7 +84,10 @@ export function LoginPage() {
       const result = await auth.startBotAuth();
       setBotAuthCode(result.code);
       if (result.deep_link && result.deep_link.startsWith("https://t.me/")) {
-        window.open(result.deep_link, "_blank");
+        // Use location.href instead of window.open — iOS Safari blocks
+        // window.open in async callbacks as a popup, but location.href
+        // correctly triggers the Telegram app deep link on mobile.
+        window.location.href = result.deep_link;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "bot_auth_failed";
