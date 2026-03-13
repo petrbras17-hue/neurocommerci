@@ -114,9 +114,9 @@ async def send_parser_task_digest(task: dict[str, Any], report: dict[str, Any]) 
     return payload
 
 
-async def build_daily_digest_summary(*, user_id: int | None = None) -> str:
+async def build_daily_digest_summary(*, user_id: int | None = None, limit: int = 5000) -> str:
     async with async_session() as session:
-        query = select(Channel).order_by(Channel.created_at.desc(), Channel.id.desc())
+        query = select(Channel).order_by(Channel.created_at.desc(), Channel.id.desc()).limit(limit)
         if user_id is not None:
             query = query.where(Channel.user_id == user_id)
         result = await session.execute(query)
@@ -261,7 +261,7 @@ class DigestReporter:
         try:
             self._queue.put_nowait(text)
         except asyncio.QueueFull:
-            self._dropped_count += 1
+            self._dropped_count = min(self._dropped_count + 1, 1_000_000)
 
     async def _sender_loop(self) -> None:
         """Drain queue and send messages respecting rate limits."""
@@ -291,7 +291,7 @@ class DigestReporter:
                 self._sent_reset_at = now
 
             if self._sent_count >= self._max_per_minute:
-                self._dropped_count += len(messages)
+                self._dropped_count = min(self._dropped_count + len(messages), 1_000_000)
                 _log.warning(
                     "digest_reporter: rate limit hit, dropping %d messages (total dropped: %d)",
                     len(messages), self._dropped_count,

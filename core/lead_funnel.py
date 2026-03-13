@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
 from html import escape
 from typing import Any, Optional
 
@@ -46,13 +45,18 @@ def build_lead_notification_text(lead: LeadSnapshot) -> str:
     )
 
 
-@lru_cache(maxsize=1)
+_cached_lead_sheets: GoogleSheetsStorage | None = None
+
+
 def _lead_sheets_storage() -> GoogleSheetsStorage:
-    spreadsheet_id = str(settings.CHANNELS_SPREADSHEET_ID or settings.STATS_SPREADSHEET_ID or "").strip()
-    return GoogleSheetsStorage(
-        credentials_file=settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
-        spreadsheet_id=spreadsheet_id,
-    )
+    global _cached_lead_sheets
+    if _cached_lead_sheets is None:
+        spreadsheet_id = str(settings.CHANNELS_SPREADSHEET_ID or settings.STATS_SPREADSHEET_ID or "").strip()
+        _cached_lead_sheets = GoogleSheetsStorage(
+            credentials_file=settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
+            spreadsheet_id=spreadsheet_id,
+        )
+    return _cached_lead_sheets
 
 
 async def mirror_lead_to_google_sheets(lead: LeadSnapshot) -> dict[str, Any]:

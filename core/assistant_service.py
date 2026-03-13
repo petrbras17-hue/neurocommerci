@@ -4,7 +4,6 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from functools import lru_cache
 from html import escape
 from typing import Any, Optional
 
@@ -299,13 +298,18 @@ def _extract_labeled_updates(message: str) -> dict[str, Any]:
     return updates
 
 
-@lru_cache(maxsize=1)
+_cached_sheets_storage: GoogleSheetsStorage | None = None
+
+
 def _assistant_sheets_storage() -> GoogleSheetsStorage:
-    spreadsheet_id = str(settings.CHANNELS_SPREADSHEET_ID or settings.STATS_SPREADSHEET_ID or "").strip()
-    return GoogleSheetsStorage(
-        credentials_file=settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
-        spreadsheet_id=spreadsheet_id,
-    )
+    global _cached_sheets_storage
+    if _cached_sheets_storage is None:
+        spreadsheet_id = str(settings.CHANNELS_SPREADSHEET_ID or settings.STATS_SPREADSHEET_ID or "").strip()
+        _cached_sheets_storage = GoogleSheetsStorage(
+            credentials_file=settings.GOOGLE_SHEETS_CREDENTIALS_FILE,
+            spreadsheet_id=spreadsheet_id,
+        )
+    return _cached_sheets_storage
 
 
 async def mirror_brief_to_google_sheets(snapshot: BriefMirrorSnapshot) -> dict[str, Any]:

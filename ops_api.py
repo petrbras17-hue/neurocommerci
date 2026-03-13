@@ -541,6 +541,14 @@ class EmailLoginPayload(BaseModel):
     email: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=1, max_length=128)
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("invalid_email")
+        return value
+
 
 class BindProxyPayload(BaseModel):
     proxy_id: Optional[int] = None
@@ -810,11 +818,11 @@ class ChannelImportItem(BaseModel):
 
 
 class ChannelImportPayload(BaseModel):
-    channels: List[ChannelImportItem] = Field(min_length=1)
+    channels: List[ChannelImportItem] = Field(min_length=1, max_length=10000)
 
 
 class ParserChannelsPayload(BaseModel):
-    keywords: List[str] = Field(min_length=1)
+    keywords: List[str] = Field(min_length=1, max_length=50)
     filters: Optional[dict[str, Any]] = None
     max_results: int = Field(default=50, ge=1, le=500)
     account_id: Optional[int] = Field(default=None, gt=0)
@@ -900,7 +908,7 @@ class WarmupCreatePayload(BaseModel):
     enable_reactions: bool = True
     enable_read_channels: bool = True
     enable_dialogs_between_accounts: bool = True
-    target_channels: List[str] = Field(default_factory=list)
+    target_channels: List[str] = Field(default_factory=list, max_length=500)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -929,7 +937,7 @@ class WarmupUpdatePayload(BaseModel):
     enable_reactions: Optional[bool] = None
     enable_read_channels: Optional[bool] = None
     enable_dialogs_between_accounts: Optional[bool] = None
-    target_channels: Optional[List[str]] = None
+    target_channels: Optional[List[str]] = Field(default=None, max_length=500)
 
 
 # Sprint 7 — advanced module payloads
@@ -944,18 +952,18 @@ class ReactionJobCreatePayload(BaseModel):
 class ChattingConfigCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     mode: str = Field(default="conservative", max_length=20)
-    target_channels: List[str] = Field(default_factory=list)
+    target_channels: List[str] = Field(default_factory=list, max_length=500)
     prompt_template: Optional[str] = None
     max_messages_per_hour: int = Field(default=5, ge=1, le=50)
     min_delay_seconds: int = Field(default=120, ge=30)
     max_delay_seconds: int = Field(default=600, ge=60)
-    account_ids: List[int] = Field(default_factory=list)
+    account_ids: List[int] = Field(default_factory=list, max_length=500)
 
 
 class DialogConfigCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     dialog_type: str = Field(default="warmup", max_length=30)
-    account_pairs: List[List[int]] = Field(default_factory=list)
+    account_pairs: List[List[int]] = Field(default_factory=list, max_length=200)
     prompt_template: Optional[str] = None
     messages_per_session: int = Field(default=5, ge=1, le=20)
     session_interval_hours: int = Field(default=4, ge=1, le=48)
@@ -969,7 +977,7 @@ class UserParsePayload(BaseModel):
 class FolderCreatePayload(BaseModel):
     account_id: int
     folder_name: str = Field(min_length=1, max_length=200)
-    channel_usernames: List[str] = Field(default_factory=list)
+    channel_usernames: List[str] = Field(default_factory=list, max_length=500)
 
 
 # ---------------------------------------------------------------------------
@@ -982,7 +990,7 @@ VALID_CAMPAIGN_TYPES = {"commenting", "reactions", "chatting", "mixed"}
 class CampaignCreatePayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     campaign_type: str = Field(default="commenting", max_length=30)
-    account_ids: List[int] = Field(default_factory=list)
+    account_ids: List[int] = Field(default_factory=list, max_length=500)
     channel_database_id: Optional[int] = None
     comment_prompt: Optional[str] = None
     comment_tone: Optional[str] = None
@@ -2616,6 +2624,11 @@ async def accounts_bulk_import(
         tdata_passcode: Optional local passcode for encrypted TData archives (usually empty)
     """
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    if len(files) > 200:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Too many files ({len(files)}), max 200 per request",
+        )
     import io
     import json as _json
     import zipfile
@@ -3570,13 +3583,14 @@ async def internal_ai_audit(
     workspace_id: Optional[int] = None,
     _: None = Depends(require_internal_token),
 ) -> dict[str, Any]:
+    safe_limit = max(1, min(int(limit), 500))
     async with async_session() as session:
         async with session.begin():
             return await list_internal_ai_audit(
                 session,
                 tenant_id=tenant_id,
                 workspace_id=workspace_id,
-                limit=limit,
+                limit=safe_limit,
             )
 
 

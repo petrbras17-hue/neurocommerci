@@ -84,7 +84,7 @@ async def main() -> None:
         pass
 
     await publish_event("system", {"action": "liveliness_service_stopped"})
-    await redis_client.close()
+    await redis_client.aclose()
     log.info("Liveliness service stopped.")
 
 

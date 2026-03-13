@@ -68,7 +68,11 @@ async def upsert_account_from_session_upload(
     workspace_id: int | None = None,
     reset_runtime_state: bool = False,
 ) -> tuple[Account, str]:
-    result = await session.execute(select(Account).where(Account.phone == phone))
+    # Query scoped by tenant_id to prevent cross-tenant account access.
+    query = select(Account).where(Account.phone == phone)
+    if tenant_id is not None:
+        query = query.where(Account.tenant_id.in_([tenant_id, None]))
+    result = await session.execute(query)
     account = result.scalar_one_or_none()
 
     if account is None:

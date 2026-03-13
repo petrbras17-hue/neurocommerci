@@ -52,7 +52,7 @@ class TaskQueue:
     async def close(self):
         """Close Redis connection."""
         if self._redis:
-            await self._redis.close()
+            await self._redis.aclose()
             self._redis = None
 
     async def cache_get(self, key: str) -> Optional[str]:
