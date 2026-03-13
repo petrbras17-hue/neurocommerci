@@ -156,6 +156,7 @@ def convert_tdata_directory(
     _log.info("TData loaded: %d account(s) found", len(loaded_accounts))
 
     for idx, td_account in enumerate(loaded_accounts):
+        tmp_session_path: str | None = None
         try:
             auth_key = td_account.authKey
             if not auth_key:
@@ -230,6 +231,8 @@ def convert_tdata_directory(
         except Exception as exc:
             errors.append(f"account[{idx}]: conversion error: {exc}")
             _log.warning("TData account[%d] conversion failed: %s", idx, exc)
+            if tmp_session_path:
+                Path(tmp_session_path).unlink(missing_ok=True)
 
     return TDataConversionResult(accounts=accounts, errors=errors)
 

@@ -60,7 +60,8 @@ class EventBus:
             async for message in pubsub.listen():
                 if message["type"] not in ("message", "pmessage"):
                     continue
-                channel = (message.get("channel") or b"").decode("utf-8", errors="replace")
+                raw_ch = message.get("channel") or ""
+                channel = raw_ch if isinstance(raw_ch, str) else raw_ch.decode("utf-8", errors="replace")
                 try:
                     data = json.loads(message["data"])
                 except (json.JSONDecodeError, TypeError):

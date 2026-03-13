@@ -837,7 +837,7 @@ async def confirm_context(
 ) -> dict[str, Any]:
     brief = await _ensure_brief(session, tenant_id=tenant_id, workspace_id=workspace_id, user_id=user_id)
     auth_user = None
-    if user_id:
+    if user_id is not None:
         auth_user = await session.get(AuthUser, int(user_id))
     brief.status = "confirmed"
     brief.completeness_score = _brief_completeness(brief)[0]

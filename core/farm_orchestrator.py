@@ -487,7 +487,7 @@ class FarmOrchestrator:
 
         async with _async_session() as sess:
             async with sess.begin():
-                if tenant_id:
+                if tenant_id is not None:
                     await apply_session_rls_context(sess, tenant_id=tenant_id)
                 result = await sess.execute(
                     select(FarmConfig).where(FarmConfig.id == farm_id)
