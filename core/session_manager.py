@@ -35,6 +35,9 @@ DEFAULT_DEVICE = {
     "system_lang_pack": "ru",
 }
 
+_MAX_DEVICE_CACHE_ENTRIES = 2000
+
+
 class SessionManager:
     """Фабрика Telethon клиентов с LRU pool и per-account device fingerprint."""
 
@@ -68,6 +71,13 @@ class SessionManager:
         cache_key = f"{user_id or 0}:{session_name}"
         if cache_key in self._device_cache:
             return self._device_cache[cache_key]
+
+        # Cap cache size to prevent unbounded memory growth
+        if len(self._device_cache) >= _MAX_DEVICE_CACHE_ENTRIES:
+            # Evict first quarter of entries (oldest by insertion order)
+            to_remove = list(self._device_cache.keys())[: len(self._device_cache) // 4]
+            for k in to_remove:
+                del self._device_cache[k]
 
         _, json_path = self.get_session_paths(session_name, user_id=user_id)
 

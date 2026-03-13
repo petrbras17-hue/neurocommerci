@@ -26,6 +26,9 @@ if TYPE_CHECKING:
     from utils.notifier import TelegramNotifier
 
 
+_MAX_ERROR_STREAK_ENTRIES = 5000
+
+
 class SessionHealthMonitor:
     """Фоновый мониторинг здоровья сессий."""
 
@@ -160,6 +163,17 @@ class SessionHealthMonitor:
 
     async def _escalate_health_issue(self, phone: str) -> None:
         """Escalate repeated health issues: active -> cooldown -> restricted."""
+        # Cap dict size to prevent unbounded memory growth
+        if len(self._error_streaks) >= _MAX_ERROR_STREAK_ENTRIES and phone not in self._error_streaks:
+            # Evict zero-streak entries first
+            zeros = [p for p, v in self._error_streaks.items() if v == 0]
+            for p in zeros:
+                del self._error_streaks[p]
+            # If still over limit, evict oldest entries
+            if len(self._error_streaks) >= _MAX_ERROR_STREAK_ENTRIES:
+                to_remove = list(self._error_streaks.keys())[: len(self._error_streaks) // 4]
+                for p in to_remove:
+                    del self._error_streaks[p]
         streak = self._error_streaks.get(phone, 0) + 1
         self._error_streaks[phone] = streak
         try:

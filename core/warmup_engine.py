@@ -326,8 +326,8 @@ class WarmupEngine:
             raise ValueError(f"WarmupConfig {ws.warmup_id} tenant mismatch")
 
         if not _within_active_hours(
-            config.active_hours_start or settings.ACCOUNT_SLEEP_END_HOUR,
-            config.active_hours_end or settings.ACCOUNT_SLEEP_START_HOUR,
+            config.active_hours_start if config.active_hours_start is not None else settings.ACCOUNT_SLEEP_END_HOUR,
+            config.active_hours_end if config.active_hours_end is not None else settings.ACCOUNT_SLEEP_START_HOUR,
         ):
             return {
                 "session_id": session_id,
@@ -552,8 +552,8 @@ class WarmupEngine:
             while utcnow() < deadline and not stop_event.is_set():
                 # Active-hours gate.
                 if not _within_active_hours(
-                    config.active_hours_start or settings.ACCOUNT_SLEEP_END_HOUR,
-                    config.active_hours_end or settings.ACCOUNT_SLEEP_START_HOUR,
+                    config.active_hours_start if config.active_hours_start is not None else settings.ACCOUNT_SLEEP_END_HOUR,
+                    config.active_hours_end if config.active_hours_end is not None else settings.ACCOUNT_SLEEP_START_HOUR,
                 ):
                     log.debug(
                         f"WarmupEngine: session {warmup_session_id} "

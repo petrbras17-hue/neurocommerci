@@ -8797,9 +8797,29 @@ async def quarantine_sessions(
 # ---------------------------------------------------------------------------
 
 
+def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
+    """Sanitize Pydantic v2 validation errors for JSON serialization.
+
+    Pydantic v2 may include non-serializable objects (e.g. ValueError) in the
+    ``ctx`` field of error dicts.  Convert them to plain strings so
+    ``JSONResponse`` does not raise ``TypeError``.
+    """
+    sanitized: list[dict] = []
+    for err in errors:
+        clean = dict(err)
+        ctx = clean.get("ctx")
+        if isinstance(ctx, dict):
+            clean["ctx"] = {
+                k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
+                for k, v in ctx.items()
+            }
+        sanitized.append(clean)
+    return sanitized
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-    errors = exc.errors()
+    errors = _sanitize_validation_errors(exc.errors())
     first = errors[0] if errors else {}
     field = ".".join(str(loc) for loc in first.get("loc", []))
     msg = first.get("msg", "validation_error")

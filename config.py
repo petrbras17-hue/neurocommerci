@@ -428,3 +428,13 @@ def validate_critical_secrets(s: "Settings") -> None:
             f"Critical secrets are not set: {', '.join(missing)}. "
             "Set these environment variables before starting the application."
         )
+    # RFC 7518 §3.2: HMAC keys for HS256 must be ≥ 32 bytes.
+    _MIN_HMAC_KEY_BYTES = 32
+    for key_name in ("JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET"):
+        key_val = getattr(s, key_name, "")
+        if key_val and len(key_val.encode("utf-8")) < _MIN_HMAC_KEY_BYTES:
+            import logging
+            logging.getLogger(__name__).warning(
+                "%s is only %d bytes — RFC 7518 recommends ≥ %d bytes for HS256",
+                key_name, len(key_val.encode("utf-8")), _MIN_HMAC_KEY_BYTES,
+            )
