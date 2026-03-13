@@ -3949,7 +3949,7 @@ async def farm_start(
             select(FarmConfig).where(
                 FarmConfig.id == farm_id,
                 FarmConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if farm is None:
@@ -4063,7 +4063,7 @@ async def farm_stop(
             select(FarmConfig).where(
                 FarmConfig.id == farm_id,
                 FarmConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if farm is None:
@@ -4093,7 +4093,7 @@ async def farm_pause(
             select(FarmConfig).where(
                 FarmConfig.id == farm_id,
                 FarmConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if farm is None:
@@ -4125,7 +4125,7 @@ async def farm_resume(
             select(FarmConfig).where(
                 FarmConfig.id == farm_id,
                 FarmConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if farm is None:
@@ -4952,7 +4952,7 @@ async def warmup_start(
             select(WarmupConfig).where(
                 WarmupConfig.id == warmup_id,
                 WarmupConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -4984,7 +4984,7 @@ async def warmup_stop(
             select(WarmupConfig).where(
                 WarmupConfig.id == warmup_id,
                 WarmupConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -5415,7 +5415,7 @@ async def chatting_start(
             select(ChattingConfig).where(
                 ChattingConfig.id == config_id,
                 ChattingConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -5444,7 +5444,7 @@ async def chatting_stop(
             select(ChattingConfig).where(
                 ChattingConfig.id == config_id,
                 ChattingConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -6669,7 +6669,7 @@ async def campaigns_start(
             select(Campaign).where(
                 Campaign.id == campaign_id,
                 Campaign.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if campaign is None:
@@ -6709,7 +6709,7 @@ async def campaigns_pause(
             select(Campaign).where(
                 Campaign.id == campaign_id,
                 Campaign.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if campaign is None:
@@ -6732,7 +6732,7 @@ async def campaigns_resume(
             select(Campaign).where(
                 Campaign.id == campaign_id,
                 Campaign.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if campaign is None:
@@ -6771,7 +6771,7 @@ async def campaigns_stop(
             select(Campaign).where(
                 Campaign.id == campaign_id,
                 Campaign.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if campaign is None:
