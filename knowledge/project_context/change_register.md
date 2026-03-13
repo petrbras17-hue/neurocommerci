@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `66548bf` |
+| Last committed HEAD | `8e43b0a` |
 | VPS safe branch | `main` |
-| VPS safe commit | `66548bf` |
+| VPS safe commit | `8e43b0a` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -54,6 +54,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-13 | Security + Intelligence | `main` | `cd335b3` | Security hardening + Channel Intelligence API | FORCE RLS on 51 tables, SQL injection fix, upload size limits, CORS env restriction, micro-topic classification API (category tree, single/batch classify). 149 tests pass, TypeScript clean. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
 
 | 2026-03-13 | Accounts 100% | `main` | `66548bf` | Accounts subsystem 100% — 11 tasks across 4 micro-sprints | SessionPool (centralized TelegramClient pool), AccountLifecycle FSM (10 stages), ProxyRouter (3 strategies), SmartCommenter→FarmThread integration, SessionTopologyPage, approval gate, dedup check, CSV/JSON export. 147 new tests, 7 security fixes (tenant isolation, path traversal, bulk limits). Frontend rebuilt, all compile checks pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
+
+| 2026-03-13 | Mass Security Audit | `main` | `8e43b0a` | 100+ bugs found and fixed across 4 audit rounds | Round 1: ops_api.py 28 security fixes (RLS bypass, timing attacks, ZIP bombs, SSRF, memory exhaustion, host injection). Round 2: 2 Alembic migrations (FORCE RLS gaps, WITH CHECK, indexes, Float→Numeric). Frontend: Three.js lazy-load fix, AbortSignal, catch-all route. Round 3: 14 core module fixes (memory leaks in session_pool/warmup_engine/mass_reactions/neuro_chatting/neuro_dialogs, tenant isolation in profile_factory/channel_parser, FloodWait handling, Python 3.9 compat). All 66 core files compile, 39 tests pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
 
 ## Update Rules
 
