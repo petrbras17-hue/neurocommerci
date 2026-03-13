@@ -6,9 +6,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import sqlalchemy as sa
 from sqlalchemy import (
     Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, ForeignKey,
-    UniqueConstraint, JSON, Index,
+    UniqueConstraint, JSON, Index, Numeric,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -497,8 +498,8 @@ class AIModelProfile(Base):
     model_name = Column(String(255), nullable=False)
     model_tier = Column(String(20), nullable=False)  # boss, manager, worker
     is_active = Column(Boolean, default=True)
-    input_cost_per_1m = Column(Float, default=0.0)
-    output_cost_per_1m = Column(Float, default=0.0)
+    input_cost_per_1m = Column(sa.Numeric(precision=10, scale=6), default=0.0)
+    output_cost_per_1m = Column(sa.Numeric(precision=10, scale=6), default=0.0)
     max_context_tokens = Column(Integer, nullable=True)
     capabilities = Column(JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
@@ -557,7 +558,7 @@ class AIRequest(Base):
     latency_ms = Column(Integer, nullable=True)
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
-    estimated_cost_usd = Column(Float, default=0.0)
+    estimated_cost_usd = Column(sa.Numeric(precision=12, scale=6), default=0.0)
     fallback_used = Column(Boolean, default=False)
     reason_code = Column(String(64), nullable=True)
     json_parse_failed = Column(Boolean, default=False)
@@ -592,7 +593,7 @@ class AIRequestAttempt(Base):
     latency_ms = Column(Integer, nullable=True)
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
-    estimated_cost_usd = Column(Float, default=0.0)
+    estimated_cost_usd = Column(sa.Numeric(precision=12, scale=6), default=0.0)
     fallback_used = Column(Boolean, default=False)
     reason_code = Column(String(64), nullable=True)
     json_parse_failed = Column(Boolean, default=False)
@@ -645,7 +646,7 @@ class AIBudgetCounter(Base):
     request_count = Column(Integer, default=0)
     prompt_tokens = Column(Integer, default=0)
     completion_tokens = Column(Integer, default=0)
-    estimated_cost_usd = Column(Float, default=0.0)
+    estimated_cost_usd = Column(sa.Numeric(precision=12, scale=6), default=0.0)
     updated_at = Column(DateTime, default=utcnow)
 
 
@@ -1383,6 +1384,7 @@ class CampaignRun(Base):
     comments_sent = Column(Integer, default=0)
     reactions_sent = Column(Integer, default=0)
     errors = Column(Integer, default=0)
+    created_at = Column(DateTime, server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     run_log = Column(JSONType, nullable=True)           # [{timestamp, action, result}]
@@ -1676,8 +1678,8 @@ class PurchaseRequest(Base):
     # pending, approved, rejected, completed, failed
     requested_by = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
     approved_by = Column(Integer, ForeignKey("auth_users.id"), nullable=True)
-    estimated_cost_usd = Column(Float, nullable=True)
-    actual_cost_usd = Column(Float, nullable=True)
+    estimated_cost_usd = Column(sa.Numeric(precision=12, scale=6), nullable=True)
+    actual_cost_usd = Column(sa.Numeric(precision=12, scale=6), nullable=True)
     details = Column(JSONType, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     approved_at = Column(DateTime, nullable=True)

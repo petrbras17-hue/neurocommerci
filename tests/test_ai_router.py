@@ -138,7 +138,7 @@ async def test_route_ai_task_records_usage_with_gemini_worker(monkeypatch: pytes
         counters = (await session.execute(select(AIBudgetCounter))).scalars().all()
         assert len(requests) == 1
         assert requests[0].prompt_tokens == 111
-        assert requests[0].estimated_cost_usd == pytest.approx(0.0012)
+        assert float(requests[0].estimated_cost_usd) == pytest.approx(0.0012)
         assert requests[0].json_parse_failed is False
         assert requests[0].json_repair_applied is False
         assert requests[0].parsed_without_repair is True
