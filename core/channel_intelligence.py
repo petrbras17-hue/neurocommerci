@@ -1017,7 +1017,12 @@ class ChannelQualityScorer:
                 async with async_session() as session:
                     async with session.begin():
                         await apply_session_rls_context(session, tenant_id=tenant_id)
-                        entry_row = await session.get(ChannelEntry, profile.channel_entry_id)
+                        entry_row = (await session.execute(
+                            select(ChannelEntry).where(
+                                ChannelEntry.id == profile.channel_entry_id,
+                                ChannelEntry.tenant_id == tenant_id,
+                            )
+                        )).scalar_one_or_none()
                         if entry_row:
                             member_count = int(entry_row.member_count or 0)
             except Exception:
@@ -1030,7 +1035,12 @@ class ChannelQualityScorer:
         async with async_session() as session:
             async with session.begin():
                 await apply_session_rls_context(session, tenant_id=tenant_id)
-                row = await session.get(ChannelProfile, profile.id)
+                row = (await session.execute(
+                    select(ChannelProfile).where(
+                        ChannelProfile.id == profile.id,
+                        ChannelProfile.tenant_id == tenant_id,
+                    )
+                )).scalar_one_or_none()
                 if row is not None:
                     row.quality_score = score
                     row.quality_scored_at = utcnow()
@@ -1150,7 +1160,12 @@ class ChannelQualityScorer:
             async with async_session() as session:
                 async with session.begin():
                     await apply_session_rls_context(session, tenant_id=tenant_id)
-                    row = await session.get(ChannelEntry, channel_entry_id)
+                    row = (await session.execute(
+                        select(ChannelEntry).where(
+                            ChannelEntry.id == channel_entry_id,
+                            ChannelEntry.tenant_id == tenant_id,
+                        )
+                    )).scalar_one_or_none()
                     if row is None:
                         return False
                     row.blacklisted = True

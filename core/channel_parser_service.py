@@ -99,7 +99,9 @@ class ChannelParserService:
             )
 
         # Update job to running
-        job = await session.get(ParsingJob, job_id)
+        job = (await session.execute(
+            select(ParsingJob).where(ParsingJob.id == job_id)
+        )).scalar_one_or_none()
         if job is not None:
             job.status = "running"
             job.started_at = utcnow()
@@ -266,9 +268,14 @@ class ChannelParserService:
         if not channels:
             return 0
 
-        # Verify the database belongs to the tenant (basic RLS-equivalent check).
-        db_row = await session.get(ChannelDatabase, database_id)
-        if db_row is None or db_row.tenant_id != tenant_id:
+        # Verify the database belongs to the tenant via scoped query (not session.get which bypasses RLS).
+        db_row = (await session.execute(
+            select(ChannelDatabase).where(
+                ChannelDatabase.id == database_id,
+                ChannelDatabase.tenant_id == tenant_id,
+            )
+        )).scalar_one_or_none()
+        if db_row is None:
             raise RuntimeError(
                 f"channel_database_not_found: database_id={database_id} tenant_id={tenant_id}"
             )
@@ -317,9 +324,12 @@ class ChannelParserService:
         )
         return added
 
-    async def get_job_status(self, job_id: int, session: AsyncSession) -> dict:
+    async def get_job_status(self, job_id: int, session: AsyncSession, *, tenant_id: int | None = None) -> dict:
         """Return current job status and results count."""
-        job = await session.get(ParsingJob, job_id)
+        stmt = select(ParsingJob).where(ParsingJob.id == job_id)
+        if tenant_id is not None:
+            stmt = stmt.where(ParsingJob.tenant_id == tenant_id)
+        job = (await session.execute(stmt)).scalar_one_or_none()
         if job is None:
             return {"found": False, "job_id": job_id}
         return {
@@ -340,7 +350,9 @@ class ChannelParserService:
 
         Handles errors gracefully and updates job.error on failure.
         """
-        job = await session.get(ParsingJob, job_id)
+        job = (await session.execute(
+            select(ParsingJob).where(ParsingJob.id == job_id)
+        )).scalar_one_or_none()
         if job is None:
             log.error(f"ChannelParserService.run_parsing_job: job_id={job_id} not found")
             return
@@ -375,7 +387,9 @@ class ChannelParserService:
                 )
 
             # Re-fetch job after potential commit inside sub-methods.
-            job = await session.get(ParsingJob, job_id)
+            job = (await session.execute(
+                select(ParsingJob).where(ParsingJob.id == job_id)
+            )).scalar_one_or_none()
             if job is not None:
                 job.status = "completed"
                 job.results_count = len(channels)
@@ -390,7 +404,9 @@ class ChannelParserService:
         except Exception as exc:
             log.error(f"ChannelParserService.run_parsing_job: job_id={job_id} failed: {exc}")
             try:
-                job = await session.get(ParsingJob, job_id)
+                job = (await session.execute(
+                    select(ParsingJob).where(ParsingJob.id == job_id)
+                )).scalar_one_or_none()
                 if job is not None:
                     job.status = "failed"
                     job.error = str(exc)[:1000]

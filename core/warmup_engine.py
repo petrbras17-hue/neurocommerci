@@ -307,13 +307,18 @@ class WarmupEngine:
 
         The caller must have already applied RLS context to *db_session*.
         """
-        ws = await db_session.get(WarmupSession, session_id)
+        ws = (await db_session.execute(
+            select(WarmupSession).where(WarmupSession.id == session_id)
+        )).scalar_one_or_none()
         if ws is None:
             raise ValueError(f"WarmupSession {session_id} not found")
 
         tenant_id = getattr(ws, "tenant_id", None)
 
-        config = await db_session.get(WarmupConfig, ws.warmup_id)
+        config_stmt = select(WarmupConfig).where(WarmupConfig.id == ws.warmup_id)
+        if tenant_id is not None:
+            config_stmt = config_stmt.where(WarmupConfig.tenant_id == tenant_id)
+        config = (await db_session.execute(config_stmt)).scalar_one_or_none()
         if config is None:
             raise ValueError(f"WarmupConfig {ws.warmup_id} not found")
         # Defense-in-depth: verify config belongs to same tenant.
@@ -343,7 +348,10 @@ class WarmupEngine:
         limit = config.safety_limit_actions_per_hour or 5
         actions_done = 0
 
-        account = await db_session.get(Account, ws.account_id)
+        acct_stmt = select(Account).where(Account.id == ws.account_id)
+        if tenant_id is not None:
+            acct_stmt = acct_stmt.where(Account.tenant_id == tenant_id)
+        account = (await db_session.execute(acct_stmt)).scalar_one_or_none()
         account_tenant = getattr(account, "tenant_id", None) if account else None
         if account is None or (
             isinstance(tenant_id, int)

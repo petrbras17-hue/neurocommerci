@@ -741,7 +741,9 @@ async def complete_profile(
         tenant_id=int(payload["tenant_id"]),
         user_id=int(payload["sub"]),
     )
-    auth_user = await session.get(AuthUser, int(payload["sub"]))
+    auth_user = (await session.execute(
+        select(AuthUser).where(AuthUser.id == int(payload["sub"]))
+    )).scalar_one_or_none()
     if auth_user is None:
         raise TelegramAuthError("auth_user_not_found")
 
@@ -833,9 +835,15 @@ async def refresh_web_session(
     if token_row is None or token_row.revoked_at is not None or token_row.expires_at <= utcnow():
         raise TelegramAuthError("refresh_token_revoked")
 
-    auth_user = await session.get(AuthUser, expected_user_id)
-    tenant = await session.get(Tenant, expected_tenant_id)
-    workspace = await session.get(Workspace, expected_workspace_id)
+    auth_user = (await session.execute(
+        select(AuthUser).where(AuthUser.id == expected_user_id)
+    )).scalar_one_or_none()
+    tenant = (await session.execute(
+        select(Tenant).where(Tenant.id == expected_tenant_id)
+    )).scalar_one_or_none()
+    workspace = (await session.execute(
+        select(Workspace).where(Workspace.id == expected_workspace_id, Workspace.tenant_id == expected_tenant_id)
+    )).scalar_one_or_none()
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("refresh_context_not_found")
     membership_result = await session.execute(
@@ -912,9 +920,15 @@ async def get_me_payload(
     tenant_id: int,
     workspace_id: int,
 ) -> dict[str, Any]:
-    auth_user = await session.get(AuthUser, int(auth_user_id))
-    tenant = await session.get(Tenant, int(tenant_id))
-    workspace = await session.get(Workspace, int(workspace_id))
+    auth_user = (await session.execute(
+        select(AuthUser).where(AuthUser.id == int(auth_user_id))
+    )).scalar_one_or_none()
+    tenant = (await session.execute(
+        select(Tenant).where(Tenant.id == int(tenant_id))
+    )).scalar_one_or_none()
+    workspace = (await session.execute(
+        select(Workspace).where(Workspace.id == int(workspace_id), Workspace.tenant_id == int(tenant_id))
+    )).scalar_one_or_none()
     if auth_user is None or tenant is None or workspace is None:
         raise TelegramAuthError("me_context_not_found")
 

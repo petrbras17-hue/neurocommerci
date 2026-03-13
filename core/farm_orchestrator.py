@@ -89,7 +89,12 @@ class FarmOrchestrator:
         for idx, (thread_row, channel_chunk) in enumerate(
             zip(thread_rows, channel_chunks)
         ):
-            account = await session.get(Account, thread_row.account_id)
+            account = (await session.execute(
+                select(Account).where(
+                    Account.id == thread_row.account_id,
+                    Account.tenant_id == farm.tenant_id,
+                )
+            )).scalar_one_or_none()
             if account is None:
                 log.warning(
                     f"Farm {farm_id}: account {thread_row.account_id} not found, skipping"

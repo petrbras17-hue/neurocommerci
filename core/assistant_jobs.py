@@ -144,7 +144,9 @@ async def enqueue_app_job(
         async with async_session() as session:
             async with session.begin():
                 await apply_session_rls_context(session, tenant_id=tenant_id, user_id=user_id)
-                job = await session.get(AppJob, job_id)
+                job = (await session.execute(
+                    select(AppJob).where(AppJob.id == job_id, AppJob.tenant_id == tenant_id)
+                )).scalar_one_or_none()
                 if job is not None:
                     job.status = "failed"
                     job.error_code = "queue_unavailable"
@@ -175,7 +177,9 @@ async def _mark_job_running(*, tenant_id: int, user_id: int | None, job_id: int)
     async with async_session() as session:
         async with session.begin():
             await apply_session_rls_context(session, tenant_id=tenant_id, user_id=user_id)
-            job = await session.get(AppJob, int(job_id))
+            job = (await session.execute(
+                select(AppJob).where(AppJob.id == int(job_id), AppJob.tenant_id == tenant_id)
+            )).scalar_one_or_none()
             if job is None:
                 return None
             if job.status == "running":
@@ -201,7 +205,9 @@ async def _mark_job_succeeded(
     async with async_session() as session:
         async with session.begin():
             await apply_session_rls_context(session, tenant_id=tenant_id, user_id=user_id)
-            job = await session.get(AppJob, int(job_id))
+            job = (await session.execute(
+                select(AppJob).where(AppJob.id == int(job_id), AppJob.tenant_id == tenant_id)
+            )).scalar_one_or_none()
             if job is None:
                 return
             job.status = "succeeded"
@@ -223,7 +229,9 @@ async def _mark_job_failed(
     async with async_session() as session:
         async with session.begin():
             await apply_session_rls_context(session, tenant_id=tenant_id, user_id=user_id)
-            job = await session.get(AppJob, int(job_id))
+            job = (await session.execute(
+                select(AppJob).where(AppJob.id == int(job_id), AppJob.tenant_id == tenant_id)
+            )).scalar_one_or_none()
             if job is None:
                 return
             job.status = "failed"

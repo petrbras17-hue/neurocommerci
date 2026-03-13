@@ -838,7 +838,9 @@ async def confirm_context(
     brief = await _ensure_brief(session, tenant_id=tenant_id, workspace_id=workspace_id, user_id=user_id)
     auth_user = None
     if user_id is not None:
-        auth_user = await session.get(AuthUser, int(user_id))
+        auth_user = (await session.execute(
+            select(AuthUser).where(AuthUser.id == int(user_id))
+        )).scalar_one_or_none()
     brief.status = "confirmed"
     brief.completeness_score = _brief_completeness(brief)[0]
     brief.summary_text = _brief_summary_text(brief)

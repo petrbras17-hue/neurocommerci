@@ -93,9 +93,10 @@ def _make_account(account_id: int = 42, lifecycle_stage: str = "warming_up") -> 
 
 
 def _make_db_session(warmup_session: MagicMock, account: MagicMock, config: MagicMock) -> AsyncMock:
-    """Build an AsyncSession mock that returns the right objects for .get()."""
+    """Build an AsyncSession mock that returns the right objects for select() queries."""
     db = AsyncMock()
 
+    # Support both session.get() (legacy) and session.execute(select(...)) (new RLS-safe pattern)
     async def _get(model_class, pk):
         name = model_class.__name__ if hasattr(model_class, "__name__") else str(model_class)
         if "WarmupSession" in name:
@@ -107,6 +108,24 @@ def _make_db_session(warmup_session: MagicMock, account: MagicMock, config: Magi
         return None
 
     db.get = _get
+
+    # Mock session.execute() to return a result whose .scalar_one_or_none() returns the right object
+    _orig_execute = db.execute
+
+    async def _execute(stmt, *args, **kwargs):
+        stmt_str = str(stmt)
+        result = MagicMock()
+        if "warmup_sessions" in stmt_str:
+            result.scalar_one_or_none = MagicMock(return_value=warmup_session)
+        elif "warmup_configs" in stmt_str:
+            result.scalar_one_or_none = MagicMock(return_value=config)
+        elif "accounts" in stmt_str:
+            result.scalar_one_or_none = MagicMock(return_value=account)
+        else:
+            result.scalar_one_or_none = MagicMock(return_value=None)
+        return result
+
+    db.execute = _execute
     db.flush = AsyncMock()
     return db
 
