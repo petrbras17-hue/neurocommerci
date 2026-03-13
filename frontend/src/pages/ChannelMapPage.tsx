@@ -218,50 +218,61 @@ function packCircles(
   maxR: number
 ): Array<{ ch: ChannelMapEntry; lx: number; ly: number; r: number }> {
   if (items.length === 0) return [];
-  const members = items.map((c) => c.member_count ?? 0);
+  // Sort by size desc for better packing (big circles first)
+  const sorted = [...items].sort((a, b) => (b.member_count ?? 0) - (a.member_count ?? 0));
+  const members = sorted.map((c) => c.member_count ?? 0);
   const minM = Math.min(...members);
   const maxM = Math.max(...members);
 
   const circles: Array<{ ch: ChannelMapEntry; lx: number; ly: number; r: number }> = [];
 
-  // Spiral placement
-  let angle = 0;
-  let radius = 0;
-  const radiusStep = 4;
-
-  for (const ch of items) {
+  for (const ch of sorted) {
     const r = logScale(ch.member_count ?? 0, minM, maxM, minR, maxR);
     if (circles.length === 0) {
       circles.push({ ch, lx: 0, ly: 0, r });
       continue;
     }
-    // Try to place on growing spiral, avoid overlaps
+    // Fast placement: try positions around existing circles
+    let bestX = 0, bestY = 0, bestDist = Infinity;
     let placed = false;
-    for (let attempt = 0; attempt < 2000; attempt++) {
-      angle += 0.25;
-      radius += radiusStep / (2 * Math.PI);
-      const tx = Math.cos(angle) * radius;
-      const ty = Math.sin(angle) * radius;
-      let ok = true;
-      for (const placed_c of circles) {
-        const dx = tx - placed_c.lx;
-        const dy = ty - placed_c.ly;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < r + placed_c.r + 3) {
-          ok = false;
-          break;
+
+    // Try positions tangent to each existing circle at multiple angles
+    const angleSteps = Math.min(24, 8 + circles.length);
+    for (let ci = 0; ci < Math.min(circles.length, 20); ci++) {
+      const ref = circles[ci];
+      const gap = r + ref.r + 3;
+      for (let ai = 0; ai < angleSteps; ai++) {
+        const a = (ai / angleSteps) * Math.PI * 2;
+        const tx = ref.lx + Math.cos(a) * gap;
+        const ty = ref.ly + Math.sin(a) * gap;
+        let ok = true;
+        for (const c of circles) {
+          const dx = tx - c.lx, dy = ty - c.ly;
+          if (dx * dx + dy * dy < (r + c.r + 2) * (r + c.r + 2)) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          const d = tx * tx + ty * ty;
+          if (d < bestDist) {
+            bestX = tx;
+            bestY = ty;
+            bestDist = d;
+            placed = true;
+          }
         }
       }
-      if (ok) {
-        circles.push({ ch, lx: tx, ly: ty, r });
-        placed = true;
-        break;
-      }
+      if (placed) break; // Good enough position found
     }
     if (!placed) {
-      // Fallback: place without overlap check
-      circles.push({ ch, lx: Math.cos(angle) * radius, ly: Math.sin(angle) * radius, r });
+      // Fallback: spiral outward
+      const angle = circles.length * 2.4; // golden angle
+      const rad = r * 2.5 + circles.length * 3;
+      bestX = Math.cos(angle) * rad;
+      bestY = Math.sin(angle) * rad;
     }
+    circles.push({ ch, lx: bestX, ly: bestY, r });
   }
   return circles;
 }
