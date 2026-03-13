@@ -9,7 +9,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html, Text } from "@react-three/drei";
+import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import {
   channelMapApi,
@@ -405,36 +405,33 @@ function DistrictPlates({ districts }: { districts: DistrictData[] }) {
           </mesh>
 
           {/* District border */}
-          <lineSegments position={[d.cx, 0.1, d.cz]}>
-            <edgesGeometry
-              args={[new THREE.PlaneGeometry(d.halfW * 2 + 10, d.halfD * 2 + 10)]}
-            />
-            <lineBasicMaterial color={d.color} transparent opacity={0.25} />
-          </lineSegments>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[d.cx, 0.08, d.cz]}
+          >
+            <ringGeometry args={[
+              Math.max(d.halfW, d.halfD) + 4,
+              Math.max(d.halfW, d.halfD) + 5,
+              4,
+            ]} />
+            <meshBasicMaterial color={d.color} transparent opacity={0.15} />
+          </mesh>
 
-          {/* District label */}
-          <Text
-            position={[d.cx, 1, d.cz - d.halfD - 8]}
-            fontSize={5}
-            color={d.color}
-            anchorX="center"
-            anchorY="middle"
-            font="/fonts/JetBrainsMono-Regular.woff"
-            fillOpacity={0.7}
+          {/* District label (Html overlay — mobile-safe) */}
+          <Html
+            position={[d.cx, 1.5, d.cz - d.halfD - 6]}
+            center
+            style={{ pointerEvents: "none", userSelect: "none", whiteSpace: "nowrap" }}
           >
-            {d.icon} {d.category}
-          </Text>
-          <Text
-            position={[d.cx, 1, d.cz - d.halfD - 3]}
-            fontSize={2.5}
-            color={d.color}
-            anchorX="center"
-            anchorY="middle"
-            font="/fonts/JetBrainsMono-Regular.woff"
-            fillOpacity={0.4}
-          >
-            {d.count} каналов · {formatNumber(d.totalReach)} подписчиков
-          </Text>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: d.color, opacity: 0.8, fontFamily: "'JetBrains Mono', monospace" }}>
+                {d.icon} {d.category}
+              </div>
+              <div style={{ fontSize: 10, color: d.color, opacity: 0.4, fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+                {d.count} каналов · {formatNumber(d.totalReach)} подписчиков
+              </div>
+            </div>
+          </Html>
         </group>
       ))}
     </group>
