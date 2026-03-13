@@ -196,7 +196,11 @@ export function GlobeView(props: GlobeViewProps) {
   );
 
   const getHexAltitude = useCallback(
-    (obj: object): number => Math.min((obj as HexBin).sumWeight / 500_000, 0.5),
+    (obj: object): number => {
+      const w = (obj as HexBin).sumWeight;
+      // Log scale: gentle rise from 0.01 to 0.12 max — no more "nuclear rods"
+      return Math.min(0.12, Math.max(0.01, Math.log10(w + 1) / 60));
+    },
     [],
   );
 
@@ -208,7 +212,11 @@ export function GlobeView(props: GlobeViewProps) {
   // ── Point accessors ───────────────────────────────────────────────────────
 
   const getPointRadius = useCallback(
-    (obj: object): number => { const d = obj as GeoPoint; return Math.max(0.1, Math.min(0.5, d.m / 100_000)); },
+    (obj: object): number => {
+      const d = obj as GeoPoint;
+      // Log scale for point radius — visible even for 5K channels
+      return Math.max(0.15, Math.min(0.6, Math.log10(d.m + 1) / 12));
+    },
     [],
   );
 
