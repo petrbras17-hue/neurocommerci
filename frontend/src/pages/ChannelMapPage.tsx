@@ -14,7 +14,6 @@ import * as THREE from "three";
 import {
   channelMapApi,
   ChannelMapEntry,
-  ChannelMapStats,
   farmApi,
   FarmConfig,
   channelDbApi,
@@ -42,7 +41,19 @@ import {
   Maximize2,
   Building2,
   MapPin,
+  Layers,
 } from "lucide-react";
+
+// ── debounce hook ────────────────────────────────────────────────────────────
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -778,7 +789,8 @@ function BuildingTooltip({
   building: BuildingData | null;
 }) {
   if (!building) return null;
-  const { ch, x, height, z, color } = building;
+  const { ch, x, height, z, color, category } = building;
+  const meta = getCategoryMeta(category);
 
   return (
     <Html
@@ -786,41 +798,44 @@ function BuildingTooltip({
       center
       style={{ pointerEvents: "none", userSelect: "none" }}
     >
-      <div
-        style={{
-          background: "rgba(8, 10, 12, 0.95)",
-          border: `1px solid ${color}`,
-          borderRadius: 10,
-          padding: "10px 16px",
-          minWidth: 200,
-          maxWidth: 280,
-          boxShadow: `0 0 24px ${color}44, 0 4px 12px rgba(0,0,0,0.6)`,
-          backdropFilter: "blur(12px)",
-          whiteSpace: "nowrap",
-        }}
-      >
-        <div style={{ fontWeight: 700, fontSize: 13, color, fontFamily: "'Geist Sans', system-ui, sans-serif" }}>
-          {ch.title ?? `@${ch.username}`}
-        </div>
-        {ch.username && (
-          <div style={{ fontSize: 11, color: "#666", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
-            @{ch.username}
+      <div className="cmap-tooltip">
+        <div className="cmap-tooltip-inner" style={{ borderColor: color }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color, fontFamily: "'Geist Sans', system-ui, sans-serif" }}>
+            {ch.title ?? `@${ch.username}`}
           </div>
-        )}
-        <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 11, color: "#aaa" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <Users size={10} /> {formatNumber(ch.member_count)}
-          </span>
-          {ch.engagement_rate != null && (
-            <span style={{ color: erColor(ch.engagement_rate), display: "flex", alignItems: "center", gap: 4 }}>
-              <TrendingUp size={10} /> {erLabel(ch.engagement_rate)}
-            </span>
+          {ch.username && (
+            <div style={{ fontSize: 11, color: "#666", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>
+              @{ch.username}
+            </div>
           )}
-          {ch.has_comments && (
-            <span style={{ color: "#00ff88", display: "flex", alignItems: "center", gap: 4 }}>
-              <MessageCircle size={10} /> Комменты
+
+          {/* Category badge */}
+          <div
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600,
+              background: `${meta.color}20`, color: meta.color,
+              marginTop: 6,
+            }}
+          >
+            {meta.icon} {category}
+          </div>
+
+          <div style={{ display: "flex", gap: 14, marginTop: 8, fontSize: 11, color: "#aaa" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <Users size={10} /> {formatNumber(ch.member_count)}
             </span>
-          )}
+            {ch.engagement_rate != null && (
+              <span style={{ color: erColor(ch.engagement_rate), display: "flex", alignItems: "center", gap: 4 }}>
+                <TrendingUp size={10} /> {erLabel(ch.engagement_rate)}
+              </span>
+            )}
+            {ch.has_comments && (
+              <span style={{ color: "#00ff88", display: "flex", alignItems: "center", gap: 4 }}>
+                <MessageCircle size={10} /> Комменты
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </Html>
@@ -1168,12 +1183,14 @@ export function ChannelMapPage() {
   const [categories, setCategories] = useState<string[]>([]);
   const [stats, setStats] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("");
   const [minMembers, setMinMembers] = useState(0);
+  const [maxMembers, setMaxMembers] = useState(0);
   const [hasCommentsOnly, setHasCommentsOnly] = useState(false);
 
   const [selectedChannel, setSelectedChannel] = useState<ChannelMapEntry | null>(null);
@@ -1190,20 +1207,37 @@ export function ChannelMapPage() {
   // Filter panel visibility
   const [showFilters, setShowFilters] = useState(false);
 
+  // Fullscreen toggle
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
+
+  // Debounced search query (300ms)
+  const debouncedQuery = useDebounce(query, 300);
+
   // Computed
   const byCategory = (stats.by_category as Record<string, number> | undefined) ?? {};
-  const totalIndexed = typeof stats.total === "number" ? stats.total : total;
-
-  const totalReach = useMemo(
-    () => items.reduce((sum, ch) => sum + (ch.member_count ?? 0), 0),
-    [items]
-  );
-
   const displayItems = useMemo(() => {
     let filtered = items;
     if (hasCommentsOnly) filtered = filtered.filter((ch) => ch.has_comments);
+    if (debouncedQuery.trim()) {
+      const q = debouncedQuery.trim().toLowerCase();
+      filtered = filtered.filter(
+        (ch) =>
+          (ch.title?.toLowerCase().includes(q) ?? false) ||
+          (ch.username?.toLowerCase().includes(q) ?? false)
+      );
+    }
+    if (selectedCategory) {
+      filtered = filtered.filter((ch) => ch.category === selectedCategory);
+    }
+    if (minMembers > 0) {
+      filtered = filtered.filter((ch) => (ch.member_count ?? 0) >= minMembers);
+    }
+    if (maxMembers > 0) {
+      filtered = filtered.filter((ch) => (ch.member_count ?? 0) <= maxMembers);
+    }
     return filtered;
-  }, [items, hasCommentsOnly]);
+  }, [items, hasCommentsOnly, debouncedQuery, selectedCategory, minMembers, maxMembers]);
 
   const allCategoryNames = useMemo(() => {
     const cats = new Set<string>();
@@ -1239,6 +1273,7 @@ export function ChannelMapPage() {
       setError(msg);
     } finally {
       setBusy(false);
+      setInitialLoading(false);
     }
   }, [accessToken]);
 
@@ -1281,6 +1316,7 @@ export function ChannelMapPage() {
     setSelectedCategory("");
     setSelectedLanguage("");
     setMinMembers(0);
+    setMaxMembers(0);
     setHasCommentsOnly(false);
     void loadAll();
   }, [loadAll]);
@@ -1358,6 +1394,68 @@ export function ChannelMapPage() {
     [accessToken, pendingChannels, modalVariant, campaigns]
   );
 
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't fire when typing in inputs
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if (e.key === "Escape") {
+        setSelectedChannel(null);
+        setShowFilters(false);
+      }
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        toggleFullscreen();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const el = canvasContainerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {});
+    } else {
+      document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {});
+    }
+  }, []);
+
+  // Listen for fullscreen changes (e.g., user pressing Escape in fullscreen)
+  useEffect(() => {
+    const handleChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleChange);
+    return () => document.removeEventListener("fullscreenchange", handleChange);
+  }, []);
+
+  // ── Computed stats for the summary bar ─────────────────────────────────
+
+  const filteredTotalSubs = useMemo(
+    () => displayItems.reduce((sum, ch) => sum + (ch.member_count ?? 0), 0),
+    [displayItems]
+  );
+
+  const filteredCategoryCount = useMemo(() => {
+    const cats = new Set<string>();
+    for (const ch of displayItems) {
+      if (ch.category) cats.add(ch.category);
+    }
+    return cats.size;
+  }, [displayItems]);
+
+  const avgEngagement = useMemo(() => {
+    const withEr = displayItems.filter((ch) => ch.engagement_rate != null);
+    if (withEr.length === 0) return null;
+    const sum = withEr.reduce((s, ch) => s + (ch.engagement_rate ?? 0), 0);
+    return sum / withEr.length;
+  }, [displayItems]);
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   const webglOk = useMemo(() => isWebGLAvailable(), []);
@@ -1376,53 +1474,22 @@ export function ChannelMapPage() {
     return [(b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2] as [number, number, number];
   }, [cityLayout]);
 
+  const hasActiveFilters = !!debouncedQuery.trim() || !!selectedCategory || minMembers > 0 || maxMembers > 0 || hasCommentsOnly;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0, height: "100vh", overflow: "hidden" }}>
 
-      {/* ── HUD top bar ─────────────────────────────────────────── */}
-      <div
-        style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "12px 20px", background: "rgba(8, 10, 12, 0.9)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-          backdropFilter: "blur(12px)", zIndex: 30,
-        }}
-      >
-        {/* Left: title + stats */}
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* ── Search & Filter bar ────────────────────────────────── */}
+      <div className="cmap-search-bar">
+        {/* Left: title */}
+        <div className="cmap-search-left">
+          <div className="cmap-title-group">
             <Building2 size={18} style={{ color: "#00ff88" }} />
-            <span style={{ fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: "'Geist Sans', system-ui" }}>
-              Channel City
-            </span>
+            <span className="cmap-title">Channel City</span>
           </div>
 
-          <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#666" }}>
-            <span>
-              <span style={{ color: "#00ff88", fontWeight: 700, fontFamily: "monospace" }}>
-                {displayItems.length}
-              </span>{" "}
-              каналов
-            </span>
-            <span>
-              <span style={{ color: "#4488ff", fontWeight: 700, fontFamily: "monospace" }}>
-                {allCategoryNames.length}
-              </span>{" "}
-              районов
-            </span>
-            <span>
-              <span style={{ color: "#ffaa00", fontWeight: 700, fontFamily: "monospace" }}>
-                {formatNumber(totalReach)}
-              </span>{" "}
-              подписчиков
-            </span>
-          </div>
-        </div>
-
-        {/* Right: controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {/* Search input */}
-          <div style={{ position: "relative" }}>
+          {/* Search input (debounced) */}
+          <div className="cmap-search-input-wrap">
             <Search
               size={13}
               style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#444" }}
@@ -1430,30 +1497,55 @@ export function ChannelMapPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void doSearch(); }}
               placeholder="Поиск каналов..."
-              style={{
-                width: 200, padding: "7px 12px 7px 32px", fontSize: 12,
-                background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                borderRadius: 8, color: "#ddd", outline: "none",
-                fontFamily: "'Geist Sans', system-ui",
-              }}
+              className="cmap-search-input"
             />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                className="cmap-search-clear"
+              >
+                <X size={11} />
+              </button>
+            )}
           </div>
 
+          {/* Category dropdown */}
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="cmap-category-select"
+          >
+            <option value="">Все категории</option>
+            {allCategoryNames.map((c) => (
+              <option key={c} value={c}>
+                {getCategoryMeta(c).icon} {c}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Right: controls */}
+        <div className="cmap-search-right">
           {/* Filter toggle */}
           <button
             type="button"
             onClick={() => setShowFilters(!showFilters)}
-            style={{
-              all: "unset", cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", borderRadius: 8, fontSize: 12,
-              background: showFilters ? "rgba(0,255,136,0.1)" : "rgba(255,255,255,0.04)",
-              border: showFilters ? "1px solid rgba(0,255,136,0.3)" : "1px solid rgba(255,255,255,0.08)",
-              color: showFilters ? "#00ff88" : "#888",
-            }}
+            className={`cmap-filter-btn ${showFilters ? "cmap-filter-btn--active" : ""}`}
           >
             <Filter size={13} /> Фильтры
+            {hasActiveFilters && <span className="cmap-filter-dot" />}
+          </button>
+
+          {/* Fullscreen toggle */}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="cmap-icon-btn"
+            title="Полный экран (F)"
+          >
+            <Maximize2 size={14} />
           </button>
 
           {/* Refresh */}
@@ -1461,13 +1553,60 @@ export function ChannelMapPage() {
             type="button"
             onClick={() => void loadAll()}
             disabled={busy}
-            style={{
-              all: "unset", cursor: "pointer", display: "flex", padding: 6,
-              borderRadius: 6, color: "#666",
-            }}
+            className="cmap-icon-btn"
           >
             <RotateCcw size={14} className={busy ? "spin" : ""} />
           </button>
+        </div>
+      </div>
+
+      {/* ── Stats summary bar ──────────────────────────────────── */}
+      <div className="cmap-stats-bar">
+        <div className="cmap-stat-item">
+          <Building2 size={11} />
+          <span className="cmap-stat-value" style={{ color: "#00ff88" }}>
+            {displayItems.length}
+          </span>
+          <span className="cmap-stat-label">каналов</span>
+        </div>
+        <div className="cmap-stats-sep" />
+        <div className="cmap-stat-item">
+          <Users size={11} />
+          <span className="cmap-stat-value" style={{ color: "#4488ff" }}>
+            {formatNumber(filteredTotalSubs)}
+          </span>
+          <span className="cmap-stat-label">подписчиков</span>
+        </div>
+        <div className="cmap-stats-sep" />
+        <div className="cmap-stat-item">
+          <Layers size={11} />
+          <span className="cmap-stat-value" style={{ color: "#ffaa00" }}>
+            {filteredCategoryCount}
+          </span>
+          <span className="cmap-stat-label">категорий</span>
+        </div>
+        <div className="cmap-stats-sep" />
+        <div className="cmap-stat-item">
+          <TrendingUp size={11} />
+          <span className="cmap-stat-value" style={{ color: avgEngagement != null ? erColor(avgEngagement) : "#555" }}>
+            {avgEngagement != null ? erLabel(avgEngagement) : "—"}
+          </span>
+          <span className="cmap-stat-label">сред. ER</span>
+        </div>
+        {hasActiveFilters && (
+          <>
+            <div className="cmap-stats-sep" />
+            <button
+              type="button"
+              onClick={handleReset}
+              className="cmap-stats-reset"
+            >
+              <RotateCcw size={10} /> Сбросить фильтры
+            </button>
+          </>
+        )}
+        <div className="cmap-stats-hint">
+          <kbd>Esc</kbd> закрыть &middot; <kbd>F</kbd> полный экран
         </div>
       </div>
 
@@ -1479,11 +1618,7 @@ export function ChannelMapPage() {
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            style={{
-              overflow: "hidden", background: "rgba(8, 10, 12, 0.95)",
-              borderBottom: "1px solid rgba(255,255,255,0.06)",
-              zIndex: 25,
-            }}
+            className="cmap-filter-panel"
           >
             <form
               onSubmit={handleSearch}
@@ -1492,38 +1627,13 @@ export function ChannelMapPage() {
                 padding: "12px 20px", alignItems: "flex-end",
               }}
             >
-              {/* Category */}
-              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontSize: 10, color: "#555" }}>Категория</span>
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  style={{
-                    padding: "6px 10px", fontSize: 12, borderRadius: 6,
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                    color: "#ddd", outline: "none",
-                  }}
-                >
-                  <option value="">Все категории</option>
-                  {allCategoryNames.map((c) => (
-                    <option key={c} value={c}>
-                      {getCategoryMeta(c).icon} {c}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
               {/* Language */}
               <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <span style={{ fontSize: 10, color: "#555" }}>Язык</span>
                 <select
                   value={selectedLanguage}
                   onChange={(e) => setSelectedLanguage(e.target.value)}
-                  style={{
-                    padding: "6px 10px", fontSize: 12, borderRadius: 6,
-                    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
-                    color: "#ddd", outline: "none",
-                  }}
+                  className="cmap-filter-select"
                 >
                   {LANGUAGE_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
@@ -1550,6 +1660,25 @@ export function ChannelMapPage() {
                 />
               </label>
 
+              {/* Max members */}
+              <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, color: "#555" }}>
+                  Макс. подписчиков:{" "}
+                  <span style={{ color: "#4488ff", fontFamily: "monospace" }}>
+                    {maxMembers > 0 ? formatNumber(maxMembers) : "—"}
+                  </span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1_000_000}
+                  step={5_000}
+                  value={maxMembers}
+                  onChange={(e) => setMaxMembers(Number(e.target.value))}
+                  style={{ width: 150, accentColor: "#4488ff" }}
+                />
+              </label>
+
               {/* Comments only */}
               <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: "#888", paddingBottom: 4 }}>
                 <input
@@ -1565,22 +1694,14 @@ export function ChannelMapPage() {
               <button
                 type="submit"
                 disabled={busy}
-                style={{
-                  padding: "6px 16px", borderRadius: 8, border: "none",
-                  background: "rgba(0,255,136,0.15)", color: "#00ff88",
-                  fontSize: 12, fontWeight: 600, cursor: "pointer",
-                }}
+                className="cmap-filter-submit"
               >
                 {busy ? "Ищем…" : "Найти"}
               </button>
               <button
                 type="button"
                 onClick={handleReset}
-                style={{
-                  padding: "6px 16px", borderRadius: 8,
-                  border: "1px solid rgba(255,255,255,0.08)", background: "transparent",
-                  color: "#666", fontSize: 12, cursor: "pointer",
-                }}
+                className="cmap-filter-reset"
               >
                 Сбросить
               </button>
@@ -1588,12 +1709,7 @@ export function ChannelMapPage() {
 
             {/* Category chips */}
             {allCategoryNames.length > 0 && (
-              <div
-                style={{
-                  display: "flex", flexWrap: "wrap", gap: 6,
-                  padding: "0 20px 12px",
-                }}
-              >
+              <div className="cmap-category-chips">
                 {allCategoryNames.map((cat) => {
                   const meta = getCategoryMeta(cat);
                   const isSelected = selectedCategory === cat;
@@ -1603,15 +1719,11 @@ export function ChannelMapPage() {
                       key={cat}
                       type="button"
                       onClick={() => setSelectedCategory(isSelected ? "" : cat)}
+                      className={`cmap-chip ${isSelected ? "cmap-chip--active" : ""}`}
                       style={{
-                        all: "unset", cursor: "pointer",
-                        display: "inline-flex", alignItems: "center", gap: 4,
-                        padding: "3px 10px", borderRadius: 20, fontSize: 11,
-                        background: isSelected ? `${meta.color}20` : "rgba(255,255,255,0.03)",
-                        border: `1px solid ${isSelected ? `${meta.color}44` : "rgba(255,255,255,0.06)"}`,
-                        color: isSelected ? meta.color : "#777",
-                        fontWeight: isSelected ? 600 : 400,
-                        transition: "all 150ms",
+                        borderColor: isSelected ? `${meta.color}44` : undefined,
+                        background: isSelected ? `${meta.color}20` : undefined,
+                        color: isSelected ? meta.color : undefined,
                       }}
                     >
                       {meta.icon} {cat}
@@ -1628,8 +1740,27 @@ export function ChannelMapPage() {
       </AnimatePresence>
 
       {/* ── 3D Canvas (full remaining height) ──────────────────── */}
-      <div style={{ flex: 1, position: "relative", background: "#050808" }}>
-        {busy && (
+      <div ref={canvasContainerRef} style={{ flex: 1, position: "relative", background: "#050808" }}>
+        {/* Loading skeleton — pulsing city silhouette */}
+        {initialLoading && (
+          <div className="cmap-loading-skeleton">
+            <div className="cmap-skeleton-city">
+              {Array.from({ length: 24 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="cmap-skeleton-building"
+                  style={{
+                    height: `${20 + Math.random() * 60}%`,
+                    animationDelay: `${i * 0.08}s`,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="cmap-skeleton-text">Загружаем город каналов...</div>
+          </div>
+        )}
+
+        {!initialLoading && busy && (
           <div
             style={{
               position: "absolute", inset: 0, zIndex: 20,
@@ -1645,7 +1776,7 @@ export function ChannelMapPage() {
                   animation: "spin 0.8s linear infinite", margin: "0 auto 12px",
                 }}
               />
-              <div style={{ color: "#00ff88", fontSize: 13 }}>Загружаем город каналов…</div>
+              <div style={{ color: "#00ff88", fontSize: 13 }}>Обновляем данные…</div>
             </div>
           </div>
         )}
