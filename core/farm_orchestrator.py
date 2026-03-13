@@ -427,8 +427,6 @@ class FarmOrchestrator:
 
         # Persist to DB
         try:
-            from storage.sqlite_db import async_session as _async_session
-
             async with _async_session() as sess:
                 async with sess.begin():
                     # Determine tenant_id from in-memory state or DB lookup.

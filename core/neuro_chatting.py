@@ -237,8 +237,8 @@ class NeuroChatting:
                     hour_bucket = (current_hour, bucket_count)
 
                 # Anti-detection inter-iteration sleep
-                delay_min = config.min_delay_seconds or 120
-                delay_max = config.max_delay_seconds or 600
+                delay_min = config.min_delay_seconds if config.min_delay_seconds is not None else 120
+                delay_max = config.max_delay_seconds if config.max_delay_seconds is not None else 600
                 sleep_for = random.uniform(
                     min(delay_min, delay_max),
                     max(delay_min, delay_max),
@@ -424,17 +424,19 @@ class NeuroChatting:
                         select(Account).where(Account.id == account_id)
                     )
                     account = result.scalar_one_or_none()
+                    if account is None:
+                        return None
+                    # Cache attributes before session closes to avoid detached instance
+                    phone = account.phone
+                    user_id = account.user_id
 
-            if account is None:
-                return None
-
-            client = self._session_mgr.get_client(account.phone)
+            client = self._session_mgr.get_client(phone)
             if client is not None and client.is_connected():
                 return client
 
             return await self._session_mgr.connect_client_for_action(
-                account.phone,
-                user_id=account.user_id,
+                phone,
+                user_id=user_id,
             )
         except Exception as exc:
             log.warning(

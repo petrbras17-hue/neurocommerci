@@ -77,7 +77,8 @@ def load_accounts() -> list[dict]:
 
 def load_proxy_for_account(index: int) -> dict | None:
     """Load a tested proxy for a given account index."""
-    lines = [l.strip() for l in open(PROXIES_FILE) if l.strip()]
+    with open(PROXIES_FILE) as f:
+        lines = [l.strip() for l in f if l.strip()]
     if not lines:
         return None
 

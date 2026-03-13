@@ -60,7 +60,8 @@ def load_proxies(count: int) -> list[dict]:
     """Load `count` unique proxies, pre-testing connectivity."""
     import subprocess
 
-    lines = [l.strip() for l in open(PROXIES_FILE) if l.strip()]
+    with open(PROXIES_FILE) as f:
+        lines = [l.strip() for l in f if l.strip()]
     if len(lines) < count:
         raise RuntimeError(f"Need {count} proxies, only {len(lines)} available")
 

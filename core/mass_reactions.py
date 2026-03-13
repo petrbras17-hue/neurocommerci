@@ -358,17 +358,19 @@ class MassReactionService:
                         select(Account).where(Account.id == account_id)
                     )
                     account = result.scalar_one_or_none()
+                    if account is None:
+                        return None
+                    # Cache attributes before session closes to avoid detached instance
+                    phone = account.phone
+                    user_id = account.user_id
 
-            if account is None:
-                return None
-
-            client = self._session_mgr.get_client(account.phone)
+            client = self._session_mgr.get_client(phone)
             if client is not None and client.is_connected():
                 return client
 
             return await self._session_mgr.connect_client_for_action(
-                account.phone,
-                user_id=account.user_id,
+                phone,
+                user_id=user_id,
             )
         except Exception as exc:
             log.warning(
