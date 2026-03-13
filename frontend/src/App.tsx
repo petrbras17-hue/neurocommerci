@@ -1,3 +1,4 @@
+import React, { Suspense } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "./layout/AppShell";
 import { useAuth } from "./auth";
@@ -9,7 +10,6 @@ import { AccountsPage } from "./pages/AccountsPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { ContextPage } from "./pages/ContextPage";
 import { CreativePage } from "./pages/CreativePage";
-import { ChannelMapPage } from "./pages/ChannelMapPage";
 import { CampaignsPage } from "./pages/CampaignsPage";
 import { CampaignDetailPage } from "./pages/CampaignDetailPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
@@ -31,6 +31,10 @@ import { AdminPage } from "./pages/AdminPage";
 import { PlatformHealthPage } from "./pages/PlatformHealthPage";
 import { CommentDashboardPage } from "./pages/CommentDashboardPage";
 import { SessionTopologyPage } from "./pages/SessionTopologyPage";
+
+const ChannelMapPage = React.lazy(() =>
+  import("./pages/ChannelMapPage").then((m) => ({ default: m.ChannelMapPage }))
+);
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -70,7 +74,7 @@ export default function App() {
             <Route path="/dialogs" element={<DialogsPage />} />
             <Route path="/user-parser" element={<UserParserPage />} />
             <Route path="/folders" element={<FoldersPage />} />
-            <Route path="/channel-map" element={<ChannelMapPage />} />
+            <Route path="/channel-map" element={<Suspense fallback={<div className="loading-screen">Загружаем Channel Map…</div>}><ChannelMapPage /></Suspense>} />
             <Route path="/parser" element={<ParserPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
