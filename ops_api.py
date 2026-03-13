@@ -5699,6 +5699,8 @@ def _serialize_channel_map_entry(entry: ChannelMapEntry) -> dict[str, Any]:
         "post_frequency_daily": getattr(entry, "post_frequency_daily", None),
         "verified": getattr(entry, "verified", False),
         "source": getattr(entry, "source", None),
+        "lat": getattr(entry, "lat", None),
+        "lng": getattr(entry, "lng", None),
         "last_indexed_at": entry.last_indexed_at.isoformat() if entry.last_indexed_at else None,
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
@@ -5818,6 +5820,44 @@ async def channel_map_list(
     q = q.order_by(ChannelMapEntry.member_count.desc()).offset(offset).limit(limit)
     rows = (await session.execute(q)).scalars().all()
     return {"items": [_serialize_channel_map_entry(r) for r in rows], "total": total, "limit": limit, "offset": offset}
+
+
+@app.get("/v1/channel-map/geo")
+async def channel_map_geo(
+    limit: int = Query(50000, ge=1, le=1000000),
+    category: str | None = Query(None),
+    tenant_context=Depends(require_jwt_tenant),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Compact geo endpoint for globe visualization — returns only coordinates + minimal data."""
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(
+        ChannelMapEntry.id,
+        ChannelMapEntry.lat,
+        ChannelMapEntry.lng,
+        ChannelMapEntry.category,
+        ChannelMapEntry.member_count,
+        ChannelMapEntry.title,
+        ChannelMapEntry.username,
+        ChannelMapEntry.language,
+        ChannelMapEntry.has_comments,
+    ).where(tf).where(ChannelMapEntry.lat.isnot(None)).where(ChannelMapEntry.lng.isnot(None))
+    if category:
+        q = q.where(ChannelMapEntry.category == category)
+    q = q.order_by(ChannelMapEntry.member_count.desc()).limit(limit)
+    rows = (await session.execute(q)).fetchall()
+    return {
+        "points": [
+            {
+                "id": r.id, "lat": r.lat, "lng": r.lng,
+                "cat": r.category, "m": r.member_count,
+                "t": r.title, "u": r.username,
+                "lang": r.language, "c": r.has_comments,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
 
 
 @app.post("/v1/channel-map/search")

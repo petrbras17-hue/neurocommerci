@@ -1326,6 +1326,8 @@ class ChannelMapEntry(Base):
     last_refreshed_at = Column(DateTime, nullable=True)  # last time live data was fetched
     topic_tags = Column(JSONType, nullable=True)         # AI-generated topic tags list[str]
     spam_score = Column(Float, nullable=True)            # AI spam suitability score 0-10
+    lat = Column(Float, nullable=True)                   # Latitude for globe placement
+    lng = Column(Float, nullable=True)                   # Longitude for globe placement
     created_at = Column(DateTime, default=utcnow)
 
 
