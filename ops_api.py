@@ -5826,7 +5826,7 @@ async def channel_map_list(
 async def channel_map_geo(
     limit: int = Query(50000, ge=1, le=1000000),
     category: str | None = Query(None),
-    tenant_context=Depends(require_jwt_tenant),
+    tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(get_async_session),
 ):
     """Compact geo endpoint for globe visualization — returns only coordinates + minimal data."""
