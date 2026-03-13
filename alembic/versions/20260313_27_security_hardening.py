@@ -100,9 +100,10 @@ def upgrade() -> None:
             f"WITH CHECK ({clause})"
         )
 
-    # 3. Add missing indexes
+    # 3. Add missing indexes (idempotent)
     for idx_name, table, columns in _MISSING_INDEXES:
-        op.create_index(idx_name, table, columns)
+        cols = ", ".join(columns)
+        op.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({cols})")
 
     # 4. Add missing unique constraints (with IF NOT EXISTS via try/except at SQL level)
     for uq_name, table, columns in _MISSING_UNIQUES:

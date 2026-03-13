@@ -15,34 +15,49 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Add rotation strategy columns to proxies
-    op.add_column("proxies", sa.Column("rotation_strategy", sa.String(20), server_default="sticky", nullable=True))
-    op.add_column("proxies", sa.Column("auto_rotation", sa.Boolean(), server_default="false", nullable=True))
-
-    # 2. Create account_health_history table
-    op.create_table(
-        "account_health_history",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("tenant_id", sa.Integer(), sa.ForeignKey("tenants.id"), nullable=False),
-        sa.Column("account_id", sa.Integer(), sa.ForeignKey("accounts.id"), nullable=False),
-        sa.Column("snapshot_date", sa.Date(), nullable=False),
-        sa.Column("health_score", sa.Integer(), server_default="100", nullable=True),
-        sa.Column("survivability_score", sa.Integer(), server_default="100", nullable=True),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("tenant_id", "account_id", "snapshot_date", name="uq_health_history_tenant_account_date"),
+    # 1. Add rotation strategy columns to proxies (idempotent)
+    op.execute(
+        "DO $$ BEGIN "
+        "ALTER TABLE proxies ADD COLUMN rotation_strategy VARCHAR(20) DEFAULT 'sticky'; "
+        "EXCEPTION WHEN duplicate_column THEN NULL; "
+        "END $$"
     )
-    op.create_index("ix_account_health_history_tenant_id", "account_health_history", ["tenant_id"])
-    op.create_index("ix_account_health_history_account_id", "account_health_history", ["account_id"])
-    op.create_index("ix_account_health_history_snapshot_date", "account_health_history", ["snapshot_date"])
+    op.execute(
+        "DO $$ BEGIN "
+        "ALTER TABLE proxies ADD COLUMN auto_rotation BOOLEAN DEFAULT false; "
+        "EXCEPTION WHEN duplicate_column THEN NULL; "
+        "END $$"
+    )
+
+    # 2. Create account_health_history table (idempotent — may exist from prior run)
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS account_health_history (
+            id SERIAL PRIMARY KEY,
+            tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+            account_id INTEGER NOT NULL REFERENCES accounts(id),
+            snapshot_date DATE NOT NULL,
+            health_score INTEGER DEFAULT 100,
+            survivability_score INTEGER DEFAULT 100,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT uq_health_history_tenant_account_date UNIQUE (tenant_id, account_id, snapshot_date)
+        )
+        """
+    )
+    op.execute("CREATE INDEX IF NOT EXISTS ix_account_health_history_tenant_id ON account_health_history (tenant_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_account_health_history_account_id ON account_health_history (account_id)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_account_health_history_snapshot_date ON account_health_history (snapshot_date)")
 
     # 3. Enable RLS on account_health_history
     op.execute("ALTER TABLE account_health_history ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE account_health_history FORCE ROW LEVEL SECURITY")
     op.execute(
+        "DO $$ BEGIN "
         "CREATE POLICY tenant_isolation ON account_health_history "
         "USING (tenant_id = current_setting('app.current_tenant_id', true)::integer) "
-        "WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::integer)"
+        "WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::integer); "
+        "EXCEPTION WHEN duplicate_object THEN NULL; "
+        "END $$"
     )
 
 
