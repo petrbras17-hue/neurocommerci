@@ -835,10 +835,10 @@ async def _record_budget_counter(
             )
             session.add(counter)
             await session.flush()
-        counter.request_count = int(counter.request_count or 0) + 1
-        counter.prompt_tokens = int(counter.prompt_tokens or 0) + int(prompt_tokens or 0)
-        counter.completion_tokens = int(counter.completion_tokens or 0) + int(completion_tokens or 0)
-        counter.estimated_cost_usd = round(float(counter.estimated_cost_usd or 0.0) + float(estimated_cost_usd or 0.0), 6)
+        counter.request_count = (counter.request_count if counter.request_count is not None else 0) + 1
+        counter.prompt_tokens = (counter.prompt_tokens if counter.prompt_tokens is not None else 0) + (prompt_tokens if prompt_tokens is not None else 0)
+        counter.completion_tokens = (counter.completion_tokens if counter.completion_tokens is not None else 0) + (completion_tokens if completion_tokens is not None else 0)
+        counter.estimated_cost_usd = round((counter.estimated_cost_usd if counter.estimated_cost_usd is not None else 0.0) + (estimated_cost_usd if estimated_cost_usd is not None else 0.0), 6)
         counter.updated_at = now
 
 

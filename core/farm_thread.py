@@ -1105,7 +1105,7 @@ class FarmThread:
             async with _async_session() as sess:
                 async with sess.begin():
                     await apply_session_rls_context(sess, tenant_id=self.tenant_id)
-                    lifecycle = AccountLifecycle(sess)
+                    lifecycle = AccountLifecycle(sess, tenant_id=self.tenant_id)
                     await lifecycle.on_flood_wait(self.account_id, seconds=seconds)
         except Exception as exc:
             log.debug(
@@ -1133,7 +1133,7 @@ class FarmThread:
             async with _async_session() as sess:
                 async with sess.begin():
                     await apply_session_rls_context(sess, tenant_id=self.tenant_id)
-                    lifecycle = AccountLifecycle(sess)
+                    lifecycle = AccountLifecycle(sess, tenant_id=self.tenant_id)
                     await lifecycle.on_session_dead(self.account_id)
         except Exception as exc:
             log.debug(

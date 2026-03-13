@@ -486,6 +486,9 @@ async def register_with_email(
         raise EmailAuthError("invalid_email")
     if not password or len(password) < 8:
         raise EmailAuthError("password_too_short")
+    # bcrypt truncates at 72 bytes; cap length to prevent CPU-intensive hashing DoS
+    if len(password) > 128:
+        raise EmailAuthError("password_too_long")
 
     normalized_email = email.strip().lower()
     await apply_session_rls_context(session, bootstrap=True)
@@ -553,7 +556,12 @@ async def login_with_email(
     user_agent: str | None = None,
     ip_address: str | None = None,
 ) -> WebAuthBundle:
+    if not email or not str(email).strip():
+        raise EmailAuthError("invalid_credentials")
     normalized_email = email.strip().lower()
+    # bcrypt DoS guard: reject overly long passwords
+    if password and len(password) > 128:
+        raise EmailAuthError("invalid_credentials")
     await apply_session_rls_context(session, bootstrap=True)
 
     result = await session.execute(
@@ -1055,6 +1063,7 @@ async def get_team_payload(
             TeamMember.workspace_id == workspace_id,
         )
         .order_by(TeamMember.id.asc())
+        .limit(500)
     )
     items = []
     for membership, user in result.all():

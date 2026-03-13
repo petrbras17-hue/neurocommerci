@@ -1145,7 +1145,7 @@ class WarmupEngine:
             async with async_session() as sess:
                 async with sess.begin():
                     await apply_session_rls_context(sess, tenant_id=tenant_id)
-                    lifecycle = AccountLifecycle(sess)
+                    lifecycle = AccountLifecycle(sess, tenant_id=tenant_id)
                     if event == "warmup_complete":
                         await lifecycle.on_warmup_complete(account_id)
                     elif event == "flood_wait":
