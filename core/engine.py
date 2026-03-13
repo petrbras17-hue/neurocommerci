@@ -37,6 +37,13 @@ from utils.notifier import notifier
 from utils.logger import log
 
 
+def _on_engine_task_done(t: asyncio.Task) -> None:
+    if not t.cancelled():
+        exc = t.exception()
+        if exc:
+            log.error("engine task %s failed: %s", t.get_name(), exc, exc_info=exc)
+
+
 class CommentingEngine:
     """
     Центральный движок: запускает и координирует все подсистемы.
@@ -136,6 +143,8 @@ class CommentingEngine:
                     ])
                     await self.health_monitor.start()
                     await self.activity_sim.start()
+            for t in self._tasks:
+                t.add_done_callback(_on_engine_task_done)
 
             # Флаг только после успешного создания задач
             self._running = True
@@ -193,11 +202,15 @@ class CommentingEngine:
                     ),
                 })
 
-                # Session survival modules (start once, shared across users)
-                if not self.health_monitor.is_running:
-                    await self.health_monitor.start()
-                if not self.activity_sim.is_running:
-                    await self.activity_sim.start()
+        for t in self._user_tasks[user_id].values():
+            t.add_done_callback(_on_engine_task_done)
+
+        if not settings.HUMAN_GATED_COMMENTS and not settings.DISTRIBUTED_QUEUE_MODE:
+            # Session survival modules (start once, shared across users)
+            if not self.health_monitor.is_running:
+                await self.health_monitor.start()
+            if not self.activity_sim.is_running:
+                await self.activity_sim.start()
 
         # Set global running flag if any user is running
         self._running = True
