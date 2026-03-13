@@ -156,6 +156,11 @@ class SpamBotAutoAppeal:
             return
         self._running = True
         self._task = asyncio.create_task(self._loop(), name="spambot_auto_appeal")
+        def _on_appeal_done(t: asyncio.Task) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("spambot_auto_appeal task failed: %s", exc, exc_info=exc)
+        self._task.add_done_callback(_on_appeal_done)
         log.info("SpamBot auto-appeal loop started")
 
     async def stop(self):
@@ -205,7 +210,7 @@ class SpamBotAutoAppeal:
 
             async with async_session() as session:
                 result = await session.execute(
-                    select(Account.phone, Account.status, Account.health_status).order_by(Account.id.asc())
+                    select(Account.phone, Account.status, Account.health_status).order_by(Account.id.asc()).limit(10000)
                 )
                 rows = result.all()
 

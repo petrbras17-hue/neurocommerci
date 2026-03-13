@@ -257,6 +257,11 @@ class CampaignManager:
                 self._campaign_loop(campaign_id, tenant_id),
                 name=f"campaign_{campaign_id}",
             )
+            def _on_campaign_done(t: asyncio.Task, cid: int = campaign_id) -> None:
+                exc = t.exception() if not t.cancelled() else None
+                if exc:
+                    log.error("campaign %s loop failed: %s", cid, exc, exc_info=exc)
+            task.add_done_callback(_on_campaign_done)
             self._running_tasks[campaign_id] = task
             log.info("start_campaign: background loop started for campaign %s", campaign_id)
 

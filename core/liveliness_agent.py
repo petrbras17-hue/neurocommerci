@@ -99,6 +99,11 @@ class AccountLifeLoop:
         """Start the life loop as an asyncio task."""
         self._running = True
         self._task = asyncio.create_task(self._loop())
+        def _on_life_done(t: asyncio.Task, phone: str = self.phone) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("liveliness loop for %s failed: %s", phone, exc, exc_info=exc)
+        self._task.add_done_callback(_on_life_done)
         log.info("liveliness: started loop for %s", self.phone)
 
     async def stop(self) -> None:
@@ -450,7 +455,7 @@ class LifelinessAgent:
             result = await session.execute(
                 select(Account).where(
                     Account.status.in_(["active", "healthy", "connected"]),
-                )
+                ).limit(10000)
             )
             accounts = list(result.scalars().all())
 

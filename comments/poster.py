@@ -142,6 +142,7 @@ class CommentPoster:
         self._emoji_swap_enabled = bool(settings.ENABLE_EMOJI_SWAP and not settings.HUMAN_GATED_COMMENTS)
         self._stats = {"sent": 0, "failed": 0, "skipped": 0, "swapped": 0}
         self._pending_swaps: list[asyncio.Task] = []
+        self._pending_swaps_lock = asyncio.Lock()
 
     @property
     def emoji_swap_enabled(self) -> bool:
@@ -556,9 +557,14 @@ class CommentPoster:
                     scenario=scenario,
                 )
             )
-            # Очистить завершённые swap-задачи перед добавлением новой
-            self._pending_swaps = [t for t in self._pending_swaps if not t.done()]
-            self._pending_swaps.append(swap_task)
+            def _on_swap_done(t: asyncio.Task, phone: str = account_phone) -> None:
+                if not t.cancelled() and t.exception() is not None:
+                    log.error("swap task for %s failed: %s", phone, t.exception())
+            swap_task.add_done_callback(_on_swap_done)
+            # Очистить завершённые swap-задачи перед добавлением новой (under lock for concurrency safety)
+            async with self._pending_swaps_lock:
+                self._pending_swaps = [t for t in self._pending_swaps if not t.done()]
+                self._pending_swaps.append(swap_task)
 
             # Предварительно сохраняем как pending_swap (обновится на sent в _do_swap)
             await self._save_comment(
@@ -662,7 +668,7 @@ class CommentPoster:
                 if not account_id:
                     return
 
-                if not post_db_id:
+                if post_db_id is None:
                     log.debug("post_db_id отсутствует, комментарий не сохранён в БД")
                     return
 
@@ -677,7 +683,7 @@ class CommentPoster:
                 )
                 session.add(comment)
 
-                if post_db_id and status == "sent":
+                if post_db_id is not None and status == "sent":
                     await session.execute(
                         update(Post)
                         .where(Post.id == post_db_id)
@@ -690,7 +696,7 @@ class CommentPoster:
 
     async def _update_comment_status(self, post_db_id: Optional[int], status: str):
         """Обновить статус комментария (для swap: pending_swap → sent/swap_failed)."""
-        if not post_db_id:
+        if post_db_id is None:
             return
         try:
             async with async_session() as session:
@@ -721,7 +727,8 @@ class CommentPoster:
     async def shutdown(self):
         """Graceful shutdown: дождаться завершения всех pending swap задач."""
         self._running = False
-        pending = [t for t in self._pending_swaps if not t.done()]
+        async with self._pending_swaps_lock:
+            pending = [t for t in self._pending_swaps if not t.done()]
         if pending:
             log.info(f"Ожидание завершения {len(pending)} swap задач...")
             results = await asyncio.gather(*pending, return_exceptions=True)
@@ -729,7 +736,8 @@ class CommentPoster:
                 if isinstance(result, Exception):
                     log.warning(f"Swap задача {i} завершилась с ошибкой: {result}")
             log.info("Все swap задачи завершены")
-        self._pending_swaps.clear()
+        async with self._pending_swaps_lock:
+            self._pending_swaps.clear()
 
     def get_stats(self) -> dict:
         queue_size = 0

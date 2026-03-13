@@ -107,6 +107,11 @@ class NeuroChatting:
             self._chat_loop(config_id=config_id, tenant_id=tenant_id, stop_event=stop_event),
             name=f"neuro-chatting-cfg{config_id}-tenant{tenant_id}",
         )
+        def _on_chat_done(t: asyncio.Task, k: str = key) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("neuro_chatting %s failed: %s", k, exc, exc_info=exc)
+        task.add_done_callback(_on_chat_done)
         self._tasks[key] = task
 
         await db_session.execute(

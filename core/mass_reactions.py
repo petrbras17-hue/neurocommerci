@@ -115,6 +115,11 @@ class MassReactionService:
             self._execute_job(job_id=job_id, tenant_id=tenant_id),
             name=f"mass-reactions-job{job_id}",
         )
+        def _on_done(t: asyncio.Task, jid: int = job_id) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("mass-reactions job %s failed: %s", jid, exc, exc_info=exc)
+        task.add_done_callback(_on_done)
         self._tasks[job_id] = task
 
     async def list_jobs(

@@ -118,6 +118,11 @@ class ChannelMonitor:
             await task_queue.connect()
         self._running = True
         self._task = asyncio.create_task(self._monitor_loop())
+        def _on_monitor_done(t: asyncio.Task) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("channel_monitor task failed: %s", exc, exc_info=exc)
+        self._task.add_done_callback(_on_monitor_done)
         log.info("Мониторинг каналов запущен")
 
     async def stop(self):
@@ -386,7 +391,7 @@ class ChannelMonitor:
                 query = query.where(Account.user_id == user_id)
             if phones_subset is not None:
                 query = query.where(Account.phone.in_(phones_subset))
-            result = await session.execute(query.order_by(Account.last_active_at.desc(), Account.id.asc()))
+            result = await session.execute(query.order_by(Account.last_active_at.desc(), Account.id.asc()).limit(10000))
             return list(result.scalars().all())
 
     async def _connect_monitor_account(self, account: Account) -> Optional[TelegramClient]:

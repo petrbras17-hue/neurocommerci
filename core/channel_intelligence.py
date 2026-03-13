@@ -1255,16 +1255,29 @@ async def classify_channel_topics(
         description=description[:1000],
     )
 
-    result = await route_ai_task(
-        session,
-        task_type="channel_classification",
-        prompt=prompt,
-        system_instruction=_CLASSIFICATION_SYSTEM,
-        tenant_id=tenant_id,
-        max_output_tokens=400,
-        temperature=0.2,
-        surface="channel_map",
-    )
+    try:
+        result = await route_ai_task(
+            session,
+            task_type="channel_classification",
+            prompt=prompt,
+            system_instruction=_CLASSIFICATION_SYSTEM,
+            tenant_id=tenant_id,
+            max_output_tokens=400,
+            temperature=0.2,
+            surface="channel_map",
+        )
+    except Exception as exc:
+        log.error("classify_channel_topics: AI call failed for channel_id=%s: %s", channel_id, exc)
+        return {
+            "main_category": None,
+            "subcategory": None,
+            "micro_topics": [],
+            "language": None,
+            "audience_type": None,
+            "channel_id": channel_id,
+            "skipped": True,
+            "reason": "ai_exception",
+        }
 
     if not result.ok or not result.parsed:
         return {

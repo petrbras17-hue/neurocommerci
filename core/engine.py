@@ -411,8 +411,8 @@ class CommentingEngine:
                 )
                 if user_id is not None:
                     query = query.where(Account.user_id == user_id)
-                result = await session.execute(query)
-                return [(phone, days or 0) for phone, days in result.all()]
+                result = await session.execute(query.order_by(Account.last_active_at.asc()).limit(500))
+                return [(phone, days if days is not None else 0) for phone, days in result.all()]
         except Exception as exc:
             log.warning(f"Ошибка загрузки warmup аккаунтов: {exc}")
             return []

@@ -34,6 +34,11 @@ class ActivitySimulator:
         if self._task and not self._task.done():
             return
         self._task = asyncio.create_task(self._simulate_loop(), name="activity_simulator")
+        def _on_simulator_done(t: asyncio.Task) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("activity_simulator task failed: %s", exc, exc_info=exc)
+        self._task.add_done_callback(_on_simulator_done)
         log.info("ActivitySimulator запущен")
 
     async def stop(self) -> None:

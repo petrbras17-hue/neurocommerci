@@ -48,6 +48,11 @@ class SessionHealthMonitor:
         if self._task and not self._task.done():
             return
         self._task = asyncio.create_task(self._monitor_loop(), name="session_health_monitor")
+        def _on_health_done(t: asyncio.Task) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("session_health_monitor task failed: %s", exc, exc_info=exc)
+        self._task.add_done_callback(_on_health_done)
         log.info("SessionHealthMonitor запущен")
 
     async def stop(self) -> None:

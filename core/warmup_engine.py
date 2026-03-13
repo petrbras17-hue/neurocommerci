@@ -213,6 +213,11 @@ class WarmupEngine:
                 ),
                 name=f"warmup-cfg{config_id}-acc{account_id}",
             )
+            def _on_warmup_done(t: asyncio.Task, cid: int = config_id, aid: int = account_id) -> None:
+                exc = t.exception() if not t.cancelled() else None
+                if exc:
+                    log.error("warmup cfg=%s acc=%s failed: %s", cid, aid, exc, exc_info=exc)
+            task.add_done_callback(_on_warmup_done)
             self._tasks[config_id][account_id] = task
 
         # Mark config as running.

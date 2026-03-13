@@ -159,9 +159,15 @@ class SchedulerService:
             flag_name = f"digest_last_daily:{user_id if user_id is not None else 'default'}"
             if await redis_state.get_runtime_flag(flag_name, "") == today:
                 continue
-            report = await send_digest_summary(user_id=user_id)
-            if report.get("ok"):
-                await redis_state.set_runtime_flag(flag_name, today)
+            try:
+                report = await send_digest_summary(user_id=user_id)
+            except Exception as exc:
+                log.error("digest send exception for user_id=%s: %s", user_id, exc)
+                report = {"ok": False}
+            # Always mark attempted to prevent repeat fires on failure
+            await redis_state.set_runtime_flag(flag_name, today)
+            if not report.get("ok"):
+                log.warning("digest send failed for user_id=%s: %s", user_id, report)
 
     async def stop(self):
         if not self._running:

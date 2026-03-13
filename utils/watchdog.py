@@ -40,6 +40,11 @@ class Watchdog:
             return
         self._running = True
         self._task = asyncio.create_task(self._loop())
+        def _on_watchdog_done(t: asyncio.Task) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("watchdog task failed: %s", exc, exc_info=exc)
+        self._task.add_done_callback(_on_watchdog_done)
         log.info("Watchdog запущен")
 
     async def stop(self):
