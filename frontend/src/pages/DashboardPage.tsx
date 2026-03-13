@@ -246,7 +246,7 @@ export function DashboardPage() {
       {/* ── 1. Hero Welcome ──────────────────────────────────────────────── */}
       <motion.div className="dash-hero" variants={itemVariants}>
         <h1 className="dash-hero-greeting">
-          {`\u0414\u043e\u0431\u0440\u043e \u043f\u043e\u0436\u0430\u043b\u043e\u0432\u0430\u0442\u044c, ${userName}`}
+          {`Добро пожаловать, ${userName}`}
         </h1>
         <span className="dash-hero-date">{formatDate()}</span>
       </motion.div>
@@ -346,17 +346,17 @@ export function DashboardPage() {
                         : "dash-event-icon--green"
                   }`}
                 >
-                  {info.fallback_used ? "F" : info.repair_applied ? "R" : "\u2713"}
+                  {info.fallback_used ? "F" : info.repair_applied ? "R" : "✓"}
                 </div>
                 <div className="dash-event-body">
                   <p className="dash-event-text">
                     {task.replace(/_/g, " ")}
-                    {" \u2014 "}
+                    {" — "}
                     {info.provider ?? "unknown"} / {info.model?.split("/").pop() ?? "unknown"}
                   </p>
                   <span className="dash-event-time">
                     score {info.quality_score.toFixed(2)}
-                    {info.latency_ms ? ` \u00B7 ${info.latency_ms}ms` : ""}
+                    {info.latency_ms ? ` · ${info.latency_ms}ms` : ""}
                   </span>
                 </div>
               </div>
@@ -444,30 +444,30 @@ export function DashboardPage() {
       {/* ── 4. Quick Actions ─────────────────────────────────────────────── */}
       <motion.div className="dash-actions" variants={itemVariants}>
         <button className="dash-action" onClick={() => navigate("/accounts")}>
-          <div className="dash-action-icon">{"\u2191"}</div>
+          <div className="dash-action-icon">{"↑"}</div>
           <span className="dash-action-title">Загрузить аккаунты</span>
           <span className="dash-action-desc">
             Загрузите .session + .json пары и привяжите прокси для безопасного старта.
           </span>
-          <span className="dash-action-arrow">{"\u2192"}</span>
+          <span className="dash-action-arrow">{"→"}</span>
         </button>
 
         <button className="dash-action" onClick={() => navigate("/assistant")}>
-          <div className="dash-action-icon">{"\u2726"}</div>
+          <div className="dash-action-icon">{"✦"}</div>
           <span className="dash-action-title">Запустить ассистент</span>
           <span className="dash-action-desc">
             AI-ассистент поможет собрать бриф и подготовить бизнес-контекст.
           </span>
-          <span className="dash-action-arrow">{"\u2192"}</span>
+          <span className="dash-action-arrow">{"→"}</span>
         </button>
 
         <button className="dash-action" onClick={() => navigate("/creative")}>
-          <div className="dash-action-icon">{"\u2606"}</div>
+          <div className="dash-action-icon">{"☆"}</div>
           <span className="dash-action-title">Генерировать креатив</span>
           <span className="dash-action-desc">
             Создайте AI-черновики контента на основе подтверждённого контекста.
           </span>
-          <span className="dash-action-arrow">{"\u2192"}</span>
+          <span className="dash-action-arrow">{"→"}</span>
         </button>
       </motion.div>
     </motion.div>

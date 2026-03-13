@@ -187,7 +187,7 @@ export function AssistantPage() {
               <div style={qualitySepStyle} />
               <span style={{ ...qualityLabelStyle, textTransform: "none" }}>{task}</span>
               <span style={{ ...qualityValueStyle, fontSize: 11 }}>
-                {item.provider || "\u2014"}/{item.model || "\u2014"} s{item.quality_score ?? 0}
+                {item.provider || "—"}/{item.model || "—"} s{item.quality_score ?? 0}
                 {item.fallback_used ? " fb" : ""}
                 {item.repair_applied ? " rp" : ""}
                 {item.latency_ms ? ` ${item.latency_ms}ms` : ""}
@@ -268,7 +268,7 @@ export function AssistantPage() {
           {jobState && (
             <span style={{ fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace", fontSize: 12, color: "var(--muted)" }}>
               job #{jobState.id} {jobState.status}
-              {jobState.error_code ? ` \u00b7 ${jobState.error_code}` : ""}
+              {jobState.error_code ? ` · ${jobState.error_code}` : ""}
             </span>
           )}
         </div>
@@ -317,7 +317,7 @@ export function AssistantPage() {
                         {item.role === "assistant" ? "> Assistant" : "You"}
                       </strong>
                       <span style={{ color: "var(--muted)", fontSize: 11, fontFamily: "\"JetBrains Mono Variable\", \"JetBrains Mono\", monospace" }}>
-                        {item.created_at || "\u2014"}
+                        {item.created_at || "—"}
                       </span>
                     </div>
                     <p style={{
