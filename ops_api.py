@@ -1259,7 +1259,7 @@ def _decode_jwt(token: str) -> TenantContext:
 
 async def require_internal_token(request: Request) -> None:
     token = _bearer_token(request)
-    if not hmac.compare_digest(token or "", settings.OPS_API_TOKEN or ""):
+    if not token or not settings.OPS_API_TOKEN or not hmac.compare_digest(token, settings.OPS_API_TOKEN):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_internal_token")
 
 
@@ -1270,8 +1270,8 @@ async def require_admin_auth(request: Request) -> None:
     (OPS_API_TOKEN) to both reach the /v1/admin/* endpoints.
     """
     token = _bearer_token(request)
-    # Fast path: internal ops token
-    if hmac.compare_digest(token or "", settings.OPS_API_TOKEN or ""):
+    # Fast path: internal ops token (guard against empty-token bypass)
+    if token and settings.OPS_API_TOKEN and hmac.compare_digest(token, settings.OPS_API_TOKEN):
         return
     # Slow path: valid JWT with elevated role
     try:
