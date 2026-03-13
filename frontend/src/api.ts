@@ -30,29 +30,48 @@ export async function apiFetch<T>(path: string, options: ApiOptions = {}): Promi
     headers.Authorization = `Bearer ${options.accessToken}`;
   }
 
-  const response = await fetch(path, {
-    method: options.method || "GET",
-    headers,
-    body,
-    credentials: "include"
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: options.method || "GET",
+      headers,
+      body,
+      credentials: "include"
+    });
+  } catch (networkErr) {
+    const msg = networkErr instanceof Error ? networkErr.message : String(networkErr);
+    throw new Error(`Сетевая ошибка: ${msg}`);
+  }
 
   if (!response.ok) {
-    let detail = `http_${response.status}`;
+    if (response.status === 401) {
+      throw new Error("Сессия истекла. Пожалуйста, войдите снова.");
+    }
+    let detail = `Ошибка сервера (${response.status})`;
     try {
       const payload = await response.json();
       detail = payload.detail || payload.error || detail;
     } catch {
-      // Keep default detail.
+      try {
+        const text = await response.text();
+        if (text) detail = text;
+      } catch {
+        // Keep default detail.
+      }
     }
     throw new Error(detail);
   }
 
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    return (await response.json()) as T;
+  if (!contentType.includes("application/json")) {
+    return (await response.text()) as T;
   }
-  return (await response.text()) as T;
+
+  const text = await response.text();
+  if (!text) {
+    return [] as unknown as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 // ─── Farm Orchestrator API ───────────────────────────────────────────────────

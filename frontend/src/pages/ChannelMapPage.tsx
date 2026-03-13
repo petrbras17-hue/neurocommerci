@@ -5,7 +5,9 @@ import {
   useCallback,
   useRef,
   Suspense,
+  Component,
 } from "react";
+import type { ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -125,6 +127,38 @@ function latLngToVec3(
     radius * Math.cos(phi),
     radius * Math.sin(phi) * Math.sin(theta),
   ];
+}
+
+// ── WebGL detection ───────────────────────────────────────────────────────────
+
+function isWebGLAvailable(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    return !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext("webgl") || canvas.getContext("experimental-webgl"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+// ── WebGL error boundary ──────────────────────────────────────────────────────
+
+class WebGLErrorBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("WebGL/Three.js error:", error.message);
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
 }
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -1322,83 +1356,126 @@ function GlobeView({
   filterCategory,
   filterQuery,
   onSelect,
+  onFallback,
 }: {
   channels: ChannelMapEntry[];
   filterCategory: string;
   filterQuery: string;
   onSelect: (ch: ChannelMapEntry | null) => void;
+  onFallback?: () => void;
 }) {
   const [hoveredChannel, setHoveredChannel] = useState<ChannelMapEntry | null>(null);
 
+  const globeFallback = (
+    <div
+      style={{
+        width: "100%",
+        height: 600,
+        background: "#0a0a0b",
+        borderRadius: 12,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 16,
+      }}
+    >
+      <p style={{ color: "#ff8800", margin: 0, fontSize: 14 }}>
+        3D режим недоступен в этом браузере
+      </p>
+      {onFallback && (
+        <button
+          type="button"
+          onClick={onFallback}
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            padding: "8px 20px",
+            borderRadius: 8,
+            background: "rgba(0,255,136,0.1)",
+            border: "1px solid rgba(0,255,136,0.4)",
+            color: "var(--accent)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          Переключить на таблицу
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ position: "relative", width: "100%", height: 600, borderRadius: 12, overflow: "hidden", background: "#020705" }}>
-      <Canvas
-        camera={{ position: [0, 0, 2.8], fov: 45 }}
-        gl={{ antialias: true, alpha: false }}
-        style={{ background: "#020705" }}
-      >
-        <Suspense fallback={null}>
-          <ambientLight intensity={0.3} />
-          <directionalLight position={[5, 3, 5]} intensity={0.8} color="#ffffff" />
-          <pointLight position={[-5, -3, -5]} intensity={0.2} color="#00ff88" />
+      <WebGLErrorBoundary fallback={globeFallback}>
+        <Canvas
+          camera={{ position: [0, 0, 2.8], fov: 45 }}
+          gl={{ antialias: true, alpha: false }}
+          style={{ background: "#020705" }}
+        >
+          <Suspense fallback={null}>
+            <ambientLight intensity={0.3} />
+            <directionalLight position={[5, 3, 5]} intensity={0.8} color="#ffffff" />
+            <pointLight position={[-5, -3, -5]} intensity={0.2} color="#00ff88" />
 
-          <GlobeScene
-            channels={channels}
-            filterCategory={filterCategory}
-            filterQuery={filterQuery}
-            hoveredChannel={hoveredChannel}
-            onHover={setHoveredChannel}
-            onSelect={onSelect}
-          />
+            <GlobeScene
+              channels={channels}
+              filterCategory={filterCategory}
+              filterQuery={filterQuery}
+              hoveredChannel={hoveredChannel}
+              onHover={setHoveredChannel}
+              onSelect={onSelect}
+            />
 
-          <OrbitControls
-            enablePan={false}
-            enableZoom
-            zoomSpeed={0.6}
-            rotateSpeed={0.5}
-            minDistance={1.5}
-            maxDistance={5}
-            autoRotate={false}
-          />
-        </Suspense>
-      </Canvas>
+            <OrbitControls
+              enablePan={false}
+              enableZoom
+              zoomSpeed={0.6}
+              rotateSpeed={0.5}
+              minDistance={1.5}
+              maxDistance={5}
+              autoRotate={false}
+            />
+          </Suspense>
+        </Canvas>
 
-      <GlobeTooltip ch={hoveredChannel} />
+        <GlobeTooltip ch={hoveredChannel} />
 
-      {/* Info overlay */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 16,
-          right: 16,
-          fontSize: 11,
-          color: "var(--muted)",
-          background: "rgba(10,10,11,0.7)",
-          padding: "4px 8px",
-          borderRadius: 6,
-          pointerEvents: "none",
-        }}
-      >
-        Потяните — вращение · Скролл — зум · Клик — детали
-      </div>
+        {/* Info overlay */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: 16,
+            right: 16,
+            fontSize: 11,
+            color: "var(--muted)",
+            background: "rgba(10,10,11,0.7)",
+            padding: "4px 8px",
+            borderRadius: 6,
+            pointerEvents: "none",
+          }}
+        >
+          Потяните — вращение · Скролл — зум · Клик — детали
+        </div>
 
-      <div
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 16,
-          fontSize: 11,
-          color: "var(--accent)",
-          background: "rgba(10,10,11,0.7)",
-          padding: "4px 10px",
-          borderRadius: 6,
-          pointerEvents: "none",
-          fontFamily: "monospace",
-          border: "1px solid var(--accent-glow)",
-        }}
-      >
-        {channels.length} каналов на глобусе
-      </div>
+        <div
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            fontSize: 11,
+            color: "var(--accent)",
+            background: "rgba(10,10,11,0.7)",
+            padding: "4px 10px",
+            borderRadius: 6,
+            pointerEvents: "none",
+            fontFamily: "monospace",
+            border: "1px solid var(--accent-glow)",
+          }}
+        >
+          {channels.length} каналов на глобусе
+        </div>
+      </WebGLErrorBoundary>
     </div>
   );
 }
@@ -1416,7 +1493,7 @@ function MetricCard({
   value: string;
   sub?: string;
   accent?: string;
-  icon?: React.ReactNode;
+  icon?: ReactNode;
 }) {
   return (
     <div className="metric-card">
@@ -2313,6 +2390,21 @@ export function ChannelMapPage() {
   const [stats, setStats] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [retryCount, setRetryCount] = useState(0);
+
+  // Network status detection
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -2321,9 +2413,16 @@ export function ChannelMapPage() {
   const [hasCommentsOnly, setHasCommentsOnly] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState("");
 
-  // DEFAULT view is "globe"
-  const [viewMode, setViewMode] = useState<ViewMode>("globe");
+  // DEFAULT view is "table" — more reliable than WebGL globe
+  const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [selectedChannel, setSelectedChannel] = useState<ChannelMapEntry | null>(null);
+
+  // Auto-detect WebGL on mount and force table if unavailable
+  useEffect(() => {
+    if (!isWebGLAvailable()) {
+      setViewMode("table");
+    }
+  }, []);
 
   // Bulk selection
   const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
@@ -2416,8 +2515,8 @@ export function ChannelMapPage() {
       ]);
       setFarms(farmsRes.items ?? []);
       setChannelDbs(dbsRes.items ?? []);
-    } catch {
-      // optional
+    } catch (err) {
+      console.error("Channel map: farm data load error:", err);
     }
   }, [accessToken]);
 
@@ -2426,8 +2525,8 @@ export function ChannelMapPage() {
     try {
       const res = await campaignsApi.list(accessToken);
       setCampaigns(res.items ?? []);
-    } catch {
-      // optional
+    } catch (err) {
+      console.error("Channel map: campaign data load error:", err);
     }
   }, [accessToken]);
 
@@ -2525,8 +2624,8 @@ export function ChannelMapPage() {
     try {
       const payload = await channelMapApi.categories(accessToken);
       setCategories(payload.categories ?? []);
-    } catch {
-      // optional
+    } catch (err) {
+      console.error("Channel map: categories load error:", err);
     }
   }, [accessToken]);
 
@@ -2535,8 +2634,8 @@ export function ChannelMapPage() {
     try {
       const payload = await channelMapApi.stats(accessToken);
       setStats(payload);
-    } catch {
-      // optional
+    } catch (err) {
+      console.error("Channel map: stats load error:", err);
     }
   }, [accessToken]);
 
@@ -2565,7 +2664,7 @@ export function ChannelMapPage() {
     [accessToken, query, selectedCategory, selectedLanguage, minMembers]
   );
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (currentRetry = 0) => {
     if (!accessToken) return;
     setBusy(true);
     setError("");
@@ -2578,15 +2677,37 @@ export function ChannelMapPage() {
       });
       setItems(payload.items);
       setTotal(payload.total);
+      setRetryCount(0);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "load_failed");
+      console.error("Channel map load error:", e);
+      const msg = e instanceof Error ? e.message : "Ошибка загрузки данных";
+      if (currentRetry === 0) {
+        // Auto-retry once after 2 seconds on first failure
+        setRetryCount(1);
+        setTimeout(() => {
+          void loadAll(1);
+        }, 2000);
+      } else {
+        setRetryCount(currentRetry);
+        setError(msg);
+      }
     } finally {
       setBusy(false);
     }
   }, [accessToken, selectedCategory, selectedLanguage, minMembers]);
 
   useEffect(() => {
-    void Promise.all([loadAll(), loadCategories(), loadStats(), loadFarmData(), loadCampaignData()]).catch(() => {});
+    // Use allSettled so one failure does not cancel remaining loaders.
+    // loadAll already sets the error state on failure; auxiliary loaders
+    // (categories, stats, farm data, campaigns) fail silently — they are
+    // non-critical for the main channel list.
+    void Promise.allSettled([
+      loadAll(),
+      loadCategories(),
+      loadStats(),
+      loadFarmData(),
+      loadCampaignData(),
+    ]);
   }, [accessToken]);
 
   useEffect(() => {
@@ -2632,7 +2753,10 @@ export function ChannelMapPage() {
         setItems(p.items);
         setTotal(p.total);
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("Channel map load error:", err);
+        setError(err instanceof Error ? err.message : "Ошибка загрузки данных");
+      });
   };
 
   const allCategoryNames = useMemo(
@@ -2811,30 +2935,40 @@ export function ChannelMapPage() {
               gap: 2,
             }}
           >
-            {VIEW_BUTTONS.map(({ mode, icon, label }) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setViewMode(mode)}
-                style={{
-                  all: "unset",
-                  cursor: "pointer",
-                  padding: "6px 14px",
-                  borderRadius: 8,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 13,
-                  fontWeight: viewMode === mode ? 600 : 400,
-                  color: viewMode === mode ? "var(--accent)" : "var(--muted)",
-                  background:
-                    viewMode === mode ? "var(--accent-glow)" : "transparent",
-                  transition: "all 200ms ease",
-                }}
-              >
-                {icon} {label}
-              </button>
-            ))}
+            {VIEW_BUTTONS.map(({ mode, icon, label }) => {
+              const isGlobeDisabled = mode === "globe" && !isWebGLAvailable();
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => { if (!isGlobeDisabled) setViewMode(mode); }}
+                  disabled={isGlobeDisabled}
+                  title={isGlobeDisabled ? "WebGL не поддерживается" : undefined}
+                  style={{
+                    all: "unset",
+                    cursor: isGlobeDisabled ? "not-allowed" : "pointer",
+                    padding: "6px 14px",
+                    borderRadius: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 13,
+                    fontWeight: viewMode === mode ? 600 : 400,
+                    color: isGlobeDisabled
+                      ? "var(--border)"
+                      : viewMode === mode
+                      ? "var(--accent)"
+                      : "var(--muted)",
+                    background:
+                      viewMode === mode ? "var(--accent-glow)" : "transparent",
+                    transition: "all 200ms ease",
+                    opacity: isGlobeDisabled ? 0.4 : 1,
+                  }}
+                >
+                  {icon} {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -2848,6 +2982,7 @@ export function ChannelMapPage() {
                 filterCategory={selectedCategory}
                 filterQuery={query}
                 onSelect={setSelectedChannel}
+                onFallback={() => setViewMode("table")}
               />
             </div>
 
@@ -3085,7 +3220,71 @@ export function ChannelMapPage() {
           </motion.div>
         )}
 
-        {busy && viewMode !== "globe" && <p className="muted">Загружаем…</p>}
+        {/* Offline banner */}
+        {!isOnline && (
+          <div
+            style={{
+              background: "rgba(255,170,0,0.08)",
+              border: "1px solid #ffaa00",
+              borderRadius: 10,
+              padding: "12px 20px",
+              color: "#ffaa00",
+              fontSize: 14,
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <span>Нет подключения к интернету</span>
+          </div>
+        )}
+
+        {busy && viewMode !== "globe" && (
+          <p className="muted">
+            {retryCount > 0 ? `Повторная попытка загрузки…` : "Загружаем…"}
+          </p>
+        )}
+
+        {/* Error state */}
+        {!busy && error && (
+          <div
+            style={{
+              background: "rgba(255,68,68,0.08)",
+              border: "1px solid #ff4444",
+              borderRadius: 10,
+              padding: "16px 20px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 16,
+              color: "#ff4444",
+              fontSize: 14,
+            }}
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setRetryCount(0);
+                void loadAll();
+              }}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                border: "1px solid #ff4444",
+                borderRadius: 6,
+                padding: "5px 14px",
+                fontSize: 13,
+                color: "#ff4444",
+                whiteSpace: "nowrap",
+                background: "rgba(255,68,68,0.12)",
+              }}
+            >
+              Повторить загрузку
+            </button>
+          </div>
+        )}
 
         {/* Cards view */}
         <AnimatePresence mode="wait">
@@ -3289,10 +3488,62 @@ export function ChannelMapPage() {
           )}
         </AnimatePresence>
 
-        {!busy && displayItems.length === 0 && viewMode !== "globe" && (
-          <p className="muted">
-            Каналы не найдены. Попробуйте изменить фильтры или запустите индексирование.
-          </p>
+        {!busy && !error && displayItems.length === 0 && viewMode !== "globe" && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 12,
+              padding: "56px 24px",
+              textAlign: "center",
+              color: "var(--muted)",
+            }}
+          >
+            <Map size={40} style={{ opacity: 0.4 }} />
+            <div style={{ fontSize: 18, fontWeight: 600, color: "var(--text-secondary)" }}>
+              Каналы не найдены
+            </div>
+            <div style={{ fontSize: 14, maxWidth: 400, lineHeight: 1.6 }}>
+              Добавьте каналы через парсер или импортируйте базу данных каналов.
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+              <a
+                href="/app/parser"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 18px",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 8,
+                  color: "var(--accent)",
+                  fontSize: 13,
+                  textDecoration: "none",
+                  background: "var(--accent-glow)",
+                }}
+              >
+                Перейти к парсеру
+              </a>
+              <a
+                href="/app/channel-map"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 18px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  color: "var(--text-secondary)",
+                  fontSize: 13,
+                  textDecoration: "none",
+                }}
+              >
+                Импортировать каналы
+              </a>
+            </div>
+          </div>
         )}
       </section>
 
