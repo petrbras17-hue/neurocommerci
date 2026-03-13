@@ -4335,7 +4335,10 @@ async def process_avatar_photo(message: Message, state: FSMContext):
     # Сохраняем как аватарку продукта
     avatar_path = BASE_DIR / settings.PRODUCT_AVATAR_PATH
     avatar_path.parent.mkdir(parents=True, exist_ok=True)
-    avatar_path.write_bytes(data.read())
+    try:
+        avatar_path.write_bytes(data.read())
+    finally:
+        data.close()
 
     # Удаляем старую квадратную версию (чтобы пересоздалась)
     square_path = avatar_path.parent / f"{avatar_path.stem}_square.png"

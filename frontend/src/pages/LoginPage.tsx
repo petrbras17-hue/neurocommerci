@@ -84,7 +84,9 @@ export function LoginPage() {
     try {
       const result = await auth.startBotAuth();
       setBotAuthCode(result.code);
-      window.open(result.deep_link, "_blank");
+      if (result.deep_link && result.deep_link.startsWith("https://t.me/")) {
+        window.open(result.deep_link, "_blank");
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "bot_auth_failed";
       setBotAuthError(msg);
