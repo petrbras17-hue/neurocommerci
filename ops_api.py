@@ -1773,7 +1773,7 @@ async def auth_me(
         session,
         auth_user_id=tenant_context.user_id,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
 
 
@@ -1850,7 +1850,7 @@ async def me_workspace(
         session,
         auth_user_id=tenant_context.user_id,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
     return payload["workspace"]
 
@@ -1863,7 +1863,7 @@ async def me_team(
     return await get_team_payload(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
 
 
@@ -2041,7 +2041,7 @@ async def web_list_accounts(
     result = await list_web_accounts(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
     all_items = result["items"]
     total = result["total"]
@@ -2065,7 +2065,7 @@ async def web_upload_account_pair(
     return await save_uploaded_account_pair(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         session_filename=session_file.filename or "",
         session_bytes=session_bytes,
         metadata_filename=metadata_file.filename or "",
@@ -2082,7 +2082,7 @@ async def web_list_available_proxies(
     return await list_available_web_proxies(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
 
 
@@ -2127,7 +2127,7 @@ async def proxies_bulk_import(
     """Parse and import proxy lines, skipping duplicates within the tenant."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     imported = 0
     skipped = 0
@@ -2287,7 +2287,7 @@ async def proxies_health_check(
 
     proxies = (
         await session.execute(
-            select(Proxy).where(Proxy.tenant_id == tenant_id, Proxy.is_active.is_(True))
+            select(Proxy).where(Proxy.tenant_id == tenant_id, Proxy.is_active.is_(True)).limit(2000)
         )
     ).scalars().all()
 
@@ -2361,7 +2361,7 @@ async def proxies_cleanup(
                 Proxy.tenant_id == tenant_id,
                 Proxy.health_status == "dead",
                 Proxy.id.notin_(select(bound_proxy_ids_q.c.proxy_id)),
-            )
+            ).limit(5000)
         )
     ).scalars().all()
 
@@ -2549,7 +2549,7 @@ async def web_bind_proxy(
     return await bind_proxy_for_account(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=account_id,
         proxy_id=payload.proxy_id,
         proxy_string=payload.proxy_string,
@@ -2565,7 +2565,7 @@ async def web_audit_account(
     return await audit_web_account(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=account_id,
     )
 
@@ -2579,7 +2579,7 @@ async def web_get_account_audit(
     account_payload = await list_web_accounts(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
     for item in account_payload["items"]:
         if int(item["id"]) == int(account_id):
@@ -2597,7 +2597,7 @@ async def web_save_account_notes(
     return await save_web_account_note(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=account_id,
         auth_user_id=tenant_context.user_id,
         notes=payload.notes,
@@ -2613,7 +2613,7 @@ async def web_get_account_timeline(
     return await get_web_account_timeline(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=account_id,
     )
 
@@ -2669,19 +2669,19 @@ async def accounts_bulk_import(
     from utils.session_topology import canonical_session_paths
 
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     from core.web_accounts import get_workspace_runtime_user
     workspace = await get_workspace_runtime_user(session, tenant_id=tenant_id, workspace_id=workspace_id)
     runtime_user_id = int(workspace.runtime_user_id)
 
-    # Resolve free proxies for auto-assignment
+    # Resolve free proxies for auto-assignment (cap at 2000 to prevent OOM)
     free_proxy_result = await session.execute(
         select(Proxy).where(
             Proxy.tenant_id == tenant_id,
             Proxy.workspace_id == workspace_id,
             Proxy.is_active == True,
-        )
+        ).limit(2000)
     )
     all_proxies = list(free_proxy_result.scalars().all())
     used_proxy_ids_result = await session.execute(
@@ -2844,7 +2844,7 @@ async def account_discover_phone(
     from utils.session_topology import canonical_session_paths
 
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     workspace = await get_workspace_runtime_user(session, tenant_id=tenant_id, workspace_id=workspace_id)
     runtime_user_id = int(workspace.runtime_user_id)
@@ -2965,15 +2965,15 @@ async def accounts_mass_proxy_assign(
     """Auto-assign free proxies (1:1) to all accounts without a proxy in this tenant/workspace."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
-    # Fetch unproxied accounts
+    # Fetch unproxied accounts (cap at 2000 for safety)
     unproxied_result = await session.execute(
         select(Account).where(
             Account.tenant_id == tenant_id,
             Account.workspace_id == workspace_id,
             Account.proxy_id.is_(None),
-        )
+        ).limit(2000)
     )
     unproxied_accounts = list(unproxied_result.scalars().all())
 
@@ -2982,7 +2982,7 @@ async def accounts_mass_proxy_assign(
         select(Account.proxy_id).where(
             Account.tenant_id == tenant_id,
             Account.proxy_id.isnot(None),
-        )
+        ).limit(5000)
     )
     used_proxy_ids = {row[0] for row in used_proxy_ids_result.fetchall()}
     free_proxy_result = await session.execute(
@@ -2990,7 +2990,7 @@ async def accounts_mass_proxy_assign(
             Proxy.tenant_id == tenant_id,
             Proxy.workspace_id == workspace_id,
             Proxy.is_active == True,
-        )
+        ).limit(2000)
     )
     free_proxies = [p for p in free_proxy_result.scalars().all() if p.id not in used_proxy_ids]
 
@@ -3028,15 +3028,16 @@ async def accounts_bulk_action(
         )
 
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
-    # Resolve target accounts
+    # Resolve target accounts (cap at 2000 for safety)
     q = select(Account).where(
         Account.tenant_id == tenant_id,
         Account.workspace_id == workspace_id,
     )
     if payload.account_ids:
         q = q.where(Account.id.in_(payload.account_ids))
+    q = q.limit(2000)
     result = await session.execute(q)
     accounts = list(result.scalars().all())
 
@@ -3090,13 +3091,13 @@ async def accounts_stats(
     """Return aggregate account stats for the current tenant workspace."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     result = await session.execute(
         select(Account).where(
             Account.tenant_id == tenant_id,
             Account.workspace_id == workspace_id,
-        )
+        ).limit(5000)
     )
     accounts = list(result.scalars().all())
 
@@ -3135,7 +3136,7 @@ async def accounts_check_duplicates(
     """Check which of the supplied phone numbers already exist for this tenant workspace."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     # Normalise: strip whitespace and ensure leading +
     def _norm(p: str) -> str:
@@ -3178,7 +3179,7 @@ async def accounts_export(
     """Export tenant-scoped accounts as CSV or JSON for download."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     stmt = (
         select(Account)
@@ -3292,7 +3293,7 @@ async def account_lifecycle_transition(
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
 
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     # Verify account belongs to this tenant / workspace before mutating.
     result = await session.execute(
@@ -3340,7 +3341,7 @@ async def account_lifecycle_history(
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
 
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     result = await session.execute(
         select(Account).where(
@@ -3397,7 +3398,7 @@ async def assistant_thread(
     result = await get_assistant_thread(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
     )
     all_messages = result.get("messages") or []
@@ -3417,7 +3418,7 @@ async def context_payload(
     return await get_context_payload(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
 
 
@@ -3443,7 +3444,7 @@ async def creative_drafts(
     result = await list_creative_drafts(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
     )
     all_items = result["items"]
     total = result["total"]
@@ -3477,7 +3478,7 @@ async def creative_approve(
     return await approve_creative_draft(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         draft_id=payload.draft_id,
         selected_variant=payload.selected_variant,
@@ -3787,7 +3788,7 @@ async def farm_create(
 ) -> dict[str, Any]:
     farm = FarmConfig(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         status="stopped",
         mode=payload.mode,
@@ -3822,7 +3823,7 @@ async def farm_list(
 ) -> dict[str, Any]:
     base_filter = [
         FarmConfig.tenant_id == tenant_context.tenant_id,
-        FarmConfig.workspace_id == int(tenant_context.workspace_id or 0),
+        FarmConfig.workspace_id == tenant_context.workspace_id,
     ]
     rows = (
         await session.execute(
@@ -3981,14 +3982,14 @@ async def farm_start(
     if channel_db is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="channel_database_not_found")
 
-    # Load channels from database for distribution
+    # Load channels from database for distribution (cap at 10000)
     channel_entries = (
         await session.execute(
             select(ChannelEntry).where(
                 ChannelEntry.database_id == payload.channel_database_id,
                 ChannelEntry.tenant_id == tenant_context.tenant_id,
                 ChannelEntry.blacklisted.is_(False),
-            )
+            ).limit(10000)
         )
     ).scalars().all()
     channel_usernames = [e.username for e in channel_entries if e.username]
@@ -4229,7 +4230,7 @@ async def channel_db_create(
 ) -> dict[str, Any]:
     channel_db = ChannelDatabase(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         source="manual",
         status="active",
@@ -4259,7 +4260,7 @@ async def channel_db_list(
         .outerjoin(count_subq, ChannelDatabase.id == count_subq.c.database_id)
         .where(
             ChannelDatabase.tenant_id == tenant_context.tenant_id,
-            ChannelDatabase.workspace_id == int(tenant_context.workspace_id or 0),
+            ChannelDatabase.workspace_id == tenant_context.workspace_id,
         )
         .order_by(ChannelDatabase.id.desc())
     )
@@ -4466,7 +4467,7 @@ async def parser_start_channels(
 
     parsing_job = ParsingJob(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=payload.account_id,
         job_type="channels",
         status="pending",
@@ -4508,7 +4509,7 @@ async def parser_job_list(
             select(ParsingJob)
             .where(
                 ParsingJob.tenant_id == tenant_context.tenant_id,
-                ParsingJob.workspace_id == int(tenant_context.workspace_id or 0),
+                ParsingJob.workspace_id == tenant_context.workspace_id,
             )
             .order_by(ParsingJob.id.desc())
             .limit(100)
@@ -4707,7 +4708,7 @@ async def profiles_template_list(
             select(ProfileTemplate)
             .where(
                 ProfileTemplate.tenant_id == tenant_context.tenant_id,
-                ProfileTemplate.workspace_id == int(tenant_context.workspace_id or 0),
+                ProfileTemplate.workspace_id == tenant_context.workspace_id,
             )
             .order_by(ProfileTemplate.id.desc())
         )
@@ -4724,7 +4725,7 @@ async def profiles_template_create(
 ) -> dict[str, Any]:
     template = ProfileTemplate(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         gender=payload.gender,
         geo=payload.geo,
@@ -4863,7 +4864,7 @@ async def warmup_create(
 ) -> dict[str, Any]:
     cfg = WarmupConfig(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         mode=payload.mode,
         status="stopped",
@@ -5297,7 +5298,7 @@ async def reactions_create(
 ) -> dict[str, Any]:
     job = ReactionJob(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         channel_username=payload.channel_username,
         reaction_type=payload.reaction_type,
         account_ids=payload.account_ids,
@@ -5386,7 +5387,7 @@ async def chatting_create(
 ) -> dict[str, Any]:
     cfg = ChattingConfig(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         mode=payload.mode,
         target_channels=payload.target_channels,
@@ -5514,7 +5515,7 @@ async def dialogs_create(
 ) -> dict[str, Any]:
     cfg = DialogConfig(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         dialog_type=payload.dialog_type,
         account_pairs=payload.account_pairs,
@@ -5704,7 +5705,7 @@ async def folders_create(
 
     folder = TelegramFolder(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         account_id=payload.account_id,
         folder_name=payload.folder_name,
         channel_usernames=payload.channel_usernames,
@@ -6556,7 +6557,7 @@ async def campaigns_create(
         )
     campaign = Campaign(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
+        workspace_id=tenant_context.workspace_id,
         name=payload.name,
         campaign_type=payload.campaign_type,
         account_ids=payload.account_ids,
@@ -7283,7 +7284,7 @@ async def campaigns_create_from_brief(
             session,
             brief_id=payload.brief_id,
             tenant_id=tenant_context.tenant_id,
-            workspace_id=int(tenant_context.workspace_id or 0),
+            workspace_id=tenant_context.workspace_id,
             user_id=tenant_context.user_id,
             campaign_name=payload.name,
             max_channels=payload.max_channels,
@@ -7784,8 +7785,8 @@ async def healing_sweep(
     result = await _enqueue_within_session(
         session=session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0),
-        user_id=int(tenant_context.user_id or 0),
+        workspace_id=tenant_context.workspace_id,
+        user_id=tenant_context.user_id,
         job_type=JOB_TYPE_HEALTH_SWEEP,
         payload={},
     )
@@ -7936,7 +7937,7 @@ async def approve_purchase_request(
     try:
         req = await mgr.approve_purchase(
             request_id=request_id,
-            approved_by=int(tenant_context.user_id or 0),
+            approved_by=tenant_context.user_id,
             session=session,
         )
     except ValueError as exc:
@@ -7956,7 +7957,7 @@ async def reject_purchase_request(
     try:
         req = await mgr.reject_purchase(
             request_id=request_id,
-            rejected_by=int(tenant_context.user_id or 0),
+            rejected_by=tenant_context.user_id,
             session=session,
         )
     except ValueError as exc:
@@ -8476,7 +8477,7 @@ async def accounts_pending_review(
     """List accounts currently in the gate_review lifecycle stage."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     # Count total for pagination header
     from sqlalchemy import func as sa_func
@@ -8573,7 +8574,7 @@ async def account_approve(
     """Approve a gate_review account, advancing it to execution_ready."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     acct_result = await session.execute(
         select(Account).where(
@@ -8620,7 +8621,7 @@ async def account_reject(
     """Reject a gate_review account, sending it back to warming_up."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     acct_result = await session.execute(
         select(Account).where(
@@ -8667,7 +8668,7 @@ async def accounts_bulk_approve(
     """Approve multiple gate_review accounts in a single request."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tenant_id = tenant_context.tenant_id
-    workspace_id = int(tenant_context.workspace_id or 0)
+    workspace_id = tenant_context.workspace_id
 
     if len(payload.account_ids) > 100:
         raise HTTPException(
