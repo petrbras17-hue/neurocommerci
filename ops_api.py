@@ -432,10 +432,34 @@ def _apply_rate_limit_headers(
     response.headers["X-RateLimit-Reset"] = str(reset_seconds)
 
 
+_TRUSTED_PROXIES = frozenset({"127.0.0.1", "::1", "172.16.0.0/12", "10.0.0.0/8", "192.168.0.0/16"})
+
+
+def _is_trusted_proxy(ip: str) -> bool:
+    """Check if IP is a trusted reverse proxy (Docker network or localhost)."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        for network in _TRUSTED_PROXIES:
+            if "/" in network:
+                if addr in ipaddress.ip_network(network):
+                    return True
+            elif ip == network:
+                return True
+    except ValueError:
+        pass
+    return False
+
+
 def _client_ip(request: Request) -> str:
-    # Use direct connection IP — do not trust X-Forwarded-For to prevent spoofing.
-    # If behind a trusted reverse proxy, configure proxy middleware instead.
-    return request.client.host if request.client else "unknown"
+    """Extract the real client IP, trusting X-Forwarded-For only from Docker/nginx proxy."""
+    direct_ip = request.client.host if request.client else "unknown"
+    if _is_trusted_proxy(direct_ip):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        if forwarded:
+            # Take the first (leftmost) IP — the original client
+            return forwarded.split(",")[0].strip()
+    return direct_ip
 
 
 BASE_DIR = Path(__file__).resolve().parent
