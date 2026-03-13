@@ -34,9 +34,7 @@ import { SessionTopologyPage } from "./pages/SessionTopologyPage";
 import OfflinePage from "./pages/OfflinePage";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
-const ChannelMapPage = React.lazy(() =>
-  import("./pages/ChannelMapPage").then((m) => ({ default: m.ChannelMapPage }))
-);
+const ChannelMapPage = React.lazy(() => import("./pages/ChannelMapPageV2"));
 
 function ProtectedRoute() {
   const auth = useAuth();

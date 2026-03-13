@@ -11,15 +11,16 @@
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource/geist-sans": "^5.2.5",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
-    "@types/three": "^0.183.1",
+    "@react-three/drei": "^9.116.3",
+    "@react-three/fiber": "^8.17.10",
+    "@types/three": "^0.170.0",
     "framer-motion": "^12.35.2",
     "lucide-react": "^0.577.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-globe.gl": "^2.37.0",
     "react-router-dom": "^7.6.3",
-    "three": "^0.183.2"
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.11",

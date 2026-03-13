@@ -592,6 +592,16 @@ export const channelMapApi = {
     if (category) params.set("category", category);
     return apiFetch<{points: GeoPoint[], total: number}>(`/v1/channel-map/geo?${params}`, {accessToken: token});
   },
+  detail: (token: string, id: number) =>
+    apiFetch<ChannelMapEntry>(`/v1/channel-map/${id}`, {accessToken: token}),
+  similar: (token: string, id: number, limit?: number) => {
+    const params = new URLSearchParams();
+    if (limit != null) params.set("limit", String(limit));
+    const qs = params.toString();
+    return apiFetch<{items: ChannelMapEntry[]; total: number}>(`/v1/channel-map/${id}/similar${qs ? `?${qs}` : ""}`, {accessToken: token});
+  },
+  bulkAction: (token: string, channelIds: number[], action: string) =>
+    apiFetch<{status: string; action: string; count: number}>("/v1/channel-map/bulk-action", {method: "POST", accessToken: token, json: {channel_ids: channelIds, action}}),
 };
 
 // --- Channel Intelligence API ---
