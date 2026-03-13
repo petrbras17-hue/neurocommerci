@@ -140,13 +140,13 @@ class CommentingEngine:
             # Флаг только после успешного создания задач
             self._running = True
             log.info("=== ДВИЖОК НЕЙРОКОММЕНТИРОВАНИЯ ЗАПУЩЕН ===")
-            await notifier.send("Движок нейрокомментирования запущен")
+            await notifier.notify("Движок нейрокомментирования запущен")
 
         except Exception as e:
             self._running = False
             self._tasks.clear()
             log.error(f"Ошибка запуска движка: {e}")
-            await notifier.send(f"ОШИБКА запуска движка: {e}")
+            await notifier.notify(f"ОШИБКА запуска движка: {e}")
             raise
 
     async def start_for_user(self, user_id: int) -> None:
@@ -250,7 +250,7 @@ class CommentingEngine:
         if settings.DISTRIBUTED_QUEUE_MODE:
             await task_queue.close()
 
-        await notifier.send("Движок остановлен")
+        await notifier.notify("Движок остановлен")
         log.info("Движок остановлен")
 
     # ─────────────────────────────────────────────

@@ -76,7 +76,7 @@ class Watchdog:
                     )
                     try:
                         await self.engine.start_for_user(user_id)
-                        await notifier.send(
+                        await notifier.notify(
                             f"🔄 Watchdog перезапустил {name} для user {user_id}"
                         )
                         log.info(f"Watchdog: перезапущены задачи user {user_id}")

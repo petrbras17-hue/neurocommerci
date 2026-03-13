@@ -61,16 +61,18 @@ def _clean_optional_text(value: Any, max_length: int) -> str | None:
     return normalized[:max_length]
 
 
-async def _ensure_unique_tenant_slug(session: AsyncSession, preferred: str, fallback: str) -> str:
+async def _ensure_unique_tenant_slug(session: AsyncSession, preferred: str, fallback: str, max_attempts: int = 100) -> str:
     base_slug = _slugify(preferred, fallback=fallback)
     candidate = base_slug
     suffix = 2
-    while True:
+    for _ in range(max_attempts):
         existing = await session.execute(select(Tenant.id).where(Tenant.slug == candidate).limit(1))
         if existing.scalar_one_or_none() is None:
             return candidate
         candidate = f"{base_slug[:110]}-{suffix}"
         suffix += 1
+    # Fallback: append random suffix
+    return f"{base_slug[:100]}-{secrets.token_hex(4)}"
 
 
 def _refresh_token_hash(token: str) -> str:

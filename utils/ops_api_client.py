@@ -34,7 +34,8 @@ def _build_request(path: str, *, method: str, payload: dict[str, Any] | None = N
 
 def _read_response(req: urllib.request.Request, *, timeout: float = 10.0) -> dict[str, Any]:
     try:
-        raw = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
         return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "ignore")

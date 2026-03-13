@@ -481,7 +481,7 @@ class FarmOrchestrator:
         )
         return result.scalar_one_or_none()
 
-    async def _load_farm_no_session(self, farm_id: int, tenant_id: int = 0) -> Optional[FarmConfig]:
+    async def _load_farm_no_session(self, farm_id: int, tenant_id: Optional[int] = None) -> Optional[FarmConfig]:
         """Load farm config without a caller-supplied session (for event publishing)."""
         from storage.sqlite_db import async_session as _async_session
 

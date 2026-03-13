@@ -26,7 +26,8 @@ def _check_pid1(role: str) -> tuple[bool, str]:
         return True, ""
 
     try:
-        cmdline = open("/proc/1/cmdline", "rb").read().decode("utf-8", "ignore")
+        with open("/proc/1/cmdline", "rb") as f:
+            cmdline = f.read().decode("utf-8", "ignore")
     except Exception as exc:  # pragma: no cover - container runtime edge
         return False, f"can't read /proc/1/cmdline: {exc}"
 
