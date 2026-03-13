@@ -833,13 +833,16 @@ export const campaignDetailApi = {
 export async function pollJob(
   accessToken: string,
   jobId: number,
-  options: { timeoutMs?: number; intervalMs?: number } = {}
+  options: { timeoutMs?: number; intervalMs?: number; signal?: AbortSignal } = {}
 ): Promise<JobStatusResponse> {
   const timeoutMs = options.timeoutMs ?? 30000;
   const intervalMs = options.intervalMs ?? 1000;
   const startedAt = Date.now();
 
   while (true) {
+    if (options.signal?.aborted) {
+      throw new DOMException("Polling aborted", "AbortError");
+    }
     const job = await apiFetch<JobStatusResponse>(`/v1/jobs/${jobId}`, { accessToken });
     if (job.status === "succeeded" || job.status === "failed") {
       return job;
@@ -847,6 +850,9 @@ export async function pollJob(
     if (Date.now() - startedAt >= timeoutMs) {
       return job;
     }
-    await new Promise((resolve) => window.setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => {
+      const timer = window.setTimeout(resolve, intervalMs);
+      options.signal?.addEventListener("abort", () => { clearTimeout(timer); resolve(undefined); }, { once: true });
+    });
   }
 }

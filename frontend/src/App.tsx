@@ -90,6 +90,7 @@ export default function App() {
               path="/settings"
               element={<SettingsPage />}
             />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Route>
         </Route>
       </Routes>

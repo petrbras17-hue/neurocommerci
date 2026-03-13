@@ -55,6 +55,25 @@ class TaskQueue:
             await self._redis.close()
             self._redis = None
 
+    async def cache_get(self, key: str) -> Optional[str]:
+        """Get a value from Redis cache."""
+        await self.connect()
+        if self._redis is None:
+            return None
+        return await self._redis.get(key)
+
+    async def cache_set(self, key: str, value: str, ex: int = 3600) -> None:
+        """Set a value in Redis cache with expiry."""
+        await self.connect()
+        if self._redis is not None:
+            await self._redis.set(key, value, ex=ex)
+
+    async def cache_delete(self, key: str) -> None:
+        """Delete a key from Redis cache."""
+        await self.connect()
+        if self._redis is not None:
+            await self._redis.delete(key)
+
     async def enqueue(self, queue_name: str, payload: dict) -> str:
         """Add task to queue. Returns task_id."""
         payload = dict(payload)

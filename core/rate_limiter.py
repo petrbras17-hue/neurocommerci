@@ -1,6 +1,8 @@
 """
 Rate limiter — ограничение частоты и количества комментариев.
 """
+from __future__ import annotations
+
 
 import random
 import time

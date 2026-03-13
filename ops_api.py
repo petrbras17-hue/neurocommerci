@@ -4,10 +4,12 @@ import asyncio
 import collections
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+import hmac
+import hashlib
 import logging
+import os
 from pathlib import Path
 import time
-import traceback
 from typing import Any, AsyncIterator, List, Literal, Optional
 
 import jwt
@@ -349,13 +351,20 @@ _MAX_ZIP_BYTES = 50 * 1024 * 1024  # 50 MB for ZIP uploads
 
 async def _read_upload_safe(upload: UploadFile, max_bytes: int = _MAX_UPLOAD_BYTES) -> bytes:
     """Read upload file with size limit to prevent memory exhaustion."""
-    data = await upload.read()
-    if len(data) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large: {len(data)} bytes (max {max_bytes})",
-        )
-    return data
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File too large (max {max_bytes} bytes)",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _escape_like(value: str) -> str:
@@ -769,7 +778,7 @@ class FarmUpdatePayload(BaseModel):
 
 
 class FarmStartPayload(BaseModel):
-    account_ids: List[int] = Field(min_length=1)
+    account_ids: List[int] = Field(min_length=1, max_length=500)
     channel_database_id: int = Field(gt=0)
 
 
@@ -825,7 +834,7 @@ class ProfileGeneratePayload(BaseModel):
 
 
 class ProfileMassGeneratePayload(BaseModel):
-    account_ids: List[int] = Field(min_length=1)
+    account_ids: List[int] = Field(min_length=1, max_length=500)
     template_id: Optional[int] = Field(default=None, gt=0)
 
 
@@ -928,7 +937,7 @@ class WarmupUpdatePayload(BaseModel):
 class ReactionJobCreatePayload(BaseModel):
     channel_username: str = Field(min_length=1, max_length=200)
     reaction_type: str = Field(default="random", max_length=20)
-    account_ids: List[int] = Field(min_length=1)
+    account_ids: List[int] = Field(min_length=1, max_length=500)
     post_id: Optional[int] = None
 
 
@@ -1216,7 +1225,7 @@ def _decode_jwt(token: str) -> TenantContext:
 
 async def require_internal_token(request: Request) -> None:
     token = _bearer_token(request)
-    if token != settings.OPS_API_TOKEN:
+    if not hmac.compare_digest(token or "", settings.OPS_API_TOKEN or ""):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_internal_token")
 
 
@@ -1228,7 +1237,7 @@ async def require_admin_auth(request: Request) -> None:
     """
     token = _bearer_token(request)
     # Fast path: internal ops token
-    if token == settings.OPS_API_TOKEN:
+    if hmac.compare_digest(token or "", settings.OPS_API_TOKEN or ""):
         return
     # Slow path: valid JWT with elevated role
     try:
@@ -1350,10 +1359,27 @@ if FRONTEND_ASSETS_DIR.exists():
     app.mount("/app/assets", StaticFiles(directory=str(FRONTEND_ASSETS_DIR)), name="app-assets")
 
 
+_ALLOWED_HOSTS: set[str] = set()
+if hasattr(settings, "PUBLIC_DOMAIN") and settings.PUBLIC_DOMAIN:
+    _ALLOWED_HOSTS.add(settings.PUBLIC_DOMAIN)
+_ALLOWED_HOSTS.update({"localhost", "127.0.0.1", "176-124-221-253.sslip.io"})
+
+
+def _safe_host(request: Request) -> tuple[str, str]:
+    """Return (proto, host) with host validated against allowlist to prevent host header injection."""
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).strip()
+    # Strip port for comparison
+    host_no_port = host.split(":")[0]
+    if host_no_port not in _ALLOWED_HOSTS and settings.APP_ENV not in ("development", "test"):
+        host = settings.PUBLIC_DOMAIN if hasattr(settings, "PUBLIC_DOMAIN") and settings.PUBLIC_DOMAIN else request.url.netloc
+        proto = "https"
+    return proto, host
+
+
 def _page_context(request: Request, page: dict[str, object]) -> dict[str, object]:
-    forwarded_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").strip()
-    forwarded_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).strip()
-    base_url = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
     return {
         "request": request,
         "page": page,
@@ -1457,12 +1483,11 @@ async def health_check() -> JSONResponse:
 
 @app.get("/auth/telegram/widget-config")
 async def telegram_widget_config(request: Request) -> dict[str, Any]:
-    forwarded_proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").strip()
-    forwarded_host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).strip()
+    proto, host = _safe_host(request)
     return {
         "bot_username": settings.ADMIN_BOT_USERNAME,
-        "auth_domain": forwarded_host,
-        "origin": f"{forwarded_proto}://{forwarded_host}",
+        "auth_domain": host,
+        "origin": f"{proto}://{host}",
         "max_age_seconds": TELEGRAM_AUTH_MAX_AGE_SECONDS,
     }
 
@@ -1492,10 +1517,7 @@ async def auth_telegram_verify(payload: TelegramVerifyPayload, request: Request)
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
-        print(
-            "telegram verify failed:\n" + traceback.format_exc(),
-            flush=True,
-        )
+        log.error("telegram verify failed", exc_info=True)
         raise
 
 
@@ -1525,10 +1547,7 @@ async def auth_complete_profile(payload: CompleteProfilePayload, request: Reques
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
-        print(
-            "complete profile failed:\n" + traceback.format_exc(),
-            flush=True,
-        )
+        log.error("complete profile failed", exc_info=True)
         raise
 
 
@@ -1684,8 +1703,10 @@ async def auth_refresh(
 
 @app.post("/auth/logout")
 async def auth_logout(
+    request: Request,
     refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
 ) -> JSONResponse:
+    _check_rate_limit("auth", _client_ip(request), max_calls=10, window_seconds=60)
     async with async_session() as session:
         async with session.begin():
             await logout_web_session(session, refresh_token)
@@ -1887,13 +1908,17 @@ async def sitemap_xml(request: Request) -> Response:
 @app.get("/v1/accounts")
 async def list_accounts(
     tenant_id: Optional[int] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
     _: None = Depends(require_internal_token),
 ) -> dict[str, object]:
     async with async_session() as session:
         stmt = select(Account).order_by(Account.id)
         if tenant_id is not None:
             stmt = stmt.where(Account.tenant_id == tenant_id)
-        rows = (await session.execute(stmt)).scalars().all()
+        count_result = await session.execute(select(func.count(Account.id)).select_from(stmt.subquery()))
+        total = count_result.scalar_one_or_none() or 0
+        rows = (await session.execute(stmt.offset(offset).limit(limit))).scalars().all()
 
     items = [
         {
@@ -1905,7 +1930,7 @@ async def list_accounts(
         }
         for row in rows
     ]
-    return {"items": items, "total": len(items)}
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/v1/internal/leads")
@@ -2636,13 +2661,13 @@ async def accounts_bulk_import(
             phone_digits = "".join(ch for ch in acct.phone if ch.isdigit()) if acct.phone else ""
             if not phone_digits:
                 # Generate a temporary identifier; the user will need to verify later
-                import hashlib
-                phone_digits = "tdata_" + hashlib.md5(acct.session_bytes[:64]).hexdigest()[:8]
+                phone_digits = "tdata_" + hashlib.sha256(acct.session_bytes[:64]).hexdigest()[:8]
             meta_bytes = _json.dumps(acct.metadata, ensure_ascii=False, indent=2).encode("utf-8")
             pair_map.setdefault(phone_digits, {})["session"] = acct.session_bytes
             pair_map.setdefault(phone_digits, {})["json"] = meta_bytes
             pair_map[phone_digits]["_source"] = "tdata"
 
+    errors: list[str] = []
     for upload in files:
         fname = upload.filename or ""
         if fname.lower().endswith(".zip"):
@@ -2657,9 +2682,17 @@ async def accounts_bulk_import(
             else:
                 try:
                     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                        for member in zf.namelist():
+                        total_decompressed = 0
+                        for member in zf.infolist():
+                            if member.file_size > _MAX_UPLOAD_BYTES:
+                                errors.append(f"zip_member_too_large:{member.filename}")
+                                continue
+                            total_decompressed += member.file_size
+                            if total_decompressed > _MAX_ZIP_BYTES:
+                                errors.append("zip_total_decompressed_too_large")
+                                break
                             member_data = zf.read(member)
-                            await _absorb_file(Path(member).name, member_data)
+                            await _absorb_file(Path(member.filename).name, member_data)
                 except zipfile.BadZipFile:
                     continue
         else:
@@ -2669,7 +2702,6 @@ async def accounts_bulk_import(
     imported = 0
     skipped = 0
     auto_proxied = 0
-    errors: list[str] = []
 
     for digits, parts in pair_map.items():
         if "session" not in parts or "json" not in parts:
@@ -3728,17 +3760,22 @@ async def farm_create(
 
 @app.get("/v1/farm")
 async def farm_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
+    base_filter = [
+        FarmConfig.tenant_id == tenant_context.tenant_id,
+        FarmConfig.workspace_id == int(tenant_context.workspace_id or 0),
+    ]
     rows = (
         await session.execute(
             select(FarmConfig)
-            .where(
-                FarmConfig.tenant_id == tenant_context.tenant_id,
-                FarmConfig.workspace_id == int(tenant_context.workspace_id or 0),
-            )
+            .where(*base_filter)
             .order_by(FarmConfig.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
     ).scalars().all()
     items = [_serialize_farm(f) for f in rows]
@@ -4675,7 +4712,7 @@ def _serialize_warmup_config(c: WarmupConfig, account_count: int = 0) -> dict[st
     }
 
 
-def _serialize_warmup_session(s: WarmupSession, phone: str | None = None) -> dict[str, Any]:
+def _serialize_warmup_session(s: WarmupSession, phone: Optional[str] = None) -> dict[str, Any]:
     return {
         "id": s.id,
         "config_id": s.warmup_id,
@@ -4689,7 +4726,7 @@ def _serialize_warmup_session(s: WarmupSession, phone: str | None = None) -> dic
     }
 
 
-def _serialize_health_score(h: AccountHealthScore, phone: str | None = None) -> dict[str, Any]:
+def _serialize_health_score(h: AccountHealthScore, phone: Optional[str] = None) -> dict[str, Any]:
     return {
         "account_id": h.account_id,
         "account_phone": phone,
@@ -5268,6 +5305,8 @@ async def reactions_get(
 
 @app.get("/v1/chatting")
 async def chatting_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
@@ -5276,6 +5315,8 @@ async def chatting_list(
             select(ChattingConfig)
             .where(ChattingConfig.tenant_id == tenant_context.tenant_id)
             .order_by(ChattingConfig.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
     ).scalars().all()
     items = [_serialize_chatting_config(c) for c in rows]
@@ -5392,6 +5433,8 @@ async def chatting_delete(
 
 @app.get("/v1/dialogs")
 async def dialogs_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
@@ -5400,6 +5443,8 @@ async def dialogs_list(
             select(DialogConfig)
             .where(DialogConfig.tenant_id == tenant_context.tenant_id)
             .order_by(DialogConfig.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
     ).scalars().all()
     items = [_serialize_dialog_config(d) for d in rows]
@@ -5567,6 +5612,8 @@ async def user_parser_results(
 
 @app.get("/v1/folders")
 async def folders_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
@@ -5575,6 +5622,8 @@ async def folders_list(
             select(TelegramFolder)
             .where(TelegramFolder.tenant_id == tenant_context.tenant_id)
             .order_by(TelegramFolder.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
     ).scalars().all()
     items = [_serialize_folder(f) for f in rows]
@@ -5824,8 +5873,8 @@ async def channel_map_list(
 
 @app.get("/v1/channel-map/geo")
 async def channel_map_geo(
-    limit: int = Query(50000, ge=1, le=100000),
-    category: str | None = Query(None),
+    limit: int = Query(50000, ge=1, le=50000),
+    category: Optional[str] = Query(None),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ):
@@ -6008,7 +6057,8 @@ async def channel_map_index(
                     entry = await indexer.index_channel(username.lstrip("@"), session)
                     indexed.append({"username": entry.username, "id": entry.id, "status": "ok"})
                 except Exception as exc:
-                    indexed.append({"username": username, "id": None, "status": f"error: {exc}"})
+                    log.warning("channel_map_index failed for %s: %s", username, exc)
+                    indexed.append({"username": username, "id": None, "status": "error"})
 
     return {
         "requested": len(payload.usernames),
@@ -6213,8 +6263,7 @@ async def channel_map_category_tree(
 
     # Try Redis cache first
     try:
-        await task_queue.connect()
-        cached = await task_queue._redis.get(cache_key)
+        cached = await task_queue.cache_get(cache_key)
         if cached:
             import json as _json
             return _json.loads(cached)
@@ -6303,7 +6352,7 @@ async def channel_map_category_tree(
     # Cache result
     try:
         import json as _json
-        await task_queue._redis.set(cache_key, _json.dumps(response), ex=_CATEGORY_TREE_CACHE_TTL)
+        await task_queue.cache_set(cache_key, _json.dumps(response), ex=_CATEGORY_TREE_CACHE_TTL)
     except Exception:
         pass
 
@@ -6358,9 +6407,8 @@ async def channel_map_classify_single(
 
     # Invalidate the category-tree cache for this tenant
     try:
-        await task_queue.connect()
         cache_key = _CATEGORY_TREE_CACHE_KEY.format(tenant_id=tenant_context.tenant_id)
-        await task_queue._redis.delete(cache_key)
+        await task_queue.cache_delete(cache_key)
     except Exception:
         pass
 
@@ -6924,8 +6972,9 @@ async def analytics_roi(
 
 
 @app.get("/v1/plans")
-async def plans_list() -> dict[str, Any]:
+async def plans_list(request: Request) -> dict[str, Any]:
     """Public endpoint — list all active plans."""
+    _check_rate_limit("public", _client_ip(request), max_calls=30, window_seconds=60)
     from storage.models import Plan
     async with async_session() as session:
         rows = (await session.execute(
@@ -7152,8 +7201,14 @@ async def campaigns_get_brief(
 ) -> dict[str, Any]:
     """Get a specific product brief."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
-    brief = await session.get(ProductBrief, brief_id)
-    if brief is None or brief.tenant_id != tenant_context.tenant_id:
+    result = await session.execute(
+        select(ProductBrief).where(
+            ProductBrief.id == brief_id,
+            ProductBrief.tenant_id == tenant_context.tenant_id,
+        )
+    )
+    brief = result.scalar_one_or_none()
+    if brief is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="brief_not_found")
     return _brief_to_dict(brief)
 
@@ -7201,8 +7256,10 @@ async def campaigns_get_channels(
 ) -> dict[str, Any]:
     """List channels assigned to a campaign."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
-    campaign = await session.get(Campaign, campaign_id)
-    if campaign is None or campaign.tenant_id != tenant_context.tenant_id:
+    camp_result = await session.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_context.tenant_id)
+    )
+    if camp_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="campaign_not_found")
 
     q = (
@@ -7254,8 +7311,10 @@ async def campaigns_get_comments(
 ) -> dict[str, Any]:
     """Return recent analytics events (comments) for a campaign."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
-    campaign = await session.get(Campaign, campaign_id)
-    if campaign is None or campaign.tenant_id != tenant_context.tenant_id:
+    camp_result = await session.execute(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.tenant_id == tenant_context.tenant_id)
+    )
+    if camp_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="campaign_not_found")
 
     q = (
@@ -7429,7 +7488,6 @@ async def weekly_report_generate(
         week_start=payload.week_start,
         week_end=payload.week_end,
     )
-    await session.commit()
     return {
         "id": report.id,
         "week_start": report.week_start,
@@ -8749,7 +8807,6 @@ async def assistant_service_exception_handler(_: Request, exc: AssistantServiceE
 @app.exception_handler(Exception)
 async def unexpected_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     log.exception("unexpected ops_api exception: %s", exc)
-    print("unexpected ops_api exception:\n" + traceback.format_exc(), flush=True)
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "internal_error"})
 
 

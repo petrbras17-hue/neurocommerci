@@ -3,6 +3,8 @@
 Загрузка, валидация, назначение прокси аккаунтам.
 Поддержка статических и ротируемых (sticky session) прокси.
 """
+from __future__ import annotations
+
 
 import hashlib
 import re
