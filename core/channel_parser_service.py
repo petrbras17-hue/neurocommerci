@@ -78,6 +78,7 @@ class ChannelParserService:
         filters: dict,
         max_results: int,
         session: AsyncSession,
+        tenant_id: Optional[int] = None,
     ) -> list[dict]:
         """Search Telegram for channels matching the given keywords and filters.
 
@@ -88,7 +89,7 @@ class ChannelParserService:
         if not cleaned_keywords:
             return []
 
-        account = await self._load_account(account_id, session)
+        account = await self._load_account(account_id, session, tenant_id=tenant_id)
         if account is None:
             raise RuntimeError(f"account_not_found: account_id={account_id}")
 
@@ -376,6 +377,7 @@ class ChannelParserService:
                 filters=filters,
                 max_results=max_results,
                 session=session,
+                tenant_id=job.tenant_id,
             )
 
             if job.target_database_id is not None:

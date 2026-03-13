@@ -326,11 +326,11 @@ async def _ensure_trial_subscription(session: AsyncSession, *, tenant_id: int) -
 
 async def _build_onboarding_state(session: AsyncSession, *, tenant_id: int, workspace_id: int) -> dict[str, Any]:
     accounts_result = await session.execute(
-        select(Account).where(Account.tenant_id == tenant_id, Account.workspace_id == workspace_id).order_by(Account.id.asc())
+        select(Account).where(Account.tenant_id == tenant_id, Account.workspace_id == workspace_id).order_by(Account.id.asc()).limit(1000)
     )
     accounts = list(accounts_result.scalars().all())
     proxies_result = await session.execute(
-        select(Proxy).where(Proxy.tenant_id == tenant_id, Proxy.workspace_id == workspace_id).order_by(Proxy.id.asc())
+        select(Proxy).where(Proxy.tenant_id == tenant_id, Proxy.workspace_id == workspace_id).order_by(Proxy.id.asc()).limit(1000)
     )
     proxies = list(proxies_result.scalars().all())
     ready_accounts = sum(
@@ -970,6 +970,7 @@ async def list_user_sessions(
             RefreshToken.expires_at > now,
         )
         .order_by(RefreshToken.created_at.desc())
+        .limit(100)
     )
     rows = list(result.scalars().all())
     items = []
@@ -1028,7 +1029,7 @@ async def revoke_all_other_sessions(
             RefreshToken.tenant_id == tenant_id,
             RefreshToken.revoked_at.is_(None),
             RefreshToken.expires_at > now,
-        )
+        ).limit(200)
     )
     rows = list(result.scalars().all())
     revoked = 0

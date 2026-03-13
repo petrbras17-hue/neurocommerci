@@ -241,6 +241,7 @@ async def list_web_accounts(session: AsyncSession, *, tenant_id: int, workspace_
         .options(selectinload(Account.proxy))
         .where(Account.tenant_id == tenant_id, Account.workspace_id == workspace_id)
         .order_by(Account.created_at.asc(), Account.id.asc())
+        .limit(5000)
     )
     accounts = list(result.scalars().all())
     audit_items = build_account_audit_records(

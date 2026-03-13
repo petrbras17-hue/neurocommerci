@@ -81,6 +81,7 @@ class ChannelDB:
                 select(Channel)
                 .where(Channel.is_active.is_(True), Channel.is_blacklisted.is_(False))
                 .order_by(Channel.subscribers.desc())
+                .limit(5000)
             )
             if user_id is not None:
                 query = query.where(Channel.user_id == user_id)
@@ -99,6 +100,7 @@ class ChannelDB:
                     Channel.publish_mode == "auto_allowed",
                 )
                 .order_by(Channel.subscribers.desc())
+                .limit(5000)
             )
             if user_id is not None:
                 query = query.where(Channel.user_id == user_id)
@@ -108,7 +110,7 @@ class ChannelDB:
     async def get_all(self, user_id: int = None) -> list[Channel]:
         """Получить все каналы."""
         async with async_session() as session:
-            query = select(Channel).order_by(Channel.created_at.desc())
+            query = select(Channel).order_by(Channel.created_at.desc()).limit(10000)
             if user_id is not None:
                 query = query.where(Channel.user_id == user_id)
             result = await session.execute(query)
@@ -125,6 +127,7 @@ class ChannelDB:
                     func.lower(Channel.topic) == topic.lower(),
                 )
                 .order_by(Channel.subscribers.desc())
+                .limit(5000)
             )
             if user_id is not None:
                 query = query.where(Channel.user_id == user_id)

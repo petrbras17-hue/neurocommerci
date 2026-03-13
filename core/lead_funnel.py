@@ -67,7 +67,10 @@ async def mirror_lead_to_google_sheets(lead: LeadSnapshot) -> dict[str, Any]:
             "skipped": True,
             "error": "sheets_not_configured",
         }
-    await storage.append_lead(lead)
+    try:
+        await storage.append_lead(lead)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:400]}
     return {"ok": True, "worksheet": "Лиды"}
 
 

@@ -1261,7 +1261,7 @@ async def sync_to_sheets_snapshot():
     channels = await channel_db.get_all()
 
     async with async_session() as session:
-        accounts = list((await session.execute(select(Account))).scalars().all())
+        accounts = list((await session.execute(select(Account).limit(500))).scalars().all())
         comment_rows = list(
             (
                 await session.execute(
@@ -3412,7 +3412,7 @@ async def _sync_accounts_with_sessions(user_id: int | None = None) -> dict:
         query = select(Account)
         if user_id is not None:
             query = query.where((Account.user_id == user_id) | (Account.user_id.is_(None)))
-        result = await session.execute(query)
+        result = await session.execute(query.limit(10000))
         existing_accounts = list(result.scalars().all())
         existing_by_phone = {acc.phone: acc for acc in existing_accounts}
         discovered_session_files = {asset.session_file for asset in discovered.values()}
@@ -3570,7 +3570,7 @@ async def cb_wizard_menu(callback: CallbackQuery, db_user: User = None):
         query = select(Account).where(Account.status != "banned")
         if db_user is not None and not db_user.is_admin:
             query = query.where(Account.user_id == db_user.id)
-        result = await session.execute(query.order_by(Account.created_at.asc()))
+        result = await session.execute(query.order_by(Account.created_at.asc()).limit(500))
         accounts = list(result.scalars().all())
 
     if not accounts:

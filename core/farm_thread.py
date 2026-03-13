@@ -284,7 +284,8 @@ class FarmThread:
         tone = getattr(self.farm_config, "comment_tone", None) or TONE_POSITIVE
         language = getattr(self.farm_config, "comment_language", None) or "auto"
         custom_prompt = getattr(self.farm_config, "comment_prompt", None) or ""
-        comment_pct = getattr(self.farm_config, "comment_percentage", None) or 100
+        _raw_pct = getattr(self.farm_config, "comment_percentage", None)
+        comment_pct = _raw_pct if _raw_pct is not None else 100
 
         # Map comment_percentage to a frequency strategy
         if comment_pct is not None and comment_pct <= 30:

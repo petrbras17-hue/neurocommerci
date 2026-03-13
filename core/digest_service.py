@@ -45,6 +45,8 @@ async def _send_text(text: str) -> dict[str, Any]:
             "chat_id": chat_id,
             "message_id": int(message.message_id),
         }
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:400]}
     finally:
         await bot.session.close()
 
