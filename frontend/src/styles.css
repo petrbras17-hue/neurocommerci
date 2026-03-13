@@ -385,27 +385,21 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .auth-social-btn--bot {
-  background: #0088cc;
+  background: linear-gradient(135deg, #0088cc 0%, #0077b5 100%);
   color: #fff;
   border-color: #0088cc;
+  font-size: 0.95rem;
+  padding: 14px 20px;
+  border-radius: 10px;
 }
 .auth-social-btn--bot:hover:not(:disabled) {
-  background: #0099dd;
-  box-shadow: 0 0 16px rgba(0, 136, 204, 0.4);
+  background: linear-gradient(135deg, #0099dd 0%, #0088cc 100%);
+  box-shadow: 0 0 20px rgba(0, 136, 204, 0.35);
+  transform: translateY(-1px);
 }
 .auth-social-btn--bot:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-}
-
-.auth-social-btn--widget {
-  background: transparent;
-  border-color: rgba(255, 255, 255, 0.12);
-  cursor: default;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .bot-auth-hint {
