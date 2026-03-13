@@ -427,7 +427,7 @@ async def _replace_next_recommendation(
                 AssistantRecommendation.thread_id == thread.id,
                 AssistantRecommendation.recommendation_type == "next_step",
                 AssistantRecommendation.status == "active",
-            )
+            ).limit(500)
         )
     ).scalars().all()
     for row in rows:
@@ -582,6 +582,7 @@ async def start_business_brief(
             select(AssistantMessage)
             .where(AssistantMessage.thread_id == thread.id)
             .order_by(AssistantMessage.created_at.asc(), AssistantMessage.id.asc())
+            .limit(1000)
         )
     ).scalars().all()
     if not existing_messages:
@@ -993,6 +994,7 @@ async def list_creative_drafts(
                 CreativeDraft.workspace_id == workspace_id,
             )
             .order_by(CreativeDraft.updated_at.desc(), CreativeDraft.id.desc())
+            .limit(500)
         )
     ).scalars().all()
     return {"items": [_creative_payload(item) for item in rows], "total": len(rows)}

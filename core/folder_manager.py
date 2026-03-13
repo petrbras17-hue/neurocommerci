@@ -203,7 +203,7 @@ class FolderManager:
         )
         if account_id is not None:
             stmt = stmt.where(TelegramFolder.account_id == account_id)
-        stmt = stmt.order_by(TelegramFolder.created_at.desc())
+        stmt = stmt.order_by(TelegramFolder.created_at.desc()).limit(500)
         result = await db_session.execute(stmt)
         return list(result.scalars().all())
 

@@ -68,7 +68,7 @@ async def create_campaign_from_brief(
 
     name = campaign_name or f"Кампания: {brief.product_name or 'Продукт'}"
     keywords: list[str] = list(brief.keywords or [])
-    daily_volume: int = int(brief.daily_volume or 30)
+    daily_volume: int = int(brief.daily_volume) if brief.daily_volume is not None else 30
 
     # --- Select matching channels ---
     channel_rows: list[ChannelMapEntry] = []

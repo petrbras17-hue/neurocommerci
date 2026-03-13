@@ -91,7 +91,9 @@ def read_account_metadata(path: Path) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        import logging
+        logging.getLogger(__name__).warning("read_account_metadata: failed to read %s: %s", path, exc)
         return None
     return payload if isinstance(payload, dict) else None
 

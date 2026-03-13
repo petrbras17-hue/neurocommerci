@@ -509,7 +509,7 @@ class FarmOrchestrator:
         self, farm_id: int, session: AsyncSession
     ) -> list[FarmThreadModel]:
         result = await session.execute(
-            select(FarmThreadModel).where(FarmThreadModel.farm_id == farm_id)
+            select(FarmThreadModel).where(FarmThreadModel.farm_id == farm_id).limit(1000)
         )
         return list(result.scalars().all())
 
@@ -525,7 +525,7 @@ class FarmOrchestrator:
                 ChannelEntry.tenant_id == farm.tenant_id,
                 ChannelEntry.blacklisted == False,  # noqa: E712
                 ChannelEntry.has_comments == True,   # noqa: E712
-            )
+            ).limit(10000)
         )
         return list(result.scalars().all())
 

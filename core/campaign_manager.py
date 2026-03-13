@@ -96,6 +96,7 @@ class CampaignManager:
                     select(Campaign)
                     .where(Campaign.tenant_id == tenant_id)
                     .order_by(Campaign.created_at.desc())
+                    .limit(500)
                 )
                 count_q = select(func.count()).select_from(q.subquery())
                 total = (await session.execute(count_q)).scalar_one()
@@ -340,6 +341,7 @@ class CampaignManager:
                         CampaignRun.tenant_id == tenant_id,
                     )
                     .order_by(CampaignRun.id.desc())
+                    .limit(1000)
                 )
                 count_q = select(func.count()).select_from(q.subquery())
                 total = (await session.execute(count_q)).scalar_one()
@@ -436,7 +438,7 @@ class CampaignManager:
 
                         if (
                             fresh.budget_total_actions
-                            and (fresh.total_actions_performed or 0)
+                            and (int(fresh.total_actions_performed) if fresh.total_actions_performed is not None else 0)
                             >= fresh.budget_total_actions
                         ):
                             log.info(

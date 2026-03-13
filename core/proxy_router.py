@@ -57,6 +57,7 @@ class ProxyRouter:
                 Proxy.health_status != "dead",
             )
             .order_by(Proxy.id.asc())
+            .limit(10000)
         )
         proxies = list(result.scalars().all())
         return proxies

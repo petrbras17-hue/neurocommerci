@@ -58,8 +58,8 @@ def _session_archive_root(timestamp: str) -> Path:
 
 async def _load_reset_scope(user_id: int | None = None) -> dict[str, Any]:
     async with async_session() as session:
-        account_query = select(Account).order_by(Account.created_at.asc(), Account.id.asc())
-        channel_query = select(Channel).order_by(Channel.created_at.asc(), Channel.id.asc())
+        account_query = select(Account).order_by(Account.created_at.asc(), Account.id.asc()).limit(10000)
+        channel_query = select(Channel).order_by(Channel.created_at.asc(), Channel.id.asc()).limit(10000)
         if user_id is not None:
             account_query = account_query.where(Account.user_id == user_id)
             channel_query = channel_query.where(Channel.user_id == user_id)
@@ -77,21 +77,21 @@ async def _load_reset_scope(user_id: int | None = None) -> dict[str, Any]:
             stage_events = list(
                 (
                     await session.execute(
-                        select(AccountStageEvent).where(AccountStageEvent.account_id.in_(account_ids))
+                        select(AccountStageEvent).where(AccountStageEvent.account_id.in_(account_ids)).limit(50000)
                     )
                 ).scalars().all()
             )
             onboarding_runs = list(
                 (
                     await session.execute(
-                        select(AccountOnboardingRun).where(AccountOnboardingRun.account_id.in_(account_ids))
+                        select(AccountOnboardingRun).where(AccountOnboardingRun.account_id.in_(account_ids)).limit(50000)
                     )
                 ).scalars().all()
             )
             onboarding_steps = list(
                 (
                     await session.execute(
-                        select(AccountOnboardingStep).where(AccountOnboardingStep.account_id.in_(account_ids))
+                        select(AccountOnboardingStep).where(AccountOnboardingStep.account_id.in_(account_ids)).limit(50000)
                     )
                 ).scalars().all()
             )
@@ -100,7 +100,7 @@ async def _load_reset_scope(user_id: int | None = None) -> dict[str, Any]:
                     await session.execute(
                         select(PolicyEvent).where(
                             (PolicyEvent.account_id.in_(account_ids)) | (PolicyEvent.phone.in_(phones))
-                        )
+                        ).limit(50000)
                     )
                 ).scalars().all()
             )

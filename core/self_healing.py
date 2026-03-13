@@ -83,7 +83,7 @@ async def _create_alert(
                 PlatformAlert.tenant_id == tenant_id,
                 PlatformAlert.alert_type == alert_type,
                 PlatformAlert.is_resolved == False,  # noqa: E712
-            )
+            ).limit(1000)
         )
     ).scalars().all()
     for old in existing:
@@ -185,8 +185,8 @@ class SelfHealingEngine:
                     )
                 ).one()
 
-                total = int(counts.total or 0)
-                alive = int(counts.alive or 0) if counts.alive else 0
+                total = int(counts.total) if counts.total is not None else 0
+                alive = int(counts.alive) if counts.alive is not None else 0
                 pct = int(alive * 100 / total) if total else 100
 
                 summary: dict[str, Any] = {
@@ -267,7 +267,7 @@ class SelfHealingEngine:
                         Account.proxy_id == proxy_id,
                         Account.tenant_id == tenant_id,
                         Account.status == "active",
-                    )
+                    ).limit(1000)
                 )
                 affected_accounts = list(acc_result.scalars().all())
 
@@ -330,8 +330,8 @@ class SelfHealingEngine:
                     )
                 ).scalar()
 
-                total_px = int(px_counts.total or 0)
-                alive_px = int(px_alive_r or 0)
+                total_px = int(px_counts.total) if px_counts.total is not None else 0
+                alive_px = int(px_alive_r) if px_alive_r is not None else 0
                 pct_px = int(alive_px * 100 / total_px) if total_px else 100
 
                 cfg_row = (
@@ -509,7 +509,7 @@ class SelfHealingEngine:
                         Account.tenant_id == tenant_id,
                         Account.status == "banned",
                         Account.health_status != "banned",
-                    )
+                    ).limit(5000)
                 )
                 newly_banned = list(banned_result.scalars().all())
                 for acc in newly_banned:
@@ -524,7 +524,7 @@ class SelfHealingEngine:
                         Proxy.tenant_id == tenant_id,
                         Proxy.health_status == "dead",
                         Proxy.is_active == True,  # noqa: E712
-                    )
+                    ).limit(5000)
                 )
                 dead_proxies = list(dead_proxies_result.scalars().all())
                 for px in dead_proxies:
@@ -540,7 +540,7 @@ class SelfHealingEngine:
                         FarmThread.tenant_id == tenant_id,
                         FarmThread.status == "quarantine",
                         FarmThread.quarantine_until <= now,
-                    )
+                    ).limit(5000)
                 )
                 expired_threads = list(expired_result.scalars().all())
                 for t in expired_threads:

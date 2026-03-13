@@ -342,7 +342,7 @@ def normalize_proxy_observability(summary: dict[str, Any], cleanup: dict[str, An
 async def collect_accounts_for_user(user_id: int | None = None) -> list[Account]:
     target_user_id = await resolve_target_user_id(user_id)
     async with async_session() as session:
-        query = select(Account).order_by(Account.created_at.asc(), Account.id.asc())
+        query = select(Account).order_by(Account.created_at.asc(), Account.id.asc()).limit(10000)
         if target_user_id is not None:
             query = query.where(Account.user_id == target_user_id)
         result = await session.execute(query)
@@ -413,7 +413,7 @@ async def reconcile_stale_lifecycle(
     repaired: list[dict[str, Any]] = []
     skipped = 0
     async with async_session() as session:
-        query = select(Account).order_by(Account.created_at.asc(), Account.id.asc())
+        query = select(Account).order_by(Account.created_at.asc(), Account.id.asc()).limit(10000)
         if target_user_id is not None:
             query = query.where(Account.user_id == target_user_id)
         result = await session.execute(query)

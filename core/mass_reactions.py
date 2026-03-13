@@ -131,7 +131,7 @@ class MassReactionService:
         stmt = select(ReactionJob).where(ReactionJob.tenant_id == tenant_id)
         if status is not None:
             stmt = stmt.where(ReactionJob.status == status)
-        stmt = stmt.order_by(ReactionJob.id.desc())
+        stmt = stmt.order_by(ReactionJob.id.desc()).limit(500)
         result = await db_session.execute(stmt)
         return list(result.scalars().all())
 

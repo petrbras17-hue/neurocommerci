@@ -462,7 +462,7 @@ class JoinRequestTracker:
                         ChannelJoinRequest.tenant_id == tenant_id,
                         ChannelJoinRequest.account_id == account_id,
                         ChannelJoinRequest.status == "pending",
-                    )
+                    ).limit(5000)
                 )
                 return list(result.scalars().all())
 
@@ -483,7 +483,7 @@ class JoinRequestTracker:
                         ChannelJoinRequest.tenant_id == tenant_id,
                         ChannelJoinRequest.status == "pending",
                         ChannelJoinRequest.requested_at < cutoff,
-                    )
+                    ).limit(10000)
                 )
                 rows = list(result.scalars().all())
                 for row in rows:
@@ -1003,8 +1003,8 @@ class ChannelQualityScorer:
         """
         import math
 
-        # Base score from success_rate
-        success = float(profile.success_rate or 1.0)
+        # Base score from success_rate (0.0 is valid — means no successful comments)
+        success = float(profile.success_rate) if profile.success_rate is not None else 1.0
 
         # Slow mode penalty: 0 sec = no penalty; 3600 sec (1hr) = heavy penalty
         slow_mode = min(int(profile.slow_mode_seconds or 0), 3600)
@@ -1127,7 +1127,7 @@ class ChannelQualityScorer:
                         "username": r.username,
                         "title": r.title,
                         "ban_risk": r.ban_risk,
-                        "success_rate": round(float(r.success_rate or 1.0), 3),
+                        "success_rate": round(float(r.success_rate) if r.success_rate is not None else 1.0, 3),
                         "total_comments": r.total_comments or 0,
                         "total_bans": r.total_bans or 0,
                         "quality_score": round(float(r.quality_score or 0.0), 3) if hasattr(r, "quality_score") else None,

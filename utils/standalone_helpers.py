@@ -90,8 +90,15 @@ def load_proxy_for_phone(phone: str) -> tuple:
     if len(parts) < 4:
         _log.error("All %d proxies dead and fallback #%d malformed for %s", tested, fallback_idx, phone)
         parts = lines[0].strip().split(":")
+    if len(parts) < 4:
+        _log.error("All proxy lines malformed for %s, returning first line raw", phone)
+        return (3, parts[0] if parts else "127.0.0.1", int(parts[1]) if len(parts) > 1 else 1080, True, parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
     _log.warning("All %d proxies dead, fallback #%d for %s", tested, fallback_idx, phone)
-    return (3, parts[0], int(parts[1]), True, parts[2], parts[3])
+    try:
+        return (3, parts[0], int(parts[1]), True, parts[2], parts[3])
+    except (ValueError, IndexError) as exc:
+        _log.error("Proxy line parse error for %s: %s", phone, exc)
+        return (3, parts[0], 1080, True, parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
 
 
 def load_account_json(phone: str) -> dict:

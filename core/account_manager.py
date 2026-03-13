@@ -61,7 +61,7 @@ class AccountManager:
                 query = query.where(Account.user_id == user_id)
             if not include_banned:
                 query = query.where(Account.status != "banned")
-            result = await session.execute(query)
+            result = await session.execute(query.limit(10000))
             accounts = result.scalars().all()
             log.info(f"Загружено аккаунтов из БД: {len(accounts)}")
             return list(accounts)

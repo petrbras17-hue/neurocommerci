@@ -355,8 +355,9 @@ class AccountWorker:
         """Report worker health to Redis."""
         while self._running:
             try:
+                phones_snapshot = list(self.claimed_phones)
                 connected = sum(
-                    1 for p in self.claimed_phones
+                    1 for p in phones_snapshot
                     if self.session_mgr.get_client(p) and self.session_mgr.get_client(p).is_connected()
                 )
                 self._metrics["connected"] = connected
@@ -373,13 +374,20 @@ class AccountWorker:
     async def _claim_renewal_loop(self):
         """Renew Redis claims before they expire."""
         while self._running:
-            for phone in self.claimed_phones[:]:
-                ok = await redis_state.renew_claim(phone, self.worker_id, CLAIM_TTL)
-                if not ok:
-                    log.warning(f"Worker {self.worker_id}: lost claim on {phone}")
-                    self.claimed_phones.remove(phone)
-                    if PINNED_PHONE and phone == PINNED_PHONE:
-                        self._set_claim_blocker("claim_lost")
+            try:
+                for phone in self.claimed_phones[:]:
+                    try:
+                        ok = await redis_state.renew_claim(phone, self.worker_id, CLAIM_TTL)
+                    except Exception as exc:
+                        log.error(f"Worker {self.worker_id}: claim renewal error for {phone}: {exc}")
+                        continue
+                    if not ok:
+                        log.warning(f"Worker {self.worker_id}: lost claim on {phone}")
+                        self.claimed_phones.remove(phone)
+                        if PINNED_PHONE and phone == PINNED_PHONE:
+                            self._set_claim_blocker("claim_lost")
+            except Exception as exc:
+                log.error(f"Worker {self.worker_id}: claim renewal loop error: {exc}")
             await asyncio.sleep(CLAIM_TTL // 2)
 
     async def _comment_loop(self):
@@ -587,7 +595,7 @@ class AccountWorker:
         """Keep-alive activity for all accounts."""
         await asyncio.sleep(random.uniform(300, 900))  # Stagger
         while self._running:
-            for phone in self.claimed_phones:
+            for phone in list(self.claimed_phones):
                 client = self.session_mgr.get_client(phone)
                 if not client or not client.is_connected():
                     continue
