@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Set
 
 from loguru import logger
 
 from storage.models import UsageEvent
 from storage.sqlite_db import apply_session_rls_context, async_session
+
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: Set[asyncio.Task] = set()
 
 
 def _normalize_meta(meta: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -40,6 +43,8 @@ async def _safe_insert_usage_event(tenant_id: int, event_type: str, meta: dict[s
 async def log_usage_event(tenant_id: int, event_type: str, meta: dict[str, Any] | None = None) -> None:
     """Fire-and-forget usage event logging."""
     try:
-        asyncio.create_task(_safe_insert_usage_event(int(tenant_id), str(event_type), meta))
+        task = asyncio.create_task(_safe_insert_usage_event(int(tenant_id), str(event_type), meta))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except Exception as exc:
         logger.warning(f"Usage event scheduling failed: {exc}")

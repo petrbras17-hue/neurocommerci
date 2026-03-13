@@ -116,7 +116,6 @@ class Settings(BaseSettings):
     WARMUP_MODERATE_LIMIT: int = Field(default=8)    # Дни 8-14: 5-8 комментов
 
     # --- Sprint 6: Warmup Engine ---
-    WARMUP_DEFAULT_MODE: str = Field(default="conservative")  # conservative | moderate | aggressive
     WARMUP_DEFAULT_ACTIONS_PER_HOUR: int = Field(default=5)
     WARMUP_DEFAULT_SESSION_MINUTES: int = Field(default=30)
     WARMUP_DEFAULT_INTERVAL_HOURS: int = Field(default=6)

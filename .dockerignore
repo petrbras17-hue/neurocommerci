@@ -18,10 +18,16 @@ venv/
 
 # Secrets and env
 .env
+.env.*
 .env.local
+.env.development
+.env.staging
+.env.production
 credentials.json
 token.json
 service_account.json
+*.pem
+*.key
 
 # Runtime data that must stay outside image
 /data/
@@ -40,6 +46,27 @@ service_account.json
 *.db-shm
 *.log
 
+# Claude Code / IDE project config
+.claude/
+.playwright-cli/
+.playwright-mcp/
+
+# Documentation and knowledge (not needed at runtime)
+knowledge/
+docs/
+*.md
+!README.md
+
+# Tests
+tests/
+
 # Artifacts
 artifacts/
 ops/runtime/
+output/
+captcha*.png
+channel-map*.png
+
+# Session backups
+data/session_backups/
+data/reset_archives/

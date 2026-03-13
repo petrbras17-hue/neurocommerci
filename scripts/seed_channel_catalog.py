@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import text
 from storage.sqlite_db import init_db, async_session
 
@@ -117,7 +117,7 @@ async def seed():
                 print(f"Seed data already exists ({existing} entries). Skipping.")
                 return
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             for ch in SEED_CHANNELS:
                 await session.execute(
                     text("""

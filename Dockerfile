@@ -25,10 +25,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 COPY --from=frontend-build /frontend/dist /app/frontend/dist
 
-# Create data directories
-RUN mkdir -p data/sessions data/logs data/avatars
+# Create non-root user for runtime
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# Create data directories with correct ownership
+RUN mkdir -p data/sessions data/logs data/avatars && \
+    chown -R appuser:appuser /app
 
 # Persistent runtime data mount point
 VOLUME ["/app/data"]
+
+USER appuser
 
 CMD ["python", "main.py"]

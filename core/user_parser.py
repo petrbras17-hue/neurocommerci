@@ -137,14 +137,10 @@ class UserParser:
                 if ts is not None:
                     if hasattr(ts, "timestamp"):
                         from datetime import datetime
-                        last_seen_dt = datetime.utcfromtimestamp(ts.timestamp()).replace(
-                            tzinfo=timezone.utc
-                        )
+                        last_seen_dt = datetime.fromtimestamp(ts.timestamp(), tz=timezone.utc)
                     elif isinstance(ts, int):
                         from datetime import datetime
-                        last_seen_dt = datetime.utcfromtimestamp(ts).replace(
-                            tzinfo=timezone.utc
-                        )
+                        last_seen_dt = datetime.fromtimestamp(ts, tz=timezone.utc)
 
             row = UserParsingResult(
                 tenant_id=tenant_id,

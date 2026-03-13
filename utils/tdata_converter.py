@@ -254,6 +254,14 @@ def convert_tdata_zip(
         tmp_path = Path(tmpdir)
         try:
             with zipfile.ZipFile(BytesIO(zip_data)) as zf:
+                # Zip-slip protection: reject entries that escape the target dir
+                for member in zf.infolist():
+                    target = (tmp_path / member.filename).resolve()
+                    if not str(target).startswith(str(tmp_path.resolve())):
+                        return TDataConversionResult(
+                            accounts=[],
+                            errors=[f"zip-slip detected: {member.filename}"],
+                        )
                 zf.extractall(tmp_path)
         except zipfile.BadZipFile:
             return TDataConversionResult(accounts=[], errors=["invalid ZIP archive"])
