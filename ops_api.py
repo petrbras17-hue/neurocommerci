@@ -5824,7 +5824,7 @@ async def channel_map_list(
 
 @app.get("/v1/channel-map/geo")
 async def channel_map_geo(
-    limit: int = Query(50000, ge=1, le=1000000),
+    limit: int = Query(50000, ge=1, le=100000),
     category: str | None = Query(None),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),

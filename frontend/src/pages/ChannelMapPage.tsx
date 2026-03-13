@@ -926,6 +926,16 @@ function ContinentLines() {
     });
   }, []);
 
+  // Dispose geometries and materials on unmount
+  useEffect(() => {
+    return () => {
+      for (const obj of lineObjects) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
+    };
+  }, [lineObjects]);
+
   return (
     <>
       {lineObjects.map((obj, i) => (
@@ -1013,6 +1023,16 @@ function GlobeGrid() {
     });
   }, [linesData]);
 
+  // Dispose geometries and materials on unmount
+  useEffect(() => {
+    return () => {
+      for (const obj of lineObjects) {
+        obj.geometry.dispose();
+        (obj.material as THREE.Material).dispose();
+      }
+    };
+  }, [lineObjects]);
+
   return (
     <>
       {lineObjects.map((obj, i) => (
@@ -1040,22 +1060,28 @@ function GlobePoints({
   onSelect,
 }: GlobePointsProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const timeRef = useRef(0);
   const { camera, gl } = useThree();
 
-  // Channels with valid lat/lng or random distribution for those without
+  // Compute per-instance data ONCE (or when channels/filters change).
+  // Issue 1 fix: use real lat/lng from channel data when available; fall back to
+  // a deterministic hash-based position only if both fields are missing/zero.
   const positioned = useMemo(() => {
     const queryLower = filterQuery.trim().toLowerCase();
     return channels.map((ch, idx) => {
-      // Use lat/lng from data, or distribute pseudo-randomly based on id
-      const seed = (ch.id * 2654435761) >>> 0;
-      const lat =
-        ((seed % 160) - 80) as number;
-      const lng =
-        (((seed >> 8) % 360) - 180) as number;
+      let lat: number;
+      let lng: number;
+      if (ch.lat != null && ch.lng != null && (ch.lat !== 0 || ch.lng !== 0)) {
+        lat = ch.lat;
+        lng = ch.lng;
+      } else {
+        // Fallback: deterministic pseudo-random spread from channel id
+        const seed = (ch.id * 2654435761) >>> 0;
+        lat = (seed % 160) - 80;
+        lng = ((seed >> 8) % 360) - 180;
+      }
       const color = new THREE.Color(getCategoryColor(ch.category));
       const members = ch.member_count ?? 0;
-      const size = 0.5 + Math.min(Math.log1p(members) / Math.log1p(10_000_000) * 3.5, 3.5);
+      const baseScale = 0.5 + Math.min(Math.log1p(members) / Math.log1p(10_000_000) * 3.5, 3.5);
       const isFiltering = filterCategory !== "" || queryLower !== "";
       const isMatch =
         !isFiltering ||
@@ -1063,46 +1089,50 @@ function GlobePoints({
           (queryLower === "" ||
             (ch.title?.toLowerCase().includes(queryLower) ?? false) ||
             (ch.username?.toLowerCase().includes(queryLower) ?? false)));
-      return { ch, lat, lng, color, size, isMatch, idx };
+      // Pre-compute the world-space position once
+      const pos = latLngToVec3(lat, lng, 1.018);
+      return { ch, pos, color, baseScale, isMatch, idx };
     });
   }, [channels, filterCategory, filterQuery]);
 
+  // Issue 2 fix: set matrices ONCE when positioned data changes, not every frame.
+  // Only matrix positions and base colours need a full rebuild.
   useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
     const dummy = new THREE.Object3D();
-    positioned.forEach(({ lat, lng, size, isMatch }, i) => {
-      const [x, y, z] = latLngToVec3(lat, lng, 1.018);
-      dummy.position.set(x, y, z);
+    positioned.forEach(({ pos, baseScale, isMatch, color }, i) => {
+      dummy.position.set(pos[0], pos[1], pos[2]);
       dummy.lookAt(0, 0, 0);
-      const s = size * (isMatch ? 1 : 0.3);
+      const s = baseScale * (isMatch ? 1 : 0.3);
       dummy.scale.set(s, s, s);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
-      const c = isMatch ? positioned[i].color : new THREE.Color("#333333");
+      const c = isMatch ? color : new THREE.Color("#333333");
       mesh.setColorAt(i, c);
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }, [positioned]);
 
+  // Issue 2 fix: in useFrame only apply a subtle pulse via scale — no lat/lng
+  // recalculation, no new Object3D allocation per point per frame.
+  // We re-use a single dummy Object3D and only write updated scale matrices.
+  const frameDummy = useMemo(() => new THREE.Object3D(), []);
   useFrame((state) => {
-    timeRef.current = state.clock.elapsedTime;
     const mesh = meshRef.current;
     if (!mesh || positioned.length === 0) return;
-    // Pulse animation: scale points slightly
-    const dummy = new THREE.Object3D();
     const t = state.clock.elapsedTime;
-    positioned.forEach(({ lat, lng, size, isMatch, idx }, i) => {
-      const [x, y, z] = latLngToVec3(lat, lng, 1.018);
-      dummy.position.set(x, y, z);
-      dummy.lookAt(0, 0, 0);
+    for (let i = 0; i < positioned.length; i++) {
+      const { pos, baseScale, isMatch, idx } = positioned[i];
+      frameDummy.position.set(pos[0], pos[1], pos[2]);
+      frameDummy.lookAt(0, 0, 0);
       const pulse = 1 + Math.sin(t * 2 + idx * 0.3) * 0.15;
-      const s = size * (isMatch ? 1 : 0.25) * pulse;
-      dummy.scale.set(s, s, s);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
+      const s = baseScale * (isMatch ? 1 : 0.25) * pulse;
+      frameDummy.scale.set(s, s, s);
+      frameDummy.updateMatrix();
+      mesh.setMatrixAt(i, frameDummy.matrix);
+    }
     mesh.instanceMatrix.needsUpdate = true;
   });
 

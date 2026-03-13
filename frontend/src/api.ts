@@ -501,6 +501,19 @@ export type ChannelMapEntry = {
   source: string | null;
   avatar_url: string | null;
   last_indexed_at: string | null; created_at: string | null;
+  lat?: number; lng?: number;
+};
+
+export type GeoPoint = {
+  id: number;
+  lat: number;
+  lng: number;
+  cat: string;
+  m: number;
+  t: string;
+  u: string;
+  lang: string;
+  c: boolean;
 };
 
 export type ChannelMapListParams = {
@@ -536,6 +549,11 @@ export const channelMapApi = {
     apiFetch<{items: ChannelMapEntry[]; total: number}>("/v1/channel-map/search", {method: "POST", accessToken: token, json: data}),
   categories: (token: string) => apiFetch<{categories: string[]}>("/v1/channel-map/categories", {accessToken: token}),
   stats: (token: string) => apiFetch<ChannelMapStats>("/v1/channel-map/stats", {accessToken: token}),
+  geo: async (token: string, limit = 50000, category?: string): Promise<{points: GeoPoint[], total: number}> => {
+    const params = new URLSearchParams({limit: String(limit)});
+    if (category) params.set("category", category);
+    return apiFetch<{points: GeoPoint[], total: number}>(`/v1/channel-map/geo?${params}`, {accessToken: token});
+  },
 };
 
 // --- Channel Intelligence API ---
