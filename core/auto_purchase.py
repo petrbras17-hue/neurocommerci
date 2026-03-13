@@ -352,7 +352,9 @@ class AutoPurchaseManager:
                 f"purchase_request {request_id} is {req.status}, cannot reject"
             )
         req.status = "rejected"
-        req.approved_by = rejected_by  # reusing approved_by as "decided_by"
+        # Note: model has no rejected_by/rejected_at columns — reusing approved_by/approved_at
+        # as generic "decided_by"/"decided_at" fields. Status column distinguishes approve vs reject.
+        req.approved_by = rejected_by
         req.approved_at = utcnow()
         await session.flush()
         log.info("auto_purchase: rejected request_id=%s by user=%s", request_id, rejected_by)

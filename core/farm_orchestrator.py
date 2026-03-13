@@ -145,11 +145,17 @@ class FarmOrchestrator:
             "tenant_id": farm.tenant_id,
         }
 
-        # Spawn async tasks for each thread
-        tasks = [
-            asyncio.create_task(thread.run(), name=f"farm_{farm_id}_thread_{thread.thread_id}")
-            for thread in threads
-        ]
+        # Spawn async tasks for each thread with error logging callbacks
+        def _on_thread_done(t: asyncio.Task, fid: int = farm_id) -> None:
+            exc = t.exception() if not t.cancelled() else None
+            if exc:
+                log.error("farm %s thread %s failed: %s", fid, t.get_name(), exc, exc_info=exc)
+
+        tasks = []
+        for thread in threads:
+            task = asyncio.create_task(thread.run(), name=f"farm_{farm_id}_thread_{thread.thread_id}")
+            task.add_done_callback(_on_thread_done)
+            tasks.append(task)
         self._active_farms[farm_id]["tasks"] = tasks
 
         await self.publish_event(

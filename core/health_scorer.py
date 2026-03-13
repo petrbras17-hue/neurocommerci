@@ -260,7 +260,7 @@ class HealthScorer:
         """
         await apply_session_rls_context(session, tenant_id=tenant_id)
         result = await session.execute(
-            select(Account).where(Account.tenant_id == tenant_id)
+            select(Account).where(Account.tenant_id == tenant_id).limit(5000)
         )
         accounts: list[Account] = list(result.scalars().all())
         log.info(
@@ -298,6 +298,6 @@ class HealthScorer:
         result = await session.execute(
             select(AccountHealthScore).where(
                 AccountHealthScore.tenant_id == tenant_id
-            )
+            ).limit(5000)
         )
         return list(result.scalars().all())

@@ -146,7 +146,7 @@ class CampaignManager:
                     comment_language=data.get("comment_language", "ru"),
                     schedule_type=data.get("schedule_type", "continuous"),
                     schedule_config=data.get("schedule_config"),
-                    budget_daily_actions=int(data.get("budget_daily_actions") or 100),
+                    budget_daily_actions=int(data["budget_daily_actions"]) if data.get("budget_daily_actions") is not None else 100,
                     budget_total_actions=data.get("budget_total_actions"),
                 )
                 session.add(campaign)

@@ -118,6 +118,7 @@ class QuarantineManager:
                 FarmThread.status == "quarantine",
                 FarmThread.quarantine_until > now,
             )
+            .limit(2000)
         )
         rows = result.all()
 
@@ -159,7 +160,7 @@ class QuarantineManager:
                 FarmThread.tenant_id == tenant_id,
                 FarmThread.status == "quarantine",
                 FarmThread.quarantine_until <= now,
-            )
+            ).limit(2000)
         )
         expired_threads: list[FarmThread] = list(result.scalars().all())
         released_account_ids: set[int] = set()

@@ -76,19 +76,23 @@ URL продукта: {url}
 suggested_styles — из набора: question, agree, expert, casual, hater, flirt, native.
 """.strip()
 
-    result = await route_ai_task(
-        session=session,
-        task_type="product_analysis",
-        surface="product_analyzer",
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        user_id=user_id,
-        prompt=prompt,
-        context={},
-    )
+    try:
+        result = await route_ai_task(
+            session=session,
+            task_type="product_analysis",
+            surface="product_analyzer",
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            prompt=prompt,
+            context={},
+        )
+    except Exception as exc:
+        log.error("product_analysis AI call exception: %s", exc)
+        result = None
 
     parsed: dict[str, Any] = {}
-    if result.ok and result.parsed:
+    if result is not None and result.ok and result.parsed:
         parsed = result.parsed
     elif not result.ok:
         log.warning("product_analysis AI call failed: %s", result.reason_code)
