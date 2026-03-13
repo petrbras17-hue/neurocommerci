@@ -7037,47 +7037,62 @@ async def channel_map_similar(
 _ALLOWED_BULK_ACTIONS = {"add_to_farm", "blacklist", "add_to_db", "track"}
 
 
+class ChannelMapBulkActionPayload(BaseModel):
+    action: str
+    channel_ids: list[int]
+
+
 @app.post("/v1/channel-map/bulk-action")
 async def channel_map_bulk_action(
-    payload: dict = Body(...),
+    payload: ChannelMapBulkActionPayload,
     tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
     """Apply a bulk action to selected channel-map entries (stub — wired in CM-4)."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
 
-    action = payload.get("action")
-    channel_ids = payload.get("channel_ids")
-
-    if action not in _ALLOWED_BULK_ACTIONS:
+    if payload.action not in _ALLOWED_BULK_ACTIONS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"invalid action, allowed: {sorted(_ALLOWED_BULK_ACTIONS)}",
         )
-    if not isinstance(channel_ids, list) or not all(isinstance(i, int) for i in channel_ids):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="channel_ids must be a list of integers",
-        )
-    if len(channel_ids) > 100:
+    if len(payload.channel_ids) > 100:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="maximum 100 channel_ids per bulk-action request",
         )
-    if len(channel_ids) == 0:
+    if len(payload.channel_ids) == 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="channel_ids must not be empty",
         )
 
+    # Verify all channel IDs are visible to this tenant
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    visible_rows = (
+        await session.execute(
+            select(ChannelMapEntry.id).where(
+                tf, ChannelMapEntry.id.in_(payload.channel_ids)
+            )
+        )
+    ).scalars().all()
+    visible_ids = set(visible_rows)
+    invalid_ids = [cid for cid in payload.channel_ids if cid not in visible_ids]
+    if invalid_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"channel_ids not found or not accessible: {invalid_ids[:10]}",
+        )
+
     log.info(
         "channel_map_bulk_action tenant=%s action=%s count=%d ids=%s",
         tenant_context.tenant_id,
-        action,
-        len(channel_ids),
-        channel_ids[:10],
+        payload.action,
+        len(payload.channel_ids),
+        payload.channel_ids[:10],
     )
 
-    return {"status": "ok", "action": action, "count": len(channel_ids)}
+    return {"status": "ok", "action": payload.action, "count": len(payload.channel_ids)}
 
 
 # ---------------------------------------------------------------------------

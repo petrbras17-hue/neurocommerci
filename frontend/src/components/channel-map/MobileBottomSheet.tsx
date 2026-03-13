@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // NEURO COMMENTING — Channel Map: Mobile Bottom Sheet
 // ═══════════════════════════════════════════════════════════════════════════════
-import { useRef } from "react";
+import { useRef, useMemo } from "react";
 import { motion, useAnimation, PanInfo } from "framer-motion";
 import type { ChannelMapEntry, GeoPoint } from "../../api";
 import { DESIGN_TOKENS as T, getCategoryMeta, formatNumber, formatER } from "./constants";
@@ -47,7 +47,7 @@ export function MobileBottomSheet(props: MobileBottomSheetProps) {
     controls.start({ height: `${SNAP[next]}vh` });
   };
 
-  const sorted = [...geoPoints].sort((a, b) => b.m - a.m).slice(0, 50);
+  const sorted = useMemo(() => [...geoPoints].sort((a, b) => b.m - a.m).slice(0, 50), [geoPoints]);
   const cm = ch ? getCategoryMeta(ch.category) : null;
   const summary = ch
     ? `${cm?.icon} ${ch.title ?? ch.username ?? "Канал"}`

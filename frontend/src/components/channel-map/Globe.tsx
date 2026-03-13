@@ -83,10 +83,12 @@ const TOOLTIP_STYLE =
   "font-family:'Geist Sans',sans-serif;font-size:12px;line-height:1.5;" +
   "pointer-events:none;white-space:nowrap;";
 
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function hexTooltip(hex: HexBin): string {
   const count = hex.points.length;
-  // Compute average ER across points that have an `er` field (optional field)
-  // GeoPoint does not expose ER directly — show member total instead.
   const totalMembers = hex.sumWeight;
   return (
     `<div style="${TOOLTIP_STYLE}">` +
@@ -99,8 +101,8 @@ function hexTooltip(hex: HexBin): string {
 function pointTooltip(point: GeoPoint): string {
   return (
     `<div style="${TOOLTIP_STYLE}">` +
-    `<b>${point.t}</b><br/>` +
-    `@${point.u}<br/>` +
+    `<b>${esc(point.t)}</b><br/>` +
+    `@${esc(point.u)}<br/>` +
     `${formatNumber(point.m)} подписчиков` +
     `</div>`
   );
@@ -225,6 +227,28 @@ export function GlobeView(props: GlobeViewProps) {
     [],
   );
 
+  // ── Stable accessors for geo fields (avoids re-triggering scene rebuilds) ──
+
+  const getLat = useCallback((d: object): number => (d as GeoPoint).lat, []);
+  const getLng = useCallback((d: object): number => (d as GeoPoint).lng, []);
+  const getWeight = useCallback((d: object): number => (d as GeoPoint).m, []);
+  const getArcStartLat = useCallback((d: object): number => (d as ArcData).startLat, []);
+  const getArcStartLng = useCallback((d: object): number => (d as ArcData).startLng, []);
+  const getArcEndLat = useCallback((d: object): number => (d as ArcData).endLat, []);
+  const getArcEndLng = useCallback((d: object): number => (d as ArcData).endLng, []);
+  const getArcColor = useCallback((d: object): string => (d as ArcData).color ?? "rgba(0,255,136,0.3)", []);
+  const getArcStroke = useCallback((d: object): number => (d as ArcData).stroke ?? 0.5, []);
+  const getArcLabel = useCallback((d: object): string => {
+    const arc = d as ArcData;
+    return arc.label ? `<div style="${TOOLTIP_STYLE}">${esc(arc.label)}</div>` : "";
+  }, []);
+  const getRingLat = useCallback((d: object): number => (d as RingData).lat, []);
+  const getRingLng = useCallback((d: object): number => (d as RingData).lng, []);
+  const getRingColor = useCallback((d: object) => () => (d as RingData).color ?? "rgba(0,255,136,0.6)", []);
+  const getRingMaxRadius = useCallback((d: object): number => (d as RingData).maxRadius ?? 3, []);
+  const getRingSpeed = useCallback((d: object): number => (d as RingData).propagationSpeed ?? 2, []);
+  const getRingRepeat = useCallback((d: object): number => (d as RingData).repeatPeriod ?? 800, []);
+
   // ── Click handlers ────────────────────────────────────────────────────────
 
   const handlePointClick = useCallback(
@@ -271,9 +295,9 @@ export function GlobeView(props: GlobeViewProps) {
         animateIn={true}
         // ── Hex-bin layer (far/medium zoom) ──────────────────────────────────
         hexBinPointsData={displayMode === "hex" ? filteredPoints : []}
-        hexBinPointLat={(d: object) => (d as GeoPoint).lat}
-        hexBinPointLng={(d: object) => (d as GeoPoint).lng}
-        hexBinPointWeight={(d: object) => (d as GeoPoint).m}
+        hexBinPointLat={getLat}
+        hexBinPointLng={getLng}
+        hexBinPointWeight={getWeight}
         hexBinResolution={hexBinResolution}
         hexBinMerge={true}
         hexAltitude={getHexAltitude}
@@ -283,8 +307,8 @@ export function GlobeView(props: GlobeViewProps) {
         onHexClick={handleHexClick}
         // ── Points layer (medium/close zoom) ──────────────────────────────────
         pointsData={displayMode !== "hex" ? filteredPoints : []}
-        pointLat={(d: object) => (d as GeoPoint).lat}
-        pointLng={(d: object) => (d as GeoPoint).lng}
+        pointLat={getLat}
+        pointLng={getLng}
         pointAltitude={0.01}
         pointRadius={getPointRadius}
         pointColor={getPointColor}
@@ -293,35 +317,30 @@ export function GlobeView(props: GlobeViewProps) {
         onPointClick={handlePointClick}
         // ── HTML labels (detailed only, desktop only) ──────────────────────────
         htmlElementsData={topPoints}
-        htmlLat={(d: object) => (d as GeoPoint).lat}
-        htmlLng={(d: object) => (d as GeoPoint).lng}
+        htmlLat={getLat}
+        htmlLng={getLng}
         htmlAltitude={0.02}
         htmlElement={getHtmlElement}
         // ── Arcs layer (channel relationships) ──────────────────────────────────
         arcsData={arcsData ?? []}
-        arcStartLat={(d: object) => (d as ArcData).startLat}
-        arcStartLng={(d: object) => (d as ArcData).startLng}
-        arcEndLat={(d: object) => (d as ArcData).endLat}
-        arcEndLng={(d: object) => (d as ArcData).endLng}
-        arcColor={(d: object) => (d as ArcData).color ?? "rgba(0,255,136,0.3)"}
-        arcStroke={(d: object) => (d as ArcData).stroke ?? 0.5}
+        arcStartLat={getArcStartLat}
+        arcStartLng={getArcStartLng}
+        arcEndLat={getArcEndLat}
+        arcEndLng={getArcEndLng}
+        arcColor={getArcColor}
+        arcStroke={getArcStroke}
         arcDashLength={0.4}
         arcDashGap={0.2}
         arcDashAnimateTime={1500}
-        arcLabel={(d: object) => {
-          const arc = d as ArcData;
-          return arc.label
-            ? `<div style="${TOOLTIP_STYLE}">${arc.label}</div>`
-            : "";
-        }}
+        arcLabel={getArcLabel}
         // ── Rings layer (pulse on active channels) ──────────────────────────────
         ringsData={ringsData ?? []}
-        ringLat={(d: object) => (d as RingData).lat}
-        ringLng={(d: object) => (d as RingData).lng}
-        ringColor={(d: object) => () => (d as RingData).color ?? "rgba(0,255,136,0.6)"}
-        ringMaxRadius={(d: object) => (d as RingData).maxRadius ?? 3}
-        ringPropagationSpeed={(d: object) => (d as RingData).propagationSpeed ?? 2}
-        ringRepeatPeriod={(d: object) => (d as RingData).repeatPeriod ?? 800}
+        ringLat={getRingLat}
+        ringLng={getRingLng}
+        ringColor={getRingColor}
+        ringMaxRadius={getRingMaxRadius}
+        ringPropagationSpeed={getRingSpeed}
+        ringRepeatPeriod={getRingRepeat}
         // ── Mobile perf ────────────────────────────────────────────────────────
         {...(isMobile ? { pointResolution: 8 } : {})}
       />

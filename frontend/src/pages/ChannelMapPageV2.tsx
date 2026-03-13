@@ -343,7 +343,9 @@ export default function ChannelMapPageV2() {
           top: 0,
           left: 0,
           right: globe.detailPanelOpen && !globe.isMobile ? 380 : 0,
-          bottom: globe.isMobile ? "30vh" : 0,
+          bottom: globe.isMobile
+            ? `${({ peek: 30, half: 60, full: 90 } as const)[globe.bottomSheetPosition]}vh`
+            : 0,
           transition: "right 0.3s ease, bottom 0.3s ease",
         }}
       >
@@ -444,7 +446,9 @@ export default function ChannelMapPageV2() {
         <div
           style={{
             position: "absolute",
-            bottom: globe.isMobile ? "32vh" : 20,
+            bottom: globe.isMobile
+              ? `calc(${({ peek: 30, half: 60, full: 90 } as const)[globe.bottomSheetPosition]}vh + 8px)`
+              : 20,
             right: 20,
             zIndex: 30,
             ...glassStyle,
