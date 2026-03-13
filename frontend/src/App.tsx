@@ -31,6 +31,8 @@ import { AdminPage } from "./pages/AdminPage";
 import { PlatformHealthPage } from "./pages/PlatformHealthPage";
 import { CommentDashboardPage } from "./pages/CommentDashboardPage";
 import { SessionTopologyPage } from "./pages/SessionTopologyPage";
+import OfflinePage from "./pages/OfflinePage";
+import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
 const ChannelMapPage = React.lazy(() =>
   import("./pages/ChannelMapPage").then((m) => ({ default: m.ChannelMapPage }))
@@ -57,6 +59,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/offline" element={<OfflinePage />} />
         <Route path="/complete-profile" element={<ProfileCompletionPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
@@ -94,6 +97,7 @@ export default function App() {
           </Route>
         </Route>
       </Routes>
+      <PWAInstallPrompt />
     </ErrorBoundary>
   );
 }

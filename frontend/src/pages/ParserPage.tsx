@@ -434,8 +434,8 @@ export function ParserPage() {
       setStatusMessage("Задача парсинга запущена.");
       await loadJobs();
       // Start polling the new job immediately.
-      if (created && typeof (created as { job_id?: number }).job_id === "number") {
-        startPolling((created as { job_id: number }).job_id);
+      if (created && typeof (created as unknown as { job_id?: number }).job_id === "number") {
+        startPolling((created as unknown as { job_id: number }).job_id);
       }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "parsing_failed");
