@@ -147,6 +147,12 @@ async def start_bot_polling(token: str) -> None:
 
     log.info("Starting Telegram auth bot polling...")
     _polling_task = asyncio.create_task(_run_polling())
+    def _on_polling_done(t: asyncio.Task) -> None:
+        if not t.cancelled():
+            exc = t.exception()
+            if exc:
+                log.error("auth bot polling task failed: %s", exc, exc_info=exc)
+    _polling_task.add_done_callback(_on_polling_done)
 
 
 async def _run_polling():
