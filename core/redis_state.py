@@ -37,7 +37,10 @@ class RedisState:
         """Get rate limiter state for account."""
         data = await self._redis.hget("rate_state", phone)
         if data:
-            return json.loads(data)
+            try:
+                return json.loads(data)
+            except (json.JSONDecodeError, TypeError):
+                return {}
         return {}
 
     async def set_rate_state(self, phone: str, state: dict):
@@ -178,7 +181,10 @@ class RedisState:
         result = {}
         now = time.time()
         for worker_id, info_str in data.items():
-            info = json.loads(info_str)
+            try:
+                info = json.loads(info_str)
+            except (json.JSONDecodeError, TypeError):
+                continue
             if now - info["last_seen"] < 600:  # 10 min timeout
                 result[worker_id] = info
         return result

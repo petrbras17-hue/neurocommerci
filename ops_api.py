@@ -2016,7 +2016,7 @@ async def list_workspaces(
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, object]:
     rows = (
-        await session.execute(select(Workspace).order_by(Workspace.id))
+        await session.execute(select(Workspace).order_by(Workspace.id).limit(200))
     ).scalars().all()
 
     items = [
@@ -3857,7 +3857,7 @@ async def farm_get(
 
     threads = (
         await session.execute(
-            select(FarmThread).where(FarmThread.farm_id == farm_id).order_by(FarmThread.thread_index)
+            select(FarmThread).where(FarmThread.farm_id == farm_id).order_by(FarmThread.thread_index).limit(500)
         )
     ).scalars().all()
 
@@ -4001,7 +4001,7 @@ async def farm_start(
     # Remove old threads from a prior run
     old_threads = (
         await session.execute(
-            select(FarmThread).where(FarmThread.farm_id == farm_id)
+            select(FarmThread).where(FarmThread.farm_id == farm_id).limit(1000)
         )
     ).scalars().all()
     for t in old_threads:
@@ -4319,7 +4319,7 @@ async def channel_db_import(
     # Fetch existing usernames to detect duplicates
     existing_usernames_rows = (
         await session.execute(
-            select(ChannelEntry.username).where(ChannelEntry.database_id == db_id)
+            select(ChannelEntry.username).where(ChannelEntry.database_id == db_id).limit(50000)
         )
     ).scalars().all()
     existing_usernames = {u.lower() for u in existing_usernames_rows if u}
@@ -4711,6 +4711,7 @@ async def profiles_template_list(
                 ProfileTemplate.workspace_id == tenant_context.workspace_id,
             )
             .order_by(ProfileTemplate.id.desc())
+            .limit(500)
         )
     ).scalars().all()
     items = [_serialize_profile_template(t) for t in rows]
@@ -4809,7 +4810,7 @@ async def warmup_list(
         await session.execute(
             select(WarmupConfig).where(
                 WarmupConfig.tenant_id == tenant_context.tenant_id
-            ).order_by(WarmupConfig.created_at.desc())
+            ).order_by(WarmupConfig.created_at.desc()).limit(500)
         )
     ).scalars().all()
 
@@ -6008,6 +6009,7 @@ async def channel_map_categories(
             select(distinct(ChannelMapEntry.category))
             .where(tf, ChannelMapEntry.category.isnot(None))
             .order_by(ChannelMapEntry.category)
+            .limit(1000)
         )
     ).scalars().all()
     return {"categories": list(rows)}

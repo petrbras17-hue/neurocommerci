@@ -90,7 +90,11 @@ class TaskQueue:
         if result is None:
             return None
         _, data = result
-        return json.loads(data)
+        try:
+            return json.loads(data)
+        except (json.JSONDecodeError, TypeError):
+            log.error("task_queue.dequeue: corrupted payload in %s, discarding", queue_name)
+            return None
 
     async def reserve(
         self,
@@ -110,7 +114,12 @@ class TaskQueue:
         if raw is None:
             return None
 
-        payload = json.loads(raw)
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            log.error("task_queue.reserve: corrupted payload in %s, removing from inflight", queue_name)
+            await self._redis.lrem(inflight, 1, raw)
+            return None
         task_id = str(payload.get("_task_id") or str(uuid.uuid4())[:8])
         payload["_task_id"] = task_id
         payload["_attempts"] = int(payload.get("_attempts", 0))
