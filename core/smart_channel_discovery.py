@@ -148,11 +148,14 @@ class SmartChannelDiscovery:
         return methods or ["tgstat"]  # fallback
 
     async def _load_existing_usernames(self, session: AsyncSession):
-        """Load existing channel usernames from DB for deduplication."""
+        """Load existing channel usernames from DB for deduplication.
+
+        Limited to 100k to prevent unbounded memory usage on large catalogs.
+        """
         result = await session.execute(
             select(ChannelMapEntry.username).where(
                 ChannelMapEntry.username.isnot(None)
-            )
+            ).limit(100_000)
         )
         for row in result.fetchall():
             if row[0]:

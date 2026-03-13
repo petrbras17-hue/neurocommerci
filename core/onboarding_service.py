@@ -122,18 +122,6 @@ def _append_markdown_memory(
         )
 
 
-async def _get_account(phone: str, *, user_id: int | None = None) -> Account | None:
-    normalized_phone = _normalize_phone(phone)
-    if not normalized_phone:
-        return None
-    async with async_session() as session:
-        query = select(Account).where(Account.phone == normalized_phone)
-        if user_id is not None:
-            query = query.where(Account.user_id == user_id)
-        result = await session.execute(query)
-        return result.scalar_one_or_none()
-
-
 def _run_payload(run: AccountOnboardingRun | None) -> dict[str, Any] | None:
     if run is None:
         return None
