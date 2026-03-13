@@ -1362,10 +1362,14 @@ async def lifespan(_: FastAPI):
                 )
         except Exception as exc:  # pragma: no cover - runtime fallback
             log.warning(f"assistant worker startup skipped: {exc}")
-        try:
-            await start_bot_polling(settings.AUTH_BOT_TOKEN)
-        except Exception as exc:  # pragma: no cover
-            log.warning(f"auth bot startup skipped: {exc}")
+        # Only start separate auth bot polling if it uses a DIFFERENT token
+        # than the admin bot. When tokens match, admin bot's cmd_start handler
+        # already delegates auth deep links via the shared _pending dict.
+        if settings.AUTH_BOT_TOKEN and settings.AUTH_BOT_TOKEN != settings.ADMIN_BOT_TOKEN:
+            try:
+                await start_bot_polling(settings.AUTH_BOT_TOKEN)
+            except Exception as exc:  # pragma: no cover
+                log.warning(f"auth bot startup skipped: {exc}")
         yield
     finally:
         stop_event.set()

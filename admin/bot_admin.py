@@ -1308,6 +1308,45 @@ async def sync_to_sheets_snapshot():
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, db_user: User = None):
+    # --- Web auth deep link handler ---
+    # If payload starts with "auth_", delegate to web auth flow.
+    # This is needed because admin bot and auth bot share the same token,
+    # so the admin bot's /start handler wins and must handle auth deep links.
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) > 1 and args[1].startswith("auth_"):
+        from core.telegram_bot_auth import _pending, get_pending_auth
+
+        code = args[1][5:]  # strip "auth_" prefix
+        pending = get_pending_auth(code)
+        if not pending:
+            await message.answer(
+                "Ссылка для авторизации устарела или недействительна.\n"
+                "Вернитесь на платформу и попробуйте снова."
+            )
+            return
+        if pending.confirmed:
+            await message.answer("Вы уже авторизованы! Вернитесь на платформу.")
+            return
+        user = message.from_user
+        if not user:
+            return
+        pending.telegram_user = {
+            "id": user.id,
+            "first_name": user.first_name or "",
+            "last_name": user.last_name or "",
+            "username": user.username or "",
+            "language_code": user.language_code or "",
+            "is_premium": getattr(user, "is_premium", False) or False,
+        }
+        pending.confirmed = True
+        await message.answer(
+            f"✅ Авторизация успешна, {user.first_name}!\n\n"
+            "Вернитесь на платформу — вход произойдёт автоматически."
+        )
+        log.info("Bot auth confirmed for telegram_id=%s code=%s...", user.id, code[:8])
+        return
+    # --- End web auth deep link handler ---
+
     if not db_user:
         # Fallback: middleware should have set this
         db_user = await get_or_create_user(
