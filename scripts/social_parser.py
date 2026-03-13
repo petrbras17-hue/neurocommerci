@@ -338,6 +338,8 @@ def parse_youtube(url: str, subs_only: bool = False, whisper_model: str = "base"
         "tags": tags[:20],
         "categories": categories,
         "transcript_length": len(transcript),
+        "transcript_text": transcript,
+        "word_count": len(transcript.split()),
         "chunks_stored": len(vectors),
         "description": description[:500],
     }

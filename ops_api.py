@@ -363,10 +363,19 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_seconds: int) -> None:
-    """Raise HTTP 429 if the caller has exceeded max_calls within window_seconds."""
+def _check_rate_limit(
+    scope: str, identifier: str, max_calls: int, window_seconds: int
+) -> tuple[int, int]:
+    """Check rate limit and return (remaining, reset_seconds).
+
+    Raises HTTP 429 with a Retry-After header when the limit is exceeded.
+    Returns the number of calls remaining in the current window and the
+    number of seconds until the window fully resets.  Callers that want to
+    expose the full quota on every response can pass these values to
+    _apply_rate_limit_headers().
+    """
     if str(settings.APP_ENV or "").strip().lower() in {"development", "test", "testing"}:
-        return
+        return max_calls, window_seconds
     global _rate_limit_last_gc
     now = time.monotonic()
     # Periodic garbage collection of stale buckets
@@ -378,17 +387,40 @@ def _check_rate_limit(scope: str, identifier: str, max_calls: int, window_second
             del _rate_limit_buckets[k]
     # Cap total buckets to prevent memory exhaustion
     if len(_rate_limit_buckets) > _RATE_LIMIT_MAX_BUCKETS:
-        return  # degrade gracefully: skip limiting rather than OOM
+        return max_calls, window_seconds  # degrade gracefully: skip limiting rather than OOM
     bucket = _rate_limit_buckets[(scope, identifier)]
     cutoff = now - window_seconds
     while bucket and bucket[0] < cutoff:
         bucket.popleft()
     if len(bucket) >= max_calls:
+        # reset_seconds: time until the oldest call in the window expires
+        reset_seconds = int(window_seconds - (now - bucket[0])) + 1 if bucket else window_seconds
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="rate_limit_exceeded",
+            headers={"Retry-After": str(reset_seconds)},
         )
     bucket.append(now)
+    remaining = max_calls - len(bucket)
+    # reset_seconds: time until the oldest call in the window expires (0 if window is empty)
+    reset_seconds = int(window_seconds - (now - bucket[0])) + 1 if bucket else window_seconds
+    return remaining, reset_seconds
+
+
+def _apply_rate_limit_headers(
+    response: Response, limit: int, remaining: int, reset_seconds: int
+) -> None:
+    """Attach standard rate-limit headers to an already-constructed Response.
+
+    Usage (optional, for endpoints that want to expose quota info):
+
+        remaining, reset_seconds = _check_rate_limit("api", key, 60, 60)
+        # ... build your response object ...
+        _apply_rate_limit_headers(response, 60, remaining, reset_seconds)
+    """
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = str(reset_seconds)
 
 
 def _client_ip(request: Request) -> str:
@@ -1186,6 +1218,25 @@ async def require_internal_token(request: Request) -> None:
     token = _bearer_token(request)
     if token != settings.OPS_API_TOKEN:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_internal_token")
+
+
+async def require_admin_auth(request: Request) -> None:
+    """Accept either OPS_API_TOKEN (internal) or a JWT with role owner/admin.
+
+    This allows the AdminPage (JWT-authenticated) and internal tooling
+    (OPS_API_TOKEN) to both reach the /v1/admin/* endpoints.
+    """
+    token = _bearer_token(request)
+    # Fast path: internal ops token
+    if token == settings.OPS_API_TOKEN:
+        return
+    # Slow path: valid JWT with elevated role
+    try:
+        ctx = _decode_jwt(token)
+    except HTTPException:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_admin_credentials")
+    if ctx.role not in ("owner", "admin"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_role_required")
 
 
 async def get_tenant_context(request: Request) -> TenantContext:
@@ -4989,10 +5040,23 @@ async def health_recalculate(
 
 @app.get("/v1/health/quarantine")
 async def quarantine_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
     now = utcnow()
+    base_where = [
+        FarmThread.tenant_id == tenant_context.tenant_id,
+        FarmThread.status == "quarantine",
+        FarmThread.quarantine_until > now,
+    ]
+    count_row = (
+        await session.execute(
+            select(func.count(func.distinct(FarmThread.account_id))).where(*base_where)
+        )
+    ).scalar_one()
+
     rows = (
         await session.execute(
             select(
@@ -5002,12 +5066,10 @@ async def quarantine_list(
                 func.max(FarmThread.quarantine_until).label("quarantine_until"),
             )
             .outerjoin(Account, Account.id == FarmThread.account_id)
-            .where(
-                FarmThread.tenant_id == tenant_context.tenant_id,
-                FarmThread.status == "quarantine",
-                FarmThread.quarantine_until > now,
-            )
+            .where(*base_where)
             .group_by(FarmThread.account_id, Account.phone, FarmThread.stats_last_error)
+            .limit(limit)
+            .offset(offset)
         )
     ).all()
 
@@ -5020,7 +5082,7 @@ async def quarantine_list(
         }
         for r in rows
     ]
-    return {"items": items, "total": len(items)}
+    return {"items": items, "total": count_row, "limit": limit, "offset": offset}
 
 
 @app.post("/v1/health/quarantine/{account_id}/lift")
@@ -5938,6 +6000,79 @@ async def channel_map_refresh(
                 session=session,
             )
     return {"refreshed": refreshed, "max_age_days": payload.max_age_days, "limit": payload.limit}
+
+
+class SmartDiscoveryPayload(BaseModel):
+    """Payload for POST /v1/channel-map/smart-discover."""
+
+    keywords: list[str] = Field(..., min_items=1, max_items=50)
+    methods: Optional[list[str]] = Field(
+        default=None,
+        description="Discovery methods: tgstat, telethon, snowball, global_search"
+    )
+    max_results: int = Field(default=200, ge=1, le=2000)
+    min_members: int = Field(default=1000, ge=0)
+    require_comments: bool = Field(default=True)
+    language_filter: Optional[str] = Field(default="ru")
+    save_to_catalog: bool = Field(default=True, description="Auto-save to platform catalog")
+
+
+@app.post("/v1/channel-map/smart-discover", status_code=status.HTTP_202_ACCEPTED)
+async def channel_map_smart_discover(
+    payload: SmartDiscoveryPayload,
+    _: None = Depends(require_internal_token),
+) -> dict[str, Any]:
+    """Run multi-layer smart channel discovery (admin/internal).
+
+    Combines TGStat, Telethon, snowball, and global search methods.
+    Requires OPS_API_TOKEN bearer auth.
+    """
+    from core.smart_channel_discovery import SmartChannelDiscovery
+
+    session_manager = getattr(app.state, "session_manager", None)
+    tgstat_token = getattr(settings, "TGSTAT_API_TOKEN", None) or os.environ.get("TGSTAT_API_TOKEN")
+
+    discovery = SmartChannelDiscovery(
+        session_manager=session_manager,
+        tgstat_token=tgstat_token,
+    )
+
+    async with async_session() as session:
+        async with session.begin():
+            results = await discovery.discover(
+                keywords=payload.keywords,
+                methods=payload.methods,
+                max_results=payload.max_results,
+                min_members=payload.min_members,
+                require_comments=payload.require_comments,
+                language_filter=payload.language_filter,
+                db_session=session,
+            )
+
+            saved = 0
+            if payload.save_to_catalog and results:
+                saved = await discovery.save_to_catalog(
+                    channels=results,
+                    session=session,
+                    tenant_id=None,  # platform catalog
+                )
+
+    return {
+        "discovered": len(results),
+        "saved_to_catalog": saved,
+        "methods_used": payload.methods or discovery._available_methods(),
+        "channels": [
+            {
+                "username": ch.username,
+                "title": ch.title,
+                "member_count": ch.member_count,
+                "has_comments": ch.has_comments,
+                "language": ch.language,
+                "source_method": ch.source_method,
+            }
+            for ch in results[:100]  # first 100 in response
+        ],
+    }
 
 
 @app.get("/v1/channel-map/export")
@@ -7291,12 +7426,12 @@ async def weekly_report_get(
     }
 
 
-# ---- Admin endpoints (OPS_API_TOKEN auth) ---------------------------------
+# ---- Admin endpoints (OPS_API_TOKEN or JWT owner/admin) -------------------
 
 
 @app.get("/v1/admin/platform-stats")
 async def admin_platform_stats(
-    _: None = Depends(require_internal_token),
+    _: None = Depends(require_admin_auth),
 ) -> dict[str, Any]:
     """Platform-wide aggregate statistics for the admin dashboard."""
     async with async_session() as session:
@@ -7366,7 +7501,7 @@ async def admin_platform_stats(
 
 @app.get("/v1/admin/ai-spend")
 async def admin_ai_spend(
-    _: None = Depends(require_internal_token),
+    _: None = Depends(require_admin_auth),
 ) -> dict[str, Any]:
     """Platform-wide AI token usage and cost estimates."""
     from datetime import date as _date, timedelta as _td
@@ -7410,7 +7545,7 @@ async def admin_ai_spend(
 @app.get("/v1/admin/tenant-health")
 async def admin_tenant_health(
     limit: int = Query(default=20, ge=1, le=100),
-    _: None = Depends(require_internal_token),
+    _: None = Depends(require_admin_auth),
 ) -> dict[str, Any]:
     """Per-tenant health overview for the admin dashboard."""
     async with async_session() as session:

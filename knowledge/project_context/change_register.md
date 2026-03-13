@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `552b4f5` |
+| Last committed HEAD | `66548bf` |
 | VPS safe branch | `main` |
-| VPS safe commit | `552b4f5` |
+| VPS safe commit | `66548bf` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -50,6 +50,10 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-12 | Sprint 7 | `main` | `47946a6` | Proxy & Account Management UI | ProxiesPage (bulk import, health check, cleanup, filters), AccountsPage v2 (stats, bulk import ZIP, bulk actions, status filters), 10 new API endpoints, check_proxy_orm(), account lifecycle job types, security fixes (proxy password masking, cross-tenant filter, async health checks). Deployed to VPS. | Green | Green | Sprint 11: Self-Healing & Auto-Purchase. |
 
 | 2026-03-12 | Sprints 8-11 | `main` | `552b4f5` | Smart Commenting + Onboarding + Analytics + Self-Healing | 4 sprints deployed: Smart Commenter v2 (10 styles, A/B), ProductAnalyzer + AutoCampaign + OnboardingWizard, Analytics pipeline + WeeklyReport + heatmap, SelfHealingEngine + AutoPurchaseManager. 4 migrations (20→23), 36 new API endpoints, 7 new frontend pages, 15 new Python modules. Code review: fixed RLS mismatch (6 tables), cross-tenant leak, FORCE RLS, auth bug. 149 tests pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
+
+| 2026-03-13 | Security + Intelligence | `main` | `cd335b3` | Security hardening + Channel Intelligence API | FORCE RLS on 51 tables, SQL injection fix, upload size limits, CORS env restriction, micro-topic classification API (category tree, single/batch classify). 149 tests pass, TypeScript clean. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
+
+| 2026-03-13 | Accounts 100% | `main` | `66548bf` | Accounts subsystem 100% — 11 tasks across 4 micro-sprints | SessionPool (centralized TelegramClient pool), AccountLifecycle FSM (10 stages), ProxyRouter (3 strategies), SmartCommenter→FarmThread integration, SessionTopologyPage, approval gate, dedup check, CSV/JSON export. 147 new tests, 7 security fixes (tenant isolation, path traversal, bulk limits). Frontend rebuilt, all compile checks pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
 
 ## Update Rules
 

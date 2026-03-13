@@ -538,6 +538,55 @@ export const channelMapApi = {
   stats: (token: string) => apiFetch<ChannelMapStats>("/v1/channel-map/stats", {accessToken: token}),
 };
 
+// --- Channel Intelligence API ---
+
+export type ChannelRecommendationsPayload = {
+  niche_description: string;
+  keywords?: string[];
+  limit?: number;
+};
+
+export type ChannelRecommendationsResponse = {
+  channels: unknown[];
+  total: number;
+};
+
+export type ChannelQualityScore = {
+  channels: unknown[];
+  total: number;
+};
+
+export const channelsApi = {
+  /** POST /v1/channels/recommendations — AI channel recommendations by niche */
+  recommendations: (token: string, payload: ChannelRecommendationsPayload) =>
+    apiFetch<ChannelRecommendationsResponse>("/v1/channels/recommendations", {
+      method: "POST",
+      accessToken: token,
+      json: payload,
+    }),
+
+  /** POST /v1/channels/blacklist/{channel_entry_id} — toggle blacklist for a channel */
+  blacklist: (token: string, channelEntryId: number) =>
+    apiFetch<{ id: number; blacklisted: boolean }>(
+      `/v1/channels/blacklist/${channelEntryId}`,
+      { method: "POST", accessToken: token }
+    ),
+
+  /** GET /v1/channels/quality-scores — ranked quality scores for tenant channels */
+  qualityScores: (token: string, limit = 50) =>
+    apiFetch<ChannelQualityScore>(
+      `/v1/channels/quality-scores?limit=${limit}`,
+      { accessToken: token }
+    ),
+
+  /** POST /v1/channels/refresh-scores — recalculate quality scores for all tenant channels */
+  refreshScores: (token: string) =>
+    apiFetch<{ scored: number }>("/v1/channels/refresh-scores", {
+      method: "POST",
+      accessToken: token,
+    }),
+};
+
 // --- Campaigns API ---
 export type CampaignStatus = "draft" | "active" | "paused" | "completed" | "archived";
 export type Campaign = {
