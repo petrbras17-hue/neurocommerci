@@ -136,15 +136,22 @@ class ChannelParserService:
                 if tg_id is None or tg_id in discovered:
                     continue
 
-                validated = await self.validate_channel(
-                    client,
-                    raw_channel["_entity"],
-                    min_members=min_members,
-                    max_members=max_members,
-                    require_comments=require_comments,
-                    active_only=active_only,
-                    language_filter=language_filter,
-                )
+                try:
+                    validated = await self.validate_channel(
+                        client,
+                        raw_channel["_entity"],
+                        min_members=min_members,
+                        max_members=max_members,
+                        require_comments=require_comments,
+                        active_only=active_only,
+                        language_filter=language_filter,
+                    )
+                except Exception as val_exc:
+                    # FloodWait or frozen — stop this keyword batch
+                    log.warning(
+                        f"ChannelParserService: validate_channel error: {val_exc}"
+                    )
+                    break
                 if validated is not None:
                     discovered[validated["telegram_id"]] = validated
 
@@ -174,11 +181,16 @@ class ChannelParserService:
         """
         try:
             from telethon import functions as tl_functions
+            from telethon.errors import FloodWaitError
 
             full = await client(
                 tl_functions.channels.GetFullChannelRequest(channel=channel)
             )
+        except FloodWaitError:
+            raise  # let caller handle rate limiting
         except Exception as exc:
+            if is_frozen_error(exc):
+                raise RuntimeError(f"account_frozen: {exc}") from exc
             log.debug(
                 f"ChannelParserService.validate_channel: skip "
                 f"{getattr(channel, 'id', 'unknown')}: {exc}"
@@ -416,8 +428,6 @@ class ChannelParserService:
             log.warning(f"ChannelParserService._search_one_keyword '{keyword}': {exc}")
             return []
 
-        from telethon.tl.types import Channel as TLChannel
-
         channels: list[dict] = []
         for chat in getattr(result, "chats", []):
             if not isinstance(chat, TLChannel):
@@ -433,8 +443,11 @@ class ChannelParserService:
         return channels
 
     @staticmethod
-    async def _load_account(account_id: int, session: AsyncSession) -> Optional[Account]:
-        result = await session.execute(
-            select(Account).where(Account.id == account_id)
-        )
+    async def _load_account(
+        account_id: int, session: AsyncSession, *, tenant_id: Optional[int] = None
+    ) -> Optional[Account]:
+        stmt = select(Account).where(Account.id == account_id)
+        if tenant_id is not None:
+            stmt = stmt.where(Account.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()

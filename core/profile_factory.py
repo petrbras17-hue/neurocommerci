@@ -484,11 +484,33 @@ class ProfileFactory:
         )
 
     @staticmethod
+    def _is_safe_url(url: str) -> bool:
+        """Block SSRF: reject internal/private network URLs."""
+        from urllib.parse import urlparse
+        import ipaddress
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = parsed.hostname or ""
+        if hostname in ("localhost", ""):
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return False
+        except ValueError:
+            pass  # Not an IP literal — hostname is acceptable
+        return True
+
+    @staticmethod
     async def _download_image(url: str, timeout: float = 15.0, max_size: int = 10 * 1024 * 1024) -> Optional[bytes]:
         """Download image bytes from a URL, returns None on failure. Max 10MB."""
+        if not ProfileFactory._is_safe_url(url):
+            log.warning("ProfileFactory._download_image: blocked unsafe URL")
+            return None
         try:
             async with httpx.AsyncClient(timeout=timeout) as http:
-                resp = await http.get(url)
+                resp = await http.get(url, follow_redirects=False)
                 resp.raise_for_status()
                 if len(resp.content) > max_size:
                     log.warning(f"ProfileFactory._download_image: too large ({len(resp.content)} bytes)")
@@ -507,10 +529,13 @@ class ProfileFactory:
     # ------------------------------------------------------------------
 
     @staticmethod
-    async def _load_account(account_id: int, session: AsyncSession) -> Optional[Account]:
-        result = await session.execute(
-            select(Account).where(Account.id == account_id)
-        )
+    async def _load_account(
+        account_id: int, session: AsyncSession, *, tenant_id: Optional[int] = None
+    ) -> Optional[Account]:
+        stmt = select(Account).where(Account.id == account_id)
+        if tenant_id is not None:
+            stmt = stmt.where(Account.tenant_id == tenant_id)
+        result = await session.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod

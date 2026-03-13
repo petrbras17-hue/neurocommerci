@@ -182,3 +182,21 @@ class RateLimiter:
             "cooldown_remaining": max(0, int(state["cooldown_until"] - now)),
             "session_comments": state["session_comments"],
         }
+
+    def cleanup_stale(self, max_idle_days: int = 3) -> int:
+        """Remove entries for accounts inactive for more than *max_idle_days*.
+
+        Call periodically (e.g. once per day) to prevent unbounded dict growth.
+        Returns the number of entries removed.
+        """
+        today = utcnow().date()
+        stale = [
+            phone
+            for phone, state in self._state.items()
+            if (today - state.get("day_start", today)).days > max_idle_days
+        ]
+        for phone in stale:
+            del self._state[phone]
+        if stale:
+            log.debug(f"RateLimiter: cleaned up {len(stale)} stale entries")
+        return len(stale)

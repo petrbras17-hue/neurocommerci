@@ -200,6 +200,8 @@ class MassReactionService:
             successful=successful,
             failed=failed,
         )
+        # Clean up in-memory task reference to prevent unbounded growth.
+        self._tasks.pop(job_id, None)
         log.info(
             f"MassReactionService: job {job_id} completed "
             f"(success={successful}, failed={failed})"
@@ -324,7 +326,7 @@ class MassReactionService:
         successful: int,
         failed: int,
     ) -> None:
-        status = _STATUS_COMPLETED if failed == 0 else _STATUS_COMPLETED
+        status = _STATUS_COMPLETED if failed == 0 else _STATUS_FAILED
         try:
             async with async_session() as sess:
                 async with sess.begin():

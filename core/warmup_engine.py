@@ -658,6 +658,18 @@ class WarmupEngine:
                 STATUS_FAILED,
                 completed_at=utcnow(),
             )
+        finally:
+            # Clean up in-memory references to prevent unbounded dict growth.
+            tasks_map = self._tasks.get(config_id)
+            if tasks_map is not None:
+                tasks_map.pop(account_id, None)
+                if not tasks_map:
+                    self._tasks.pop(config_id, None)
+            events_map = self._stop_events.get(config_id)
+            if events_map is not None:
+                events_map.pop(account_id, None)
+                if not events_map:
+                    self._stop_events.pop(config_id, None)
 
     # ------------------------------------------------------------------
     # Action dispatcher

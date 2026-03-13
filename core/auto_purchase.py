@@ -6,7 +6,6 @@ Provider integrations are stubs: they document the interface but do not
 call any real external API.  Replace the stub bodies with real provider
 SDKs when credentials become available.
 """
-
 from __future__ import annotations
 
 import logging

@@ -386,6 +386,8 @@ class SessionPool:
         """Disconnect and remove an entry.  Must NOT already hold _pool_lock."""
         async with self._pool_lock:
             entry = self._pool.pop(account_id, None)
+            # Clean up the per-account lock to prevent unbounded dict growth.
+            self._account_locks.pop(account_id, None)
 
         if entry is None:
             return

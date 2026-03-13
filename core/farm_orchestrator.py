@@ -137,6 +137,7 @@ class FarmOrchestrator:
             "status": "running",
             "started_at": utcnow(),
             "tasks": [],
+            "tenant_id": farm.tenant_id,
         }
 
         # Spawn async tasks for each thread
@@ -430,8 +431,9 @@ class FarmOrchestrator:
 
             async with _async_session() as sess:
                 async with sess.begin():
-                    # Determine tenant_id from in-memory state or DB lookup
-                    tenant_id = 0
+                    # Determine tenant_id from in-memory state or DB lookup.
+                    # Never fall back to 0 — skip RLS-unscoped writes.
+                    tenant_id = None
                     farm_entry = self._active_farms.get(farm_id)
                     if farm_entry and farm_entry.get("tenant_id"):
                         tenant_id = farm_entry["tenant_id"]
@@ -439,10 +441,16 @@ class FarmOrchestrator:
                         row = (await sess.execute(
                             select(FarmConfig.tenant_id).where(FarmConfig.id == farm_id)
                         )).scalar_one_or_none()
-                        tenant_id = row or 0
+                        tenant_id = row if row else None
 
-                    if tenant_id:
-                        await apply_session_rls_context(sess, tenant_id=tenant_id)
+                    if not tenant_id:
+                        log.warning(
+                            f"FarmOrchestrator.publish_event: cannot resolve "
+                            f"tenant_id for farm {farm_id}, skipping DB write"
+                        )
+                        return
+
+                    await apply_session_rls_context(sess, tenant_id=tenant_id)
 
                     event = FarmEvent(
                         tenant_id=tenant_id,

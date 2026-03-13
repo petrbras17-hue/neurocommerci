@@ -225,6 +225,11 @@ class NeuroDialogs:
                 f"NeuroDialogs: loop for config {config_id} unrecoverable error: {exc}",
                 exc_info=True,
             )
+        finally:
+            # Clean up in-memory references to prevent unbounded dict growth.
+            key: _TaskKey = (config_id, tenant_id)
+            self._tasks.pop(key, None)
+            self._stop_events.pop(key, None)
 
         await self._mark_stopped(config_id, tenant_id)
 
