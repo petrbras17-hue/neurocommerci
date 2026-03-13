@@ -263,7 +263,10 @@ class RedisState:
         raw = await self._redis.hget(hash_name, key)
         if not raw:
             return None
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
 
 
 # Global instance

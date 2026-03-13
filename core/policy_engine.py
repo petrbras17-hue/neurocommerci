@@ -440,10 +440,10 @@ class PolicyEngine:
             if account.last_violation_at and (now - account.last_violation_at).total_seconds() > 24 * 3600:
                 violations_24h = 1
             else:
-                violations_24h = (account.violation_count_24h or 0) + 1
+                violations_24h = (int(account.violation_count_24h) if account.violation_count_24h is not None else 0) + 1
 
             old_stage = account.lifecycle_stage
-            score = float(account.risk_score or 0.0) + float(delta)
+            score = (float(account.risk_score) if account.risk_score is not None else 0.0) + float(delta)
             level = self._risk_level(score)
 
             account.risk_score = score

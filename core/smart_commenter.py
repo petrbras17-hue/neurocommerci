@@ -1178,6 +1178,7 @@ async def get_ab_stats(tenant_id: int) -> list[dict]:
                     .where(CommentABResult.tenant_id == tenant_id)
                     .group_by(CommentABResult.style_name)
                     .order_by(func.avg(CommentABResult.reactions_count).desc())
+                    .limit(100)
                 )
                 rows = result.all()
                 return [

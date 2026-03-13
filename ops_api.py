@@ -1294,7 +1294,9 @@ async def get_tenant_context(request: Request) -> TenantContext:
                 tenant_id=tenant_context.tenant_id,
                 user_id=tenant_context.user_id,
             )
-            tenant = await session.get(Tenant, tenant_context.tenant_id)
+            tenant = (await session.execute(
+                select(Tenant).where(Tenant.id == tenant_context.tenant_id)
+            )).scalar_one_or_none()
             if tenant is None:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="tenant_not_found")
             if tenant.status == "suspended":

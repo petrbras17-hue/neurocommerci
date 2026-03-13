@@ -224,6 +224,16 @@ class SessionPool:
             )
             entry.touch()
             async with self._pool_lock:
+                # Re-check capacity under lock to prevent race condition
+                if len(self._pool) >= self._max_concurrent and account_id not in self._pool:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                    raise PoolCapacityError(
+                        f"SessionPool: pool full ({len(self._pool)}/{self._max_concurrent}). "
+                        f"Race condition prevented account_id={account_id} from being added."
+                    )
                 self._pool[account_id] = entry
 
             log.info(

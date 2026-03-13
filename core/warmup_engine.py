@@ -288,7 +288,7 @@ class WarmupEngine:
             select(WarmupSession).where(
                 WarmupSession.warmup_id == config_id,
                 WarmupSession.tenant_id == tenant_id,
-            )
+            ).limit(1000)
         )
         return list(result.scalars().all())
 
