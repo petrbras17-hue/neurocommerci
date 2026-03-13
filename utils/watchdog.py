@@ -70,7 +70,16 @@ class Watchdog:
         for user_id, tasks in list(user_tasks.items()):
             for name, task in list(tasks.items()):
                 if task.done():
-                    exc = task.exception() if not task.cancelled() else None
+                    if task.cancelled():
+                        exc = None
+                    else:
+                        try:
+                            exc = task.exception()
+                        except Exception:
+                            exc = None
+                    if exc is None and not task.cancelled():
+                        # Task finished successfully — not a crash
+                        continue
                     log.warning(
                         f"Watchdog: задача {name} пользователя {user_id} упала: {exc}"
                     )
