@@ -262,7 +262,6 @@ class ChannelIndexer:
 
         # Estimate post frequency from last 20 messages
         post_freq: Optional[float] = None
-        avg_comments: Optional[float] = None
         last_post_at: Optional[datetime] = None
         try:
             messages = await client.get_messages(entity, limit=20)

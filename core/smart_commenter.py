@@ -637,6 +637,7 @@ class CommentOrchestrator:
         # Внутренние счётчики для rate-limiting
         self._hour_bucket: tuple[int, int] = (0, 0)   # (utc_hour, count)
         self._day_counter: int = 0
+        self._day_counter_date: int = 0  # ordinal day for daily reset
         self._comment_counter: int = 0                 # суммарный счётчик
 
         # Style rotation state — keeps track of which styles were used recently
@@ -992,14 +993,20 @@ class CommentOrchestrator:
                     )
                     sess.add(row)
         except Exception as exc:
-            log.debug(f"CommentOrchestrator.record_ab_result: {exc}")
+            log.warning(f"CommentOrchestrator.record_ab_result DB write failed: {exc}")
 
     def _refresh_hourly_bucket(self) -> None:
-        """Сбрасывает часовой счётчик при смене часа."""
+        """Сбрасывает часовой и дневной счётчики при смене периода."""
         from datetime import timezone
-        current_hour = datetime.now(timezone.utc).hour
+        now = datetime.now(timezone.utc)
+        current_hour = now.hour
         if self._hour_bucket[0] != current_hour:
             self._hour_bucket = (current_hour, 0)
+        # Daily counter reset
+        today_ordinal = now.toordinal()
+        if self._day_counter_date != today_ordinal:
+            self._day_counter = 0
+            self._day_counter_date = today_ordinal
 
     async def _log_event(
         self,
@@ -1025,7 +1032,7 @@ class CommentOrchestrator:
                     )
                     sess.add(event)
         except Exception as exc:
-            log.debug(f"CommentOrchestrator._log_event: {exc}")
+            log.warning(f"CommentOrchestrator._log_event DB write failed: {exc}")
 
 
 # ---------------------------------------------------------------------------

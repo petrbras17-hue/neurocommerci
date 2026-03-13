@@ -12,7 +12,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from storage.models import Account, AlertConfig, HealingAction, Proxy, PurchaseRequest
@@ -174,7 +174,6 @@ class AutoPurchaseManager:
                     threshold = int(cfg.threshold_percent)
 
                     if resource_type == "account":
-                        from sqlalchemy import func
                         total_r = (
                             await session.execute(
                                 select(func.count(Account.id)).where(
@@ -191,7 +190,6 @@ class AutoPurchaseManager:
                             )
                         ).scalar() or 0
                     else:
-                        from sqlalchemy import func
                         total_r = (
                             await session.execute(
                                 select(func.count(Proxy.id)).where(
@@ -398,15 +396,20 @@ class AutoPurchaseManager:
                     req.details = {}
                 req.details = {**req.details, "result_count": len(result)}
 
+                # Cache values before session closes to avoid detached instance access
+                final_status = req.status
+                resource_type = req.resource_type
+                quantity = req.quantity
+
         log.info(
             "auto_purchase: executed request_id=%s resource=%s qty=%s items=%s",
             request_id,
-            req.resource_type,
-            req.quantity,
+            resource_type,
+            quantity,
             len(result),
         )
         return {
             "request_id": request_id,
-            "status": req.status,
+            "status": final_status,
             "items_received": len(result),
         }
