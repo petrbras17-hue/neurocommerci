@@ -188,12 +188,13 @@ class HealthScorer:
         # Pull existing score row (preserves manually updated counters).
         existing = await self._fetch_existing(account_id, tenant_id, session)
 
-        flood_wait_count    = (existing.flood_wait_count    if existing else 0) or 0
-        spam_block_count    = (existing.spam_block_count    if existing else 0) or 0
-        successful_actions  = (existing.successful_actions  if existing else 0) or 0
-        hours_without_error = (existing.hours_without_error if existing else 0) or 0
-        profile_completeness = (existing.profile_completeness if existing else 0) or 0
-        account_age_days    = getattr(account, "account_age_days", 0) or 0
+        flood_wait_count    = existing.flood_wait_count if existing and existing.flood_wait_count is not None else 0
+        spam_block_count    = existing.spam_block_count if existing and existing.spam_block_count is not None else 0
+        successful_actions  = existing.successful_actions if existing and existing.successful_actions is not None else 0
+        hours_without_error = existing.hours_without_error if existing and existing.hours_without_error is not None else 0
+        profile_completeness = existing.profile_completeness if existing and existing.profile_completeness is not None else 0
+        _raw_age = getattr(account, "account_age_days", None)
+        account_age_days    = _raw_age if _raw_age is not None else 0
 
         is_quarantined = await self._is_account_quarantined(
             account_id, tenant_id, session

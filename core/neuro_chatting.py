@@ -84,7 +84,10 @@ class NeuroChatting:
         The caller must have already applied RLS context to *db_session*.
         """
         result = await db_session.execute(
-            select(ChattingConfig).where(ChattingConfig.id == config_id)
+            select(ChattingConfig).where(
+                ChattingConfig.id == config_id,
+                ChattingConfig.tenant_id == tenant_id,
+            )
         )
         config = result.scalar_one_or_none()
         if config is None:

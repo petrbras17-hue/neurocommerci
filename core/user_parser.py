@@ -184,7 +184,7 @@ class UserParser:
             stmt = stmt.where(
                 UserParsingResult.channel_username == channel_username
             )
-        stmt = stmt.order_by(UserParsingResult.parsed_at.desc())
+        stmt = stmt.order_by(UserParsingResult.parsed_at.desc()).limit(10000)
         result = await db_session.execute(stmt)
         return list(result.scalars().all())
 
@@ -204,7 +204,7 @@ class UserParser:
         )
         if job_id is not None:
             stmt = stmt.where(UserParsingResult.job_id == job_id)
-        stmt = stmt.order_by(UserParsingResult.parsed_at.desc())
+        stmt = stmt.order_by(UserParsingResult.parsed_at.desc()).limit(10000)
 
         result = await db_session.execute(stmt)
         rows = result.scalars().all()
@@ -242,7 +242,10 @@ class UserParser:
             return None
 
         result = await db_session.execute(
-            select(Account).where(Account.id == account_id)
+            select(Account).where(
+                Account.id == account_id,
+                Account.tenant_id == tenant_id,
+            )
         )
         account = result.scalar_one_or_none()
         if account is None:

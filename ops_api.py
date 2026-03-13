@@ -4172,6 +4172,7 @@ async def farm_threads(
             .join(Account, Account.id == FarmThread.account_id)
             .where(FarmThread.farm_id == farm_id)
             .order_by(FarmThread.thread_index)
+            .limit(500)
         )
     ).all()
 
@@ -5038,6 +5039,7 @@ async def warmup_sessions_list(
                 WarmupSession.tenant_id == tenant_context.tenant_id,
             )
             .order_by(WarmupSession.id)
+            .limit(1000)
         )
     ).all()
 
@@ -5059,6 +5061,7 @@ async def health_scores_list(
             .outerjoin(Account, Account.id == AccountHealthScore.account_id)
             .where(AccountHealthScore.tenant_id == tenant_context.tenant_id)
             .order_by(AccountHealthScore.health_score.asc())
+            .limit(5000)
         )
     ).all()
 
@@ -6876,7 +6879,7 @@ async def analytics_dashboard(
     from datetime import timedelta
     from sqlalchemy import or_
 
-    workspace_id = tenant_context.workspace_id or 0
+    workspace_id = tenant_context.workspace_id if tenant_context.workspace_id is not None else 0
     since = utcnow() - timedelta(days=days)
 
     base_filter = [
@@ -7431,7 +7434,7 @@ async def analytics_daily(
     rows = await get_daily_stats(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=tenant_context.workspace_id or 0,
+        workspace_id=tenant_context.workspace_id if tenant_context.workspace_id is not None else 0,
         days=days,
     )
     return {"days": days, "rows": rows}
@@ -7449,7 +7452,7 @@ async def analytics_channels(
     rows = await get_channel_comparison(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=tenant_context.workspace_id or 0,
+        workspace_id=tenant_context.workspace_id if tenant_context.workspace_id is not None else 0,
         days=days,
         limit=limit,
     )
@@ -7467,7 +7470,7 @@ async def analytics_heatmap(
     rows = await get_heatmap_data(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=tenant_context.workspace_id or 0,
+        workspace_id=tenant_context.workspace_id if tenant_context.workspace_id is not None else 0,
         days=days,
     )
     return {"days": days, "heatmap": rows}
@@ -7485,7 +7488,7 @@ async def analytics_top_comments(
     rows = await get_top_comments(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=tenant_context.workspace_id or 0,
+        workspace_id=tenant_context.workspace_id if tenant_context.workspace_id is not None else 0,
         days=days,
         limit=limit,
     )
@@ -7543,7 +7546,7 @@ async def weekly_report_generate(
     report = await generate_weekly_report(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=tenant_context.workspace_id or 0,
+        workspace_id=tenant_context.workspace_id if tenant_context.workspace_id is not None else 0,
         send_telegram=payload.send_telegram,
         week_start=payload.week_start,
         week_end=payload.week_end,

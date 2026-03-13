@@ -169,6 +169,7 @@ async def get_channel_comparison(
             AnalyticsEvent.created_at >= since,
         )
         .group_by(AnalyticsEvent.channel_username, AnalyticsEvent.event_type)
+        .limit(10000)
     )
 
     channel_data: dict[str, dict[str, int]] = {}

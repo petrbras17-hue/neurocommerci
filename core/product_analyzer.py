@@ -94,7 +94,7 @@ suggested_styles — из набора: question, agree, expert, casual, hater, 
     parsed: dict[str, Any] = {}
     if result is not None and result.ok and result.parsed:
         parsed = result.parsed
-    elif not result.ok:
+    elif result is not None and not result.ok:
         log.warning("product_analysis AI call failed: %s", result.reason_code)
 
     brief = ProductBrief(
@@ -108,7 +108,7 @@ suggested_styles — из набора: question, agree, expert, casual, hater, 
         usp=str(parsed.get("usp") or ""),
         keywords=list(parsed.get("keywords") or []),
         suggested_styles=list(parsed.get("suggested_styles") or []),
-        daily_volume=int(parsed.get("daily_volume") or 30),
+        daily_volume=int(parsed.get("daily_volume") if parsed.get("daily_volume") is not None else 30),
         analysis_raw=parsed or None,
         created_at=utcnow(),
     )

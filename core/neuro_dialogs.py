@@ -84,7 +84,10 @@ class NeuroDialogs:
         The caller must have already applied RLS context to *db_session*.
         """
         result = await db_session.execute(
-            select(DialogConfig).where(DialogConfig.id == config_id)
+            select(DialogConfig).where(
+                DialogConfig.id == config_id,
+                DialogConfig.tenant_id == tenant_id,
+            )
         )
         config = result.scalar_one_or_none()
         if config is None:
