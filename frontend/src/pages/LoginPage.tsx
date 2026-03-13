@@ -30,14 +30,7 @@ export function LoginPage() {
   const [botAuthError, setBotAuthError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  if (auth.status === "authenticated") {
-    return <Navigate to="/dashboard" replace />;
-  }
-  if (auth.status === "profile_incomplete") {
-    return <Navigate to="/complete-profile" replace />;
-  }
-
-  const handleLogin = async (event: FormEvent) => {
+  const handleLogin = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     setLoginError("");
     setLoginBusy(true);
@@ -55,9 +48,9 @@ export function LoginPage() {
     } finally {
       setLoginBusy(false);
     }
-  };
+  }, [auth, loginEmail, loginPassword]);
 
-  const handleRegister = async (event: FormEvent) => {
+  const handleRegister = useCallback(async (event: FormEvent) => {
     event.preventDefault();
     setRegError("");
 
@@ -83,25 +76,23 @@ export function LoginPage() {
     } finally {
       setRegBusy(false);
     }
-  };
+  }, [auth, regEmail, regPassword, regPasswordConfirm, regFirstName, regCompany]);
 
-  const handleBotAuth = async () => {
+  const handleBotAuth = useCallback(async () => {
     setBotAuthError("");
     setBotAuthBusy(true);
     try {
       const result = await auth.startBotAuth();
       setBotAuthCode(result.code);
-      // Open bot deep link in new tab
       window.open(result.deep_link, "_blank");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "bot_auth_failed";
       setBotAuthError(msg);
       setBotAuthBusy(false);
     }
-  };
+  }, [auth]);
 
-  // Poll for bot auth confirmation
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+  // Poll for bot auth confirmation — must be above all conditional returns
   useEffect(() => {
     if (!botAuthCode) {
       return;
@@ -109,7 +100,6 @@ export function LoginPage() {
     const poll = setInterval(() => {
       void auth.checkBotAuth(botAuthCode).then((bundle) => {
         if (bundle) {
-          // Auth successful — navigation will happen via auth state change
           clearInterval(poll);
           setBotAuthBusy(false);
           setBotAuthCode(null);
@@ -120,7 +110,6 @@ export function LoginPage() {
     }, 2000);
     pollRef.current = poll;
 
-    // Stop polling after 5 minutes
     const timeout = setTimeout(() => {
       clearInterval(poll);
       setBotAuthBusy(false);
@@ -133,6 +122,14 @@ export function LoginPage() {
       clearTimeout(timeout);
     };
   }, [botAuthCode, auth]);
+
+  // Conditional returns AFTER all hooks
+  if (auth.status === "authenticated") {
+    return <Navigate to="/dashboard" replace />;
+  }
+  if (auth.status === "profile_incomplete") {
+    return <Navigate to="/complete-profile" replace />;
+  }
 
   return (
     <div className="auth-screen">
