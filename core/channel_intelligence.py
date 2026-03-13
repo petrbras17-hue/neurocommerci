@@ -1084,7 +1084,7 @@ class ChannelQualityScorer:
                     await session.execute(
                         select(ChannelProfile).where(
                             ChannelProfile.tenant_id == tenant_id,
-                        )
+                        ).limit(10000)
                     )
                 ).scalars().all()
 

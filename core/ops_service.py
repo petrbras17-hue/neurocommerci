@@ -160,7 +160,7 @@ async def queue_packaging_bulk(*, user_id: int | None = None) -> dict[str, Any]:
         query = select(Account)
         if user_id is not None:
             query = query.where(Account.user_id == user_id)
-        result = await session.execute(query.order_by(Account.created_at.asc()))
+        result = await session.execute(query.order_by(Account.created_at.asc()).limit(10000))
         accounts = list(result.scalars().all())
 
         for account in accounts:

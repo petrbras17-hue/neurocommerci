@@ -43,6 +43,13 @@ from utils.runtime_readiness import account_blockers
 from sqlalchemy import select, update, or_
 
 
+def _log_task_failure(t: asyncio.Task) -> None:
+    if not t.cancelled():
+        exc = t.exception()
+        if exc:
+            log.error("worker task %s failed: %s", t.get_name(), exc, exc_info=exc)
+
+
 def _normalize_phone(raw_phone: str) -> str:
     digits = "".join(ch for ch in str(raw_phone) if ch.isdigit())
     return f"+{digits}" if digits else ""
@@ -148,6 +155,8 @@ class AccountWorker:
                 asyncio.create_task(self._heartbeat_loop(), name="heartbeat"),
                 asyncio.create_task(self._idle_loop(), name="idle"),
             ]
+            for t in self._tasks:
+                t.add_done_callback(_log_task_failure)
             try:
                 await asyncio.gather(*self._tasks)
             except asyncio.CancelledError:
@@ -188,6 +197,8 @@ class AccountWorker:
             asyncio.create_task(self._health_loop(), name="health"),
             asyncio.create_task(self._keepalive_loop(), name="keepalive"),
         ]
+        for t in self._tasks:
+            t.add_done_callback(_log_task_failure)
 
         log.info(f"Worker {self.worker_id}: all loops started")
 

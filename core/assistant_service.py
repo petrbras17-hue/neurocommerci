@@ -263,7 +263,7 @@ def _creative_payload(item: CreativeDraft) -> dict[str, Any]:
         "input_prompt": item.input_prompt,
         "content_text": item.content_text,
         "variants": variants,
-        "selected_variant": int(meta.get("selected_variant", 0) or 0),
+        "selected_variant": int(meta.get("selected_variant", 0) if meta.get("selected_variant") is not None else 0),
         "meta": meta,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
@@ -316,7 +316,11 @@ async def mirror_brief_to_google_sheets(snapshot: BriefMirrorSnapshot) -> dict[s
     storage = _assistant_sheets_storage()
     if not storage.is_enabled:
         return {"ok": False, "skipped": True, "error": "sheets_not_configured"}
-    await storage.append_business_brief(snapshot)
+    try:
+        await storage.append_business_brief(snapshot)
+    except Exception as exc:
+        log.error("mirror_brief_to_google_sheets failed: %s", exc)
+        return {"ok": False, "error": str(exc)[:400]}
     return {"ok": True, "worksheet": "Брифы"}
 
 
@@ -482,20 +486,26 @@ async def _routed_json_task(
     max_output_tokens: int,
     surface: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    result = await route_ai_task(
-        session,
-        task_type=task_type,
-        prompt=prompt,
-        system_instruction=(
-            "Ты внутренний AI-маркетинг-ассистент для SaaS. "
-            "Возвращай только валидный JSON без markdown и пояснений."
-        ),
-        tenant_id=tenant_id,
-        workspace_id=workspace_id,
-        user_id=user_id,
-        max_output_tokens=max_output_tokens,
-        surface=surface,
-    )
+    try:
+        result = await route_ai_task(
+            session,
+            task_type=task_type,
+            prompt=prompt,
+            system_instruction=(
+                "Ты внутренний AI-маркетинг-ассистент для SaaS. "
+                "Возвращай только валидный JSON без markdown и пояснений."
+            ),
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            max_output_tokens=max_output_tokens,
+            surface=surface,
+        )
+    except Exception as exc:
+        log.error("_routed_json_task %s failed: %s", task_type, exc)
+        return None, {"ok": False, "error": str(exc)[:400]}
+    if result is None:
+        return None, {"ok": False, "error": "ai_router_returned_none"}
     return result.parsed, result.as_meta()
 
 
@@ -735,6 +745,7 @@ async def get_assistant_thread(
             select(AssistantMessage)
             .where(AssistantMessage.thread_id == thread.id)
             .order_by(AssistantMessage.created_at.asc(), AssistantMessage.id.asc())
+            .limit(1000)
         )
     ).scalars().all()
     recommendations = (
@@ -745,6 +756,7 @@ async def get_assistant_thread(
                 AssistantRecommendation.status == "active",
             )
             .order_by(AssistantRecommendation.created_at.desc(), AssistantRecommendation.id.desc())
+            .limit(200)
         )
     ).scalars().all()
     assets_count = (
@@ -802,6 +814,7 @@ async def get_context_payload(
                 BusinessAsset.workspace_id == workspace_id,
             )
             .order_by(BusinessAsset.created_at.desc(), BusinessAsset.id.desc())
+            .limit(1000)
         )
     ).scalars().all()
     draft_count = (

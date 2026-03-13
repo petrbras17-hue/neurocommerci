@@ -126,20 +126,16 @@ class HealthScorer:
     ) -> bool:
         """Return True if any FarmThread for this account is currently quarantined."""
         await apply_session_rls_context(session, tenant_id=tenant_id)
+        now = utcnow()
         result = await session.execute(
-            select(FarmThread).where(
+            select(FarmThread.id).where(
                 FarmThread.account_id == account_id,
                 FarmThread.tenant_id == tenant_id,
-            )
+                FarmThread.quarantine_until.isnot(None),
+                FarmThread.quarantine_until > now,
+            ).limit(1)
         )
-        rows: list[FarmThread] = list(result.scalars().all())
-        if not rows:
-            return False
-        now = utcnow()
-        return any(
-            r.quarantine_until is not None and r.quarantine_until > now
-            for r in rows
-        )
+        return result.scalar_one_or_none() is not None
 
     @staticmethod
     async def _fetch_existing(

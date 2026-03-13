@@ -93,6 +93,12 @@ class SchedulerService:
         self.scheduler.start()
         self._running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="scheduler_heartbeat")
+        def _on_hb_done(t: asyncio.Task) -> None:
+            if not t.cancelled():
+                exc = t.exception()
+                if exc:
+                    log.error("scheduler_heartbeat task failed: %s", exc, exc_info=exc)
+        self._heartbeat_task.add_done_callback(_on_hb_done)
         log.info("SchedulerService: started")
 
         try:

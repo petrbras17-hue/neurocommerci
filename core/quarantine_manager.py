@@ -187,12 +187,11 @@ class QuarantineManager:
         await apply_session_rls_context(session, tenant_id=tenant_id)
         now = utcnow()
         result = await session.execute(
-            select(FarmThread).where(
+            select(FarmThread.id).where(
                 FarmThread.account_id == account_id,
                 FarmThread.tenant_id == tenant_id,
                 FarmThread.status == "quarantine",
                 FarmThread.quarantine_until > now,
-            )
+            ).limit(1)
         )
-        rows = result.scalars().all()
-        return len(list(rows)) > 0
+        return result.scalar_one_or_none() is not None
