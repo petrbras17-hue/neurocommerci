@@ -55,8 +55,15 @@ async def create_campaign_from_brief(
     - Creates Campaign, CampaignChannel, and CampaignAccount rows.
     - Returns the flushed Campaign ORM object (caller owns transaction).
     """
-    brief = await session.get(ProductBrief, brief_id)
-    if brief is None or brief.tenant_id != tenant_id:
+    brief = (
+        await session.execute(
+            select(ProductBrief).where(
+                ProductBrief.id == brief_id,
+                ProductBrief.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if brief is None:
         raise AutoCampaignError("brief_not_found")
 
     name = campaign_name or f"Кампания: {brief.product_name or 'Продукт'}"
@@ -71,7 +78,8 @@ async def create_campaign_from_brief(
 
         keyword_filters = []
         for kw in keywords[:10]:  # limit keyword count to avoid query explosion
-            kw_lower = f"%{kw.lower()}%"
+            safe_kw = kw.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            kw_lower = f"%{safe_kw}%"
             keyword_filters.append(ChannelMapEntry.title.ilike(kw_lower))
             keyword_filters.append(ChannelMapEntry.description.ilike(kw_lower))
             keyword_filters.append(ChannelMapEntry.category.ilike(kw_lower))

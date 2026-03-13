@@ -307,7 +307,13 @@ class AutoPurchaseManager:
         session: AsyncSession,
     ) -> PurchaseRequest:
         """Set status = 'approved'.  Must be called inside an active transaction."""
-        req: PurchaseRequest | None = await session.get(PurchaseRequest, request_id)
+        req = (
+            await session.execute(
+                select(PurchaseRequest)
+                .where(PurchaseRequest.id == request_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
         if req is None:
             raise ValueError(f"purchase_request {request_id} not found")
         if req.status != "pending":
@@ -332,7 +338,13 @@ class AutoPurchaseManager:
         session: AsyncSession,
     ) -> PurchaseRequest:
         """Set status = 'rejected'.  Must be called inside an active transaction."""
-        req: PurchaseRequest | None = await session.get(PurchaseRequest, request_id)
+        req = (
+            await session.execute(
+                select(PurchaseRequest)
+                .where(PurchaseRequest.id == request_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
         if req is None:
             raise ValueError(f"purchase_request {request_id} not found")
         if req.status not in ("pending",):
@@ -355,7 +367,13 @@ class AutoPurchaseManager:
         async with async_session() as session:
             async with session.begin():
                 await apply_session_rls_context(session, tenant_id=tenant_id)
-                req: PurchaseRequest | None = await session.get(PurchaseRequest, request_id)
+                req = (
+                    await session.execute(
+                        select(PurchaseRequest)
+                        .where(PurchaseRequest.id == request_id)
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
                 if req is None:
                     return {"error": "not_found", "request_id": request_id}
                 if req.status != "approved":

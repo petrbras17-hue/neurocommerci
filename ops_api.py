@@ -3030,14 +3030,14 @@ async def accounts_bulk_action(
     tenant_id = tenant_context.tenant_id
     workspace_id = tenant_context.workspace_id
 
-    # Resolve target accounts (cap at 2000 for safety)
+    # Resolve target accounts (cap at 2000 for safety, lock rows for status mutation)
     q = select(Account).where(
         Account.tenant_id == tenant_id,
         Account.workspace_id == workspace_id,
     )
     if payload.account_ids:
         q = q.where(Account.id.in_(payload.account_ids))
-    q = q.limit(2000)
+    q = q.limit(2000).with_for_update()
     result = await session.execute(q)
     accounts = list(result.scalars().all())
 
@@ -3295,13 +3295,13 @@ async def account_lifecycle_transition(
     tenant_id = tenant_context.tenant_id
     workspace_id = tenant_context.workspace_id
 
-    # Verify account belongs to this tenant / workspace before mutating.
+    # Verify account belongs to this tenant / workspace before mutating (lock row).
     result = await session.execute(
         select(Account).where(
             Account.id == account_id,
             Account.tenant_id == tenant_id,
             Account.workspace_id == workspace_id,
-        )
+        ).with_for_update()
     )
     account = result.scalar_one_or_none()
     if account is None:

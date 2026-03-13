@@ -99,7 +99,8 @@ class ChannelMapService:
                     .order_by(ChannelMapEntry.member_count.desc())
                 )
                 if query:
-                    pattern = f"%{query}%"
+                    safe_q = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    pattern = f"%{safe_q}%"
                     q = q.where(
                         ChannelMapEntry.username.ilike(pattern)
                         | ChannelMapEntry.title.ilike(pattern)
