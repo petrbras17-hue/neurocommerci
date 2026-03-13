@@ -1,4 +1,14 @@
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import {
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  Suspense,
+} from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, Html } from "@react-three/drei";
+import * as THREE from "three";
 import { channelMapApi, ChannelMapEntry } from "../api";
 import { useAuth } from "../auth";
 import { motion, AnimatePresence } from "framer-motion";
@@ -18,7 +28,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 
-// ── helpers ─────────────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────────
 
 function formatNumber(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -63,7 +73,11 @@ function buildHighlightRe(query: string): RegExp | null {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function highlight(text: string, re: RegExp | null): string {
@@ -72,7 +86,10 @@ function highlight(text: string, re: RegExp | null): string {
   return safe.replace(re, "<mark>$1</mark>");
 }
 
-function getInitials(title: string | null | undefined, username: string | null | undefined): string {
+function getInitials(
+  title: string | null | undefined,
+  username: string | null | undefined
+): string {
   const src = (title ?? username ?? "??").trim();
   const words = src.split(/\s+/);
   if (words.length >= 2) {
@@ -81,62 +98,89 @@ function getInitials(title: string | null | undefined, username: string | null |
   return src.slice(0, 2).toUpperCase();
 }
 
-// ── constants ────────────────────────────────────────────────────────────────
+// lat/lng → 3D point on unit sphere
+function latLngToVec3(
+  lat: number,
+  lng: number,
+  radius: number
+): [number, number, number] {
+  const phi = ((90 - lat) * Math.PI) / 180;
+  const theta = ((lng + 180) * Math.PI) / 180;
+  return [
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta),
+  ];
+}
 
-const REGION_CONFIG: Array<{ label: string; key: string; languages: string[] }> = [
-  { label: "🇷🇺 RU", key: "ru", languages: ["ru"] },
-  { label: "🏳️ СНГ", key: "cis", languages: ["ru", "uk", "kz"] },
-  { label: "🇺🇦 UA", key: "uk", languages: ["uk"] },
-  { label: "🇰🇿 KZ", key: "kz", languages: ["kz"] },
-  { label: "🇺🇸 EN", key: "en", languages: ["en"] },
-  { label: "🌐 Все", key: "", languages: [] },
-];
+// ── constants ─────────────────────────────────────────────────────────────────
+
+const REGION_CONFIG: Array<{ label: string; key: string; languages: string[] }> =
+  [
+    { label: "🇷🇺 RU", key: "ru", languages: ["ru"] },
+    { label: "🏳️ СНГ", key: "cis", languages: ["ru", "uk", "kz"] },
+    { label: "🇺🇦 UA", key: "uk", languages: ["uk"] },
+    { label: "🇰🇿 KZ", key: "kz", languages: ["kz"] },
+    { label: "🇺🇸 EN", key: "en", languages: ["en"] },
+    { label: "🌐 Все", key: "", languages: [] },
+  ];
 
 const CATEGORY_META: Record<string, { icon: string; color: string }> = {
-  Crypto:        { icon: "₿",  color: "var(--warning)" },
-  Marketing:     { icon: "📢", color: "var(--info)" },
-  "E-commerce":  { icon: "🛒", color: "var(--accent)" },
-  EdTech:        { icon: "🎓", color: "#4488ff" },
-  News:          { icon: "📰", color: "var(--text-secondary)" },
+  Crypto: { icon: "₿", color: "var(--warning)" },
+  Marketing: { icon: "📢", color: "var(--info)" },
+  "E-commerce": { icon: "🛒", color: "var(--accent)" },
+  EdTech: { icon: "🎓", color: "#4488ff" },
+  News: { icon: "📰", color: "var(--text-secondary)" },
   Entertainment: { icon: "🎬", color: "#ec4899" },
-  Tech:          { icon: "💻", color: "#8b5cf6" },
-  Finance:       { icon: "📉", color: "var(--accent-dim)" },
-  Lifestyle:     { icon: "✨", color: "#f97316" },
-  Health:        { icon: "🏥", color: "#14b8a6" },
-  Gaming:        { icon: "🎮", color: "#7c3aed" },
-  "18+":         { icon: "🔞", color: "var(--danger)" },
-  Politics:      { icon: "🏛️", color: "#0ea5e9" },
-  Sports:        { icon: "⚽", color: "#84cc16" },
-  Travel:        { icon: "✈️", color: "#06b6d4" },
-  Business:      { icon: "💼", color: "#f59e0b" },
+  Tech: { icon: "💻", color: "#8b5cf6" },
+  Finance: { icon: "📉", color: "var(--accent-dim)" },
+  Lifestyle: { icon: "✨", color: "#f97316" },
+  Health: { icon: "🏥", color: "#14b8a6" },
+  Gaming: { icon: "🎮", color: "#7c3aed" },
+  "18+": { icon: "🔞", color: "var(--danger)" },
+  Politics: { icon: "🏛️", color: "#0ea5e9" },
+  Sports: { icon: "⚽", color: "#84cc16" },
+  Travel: { icon: "✈️", color: "#06b6d4" },
+  Business: { icon: "💼", color: "#f59e0b" },
+  Science: { icon: "🔬", color: "#aa44ff" },
+  Music: { icon: "🎵", color: "#ff88aa" },
+  Food: { icon: "🍴", color: "#88ffaa" },
+  "AI/ML": { icon: "🤖", color: "#ff00ff" },
+  Cybersecurity: { icon: "🔒", color: "#00ffff" },
 };
 
 const DEFAULT_CATEGORY_META = { icon: "📌", color: "var(--info)" };
 
-function getCategoryMeta(cat: string | null | undefined): { icon: string; color: string } {
+function getCategoryMeta(
+  cat: string | null | undefined
+): { icon: string; color: string } {
   if (!cat) return DEFAULT_CATEGORY_META;
   return CATEGORY_META[cat] ?? DEFAULT_CATEGORY_META;
 }
 
-// Resolve CSS variable colors for canvas drawing
 const CATEGORY_COLORS_RESOLVED: Record<string, string> = {
-  Crypto:        "#ffaa00",
-  Marketing:     "#4488ff",
-  "E-commerce":  "#00ff88",
-  EdTech:        "#4488ff",
-  News:          "#888888",
+  Crypto: "#ffaa00",
+  Marketing: "#4488ff",
+  "E-commerce": "#00ff88",
+  EdTech: "#44aaff",
+  News: "#888888",
   Entertainment: "#ec4899",
-  Tech:          "#8b5cf6",
-  Finance:       "#00cc66",
-  Lifestyle:     "#f97316",
-  Health:        "#14b8a6",
-  Gaming:        "#7c3aed",
-  "18+":         "#ff4444",
-  Politics:      "#0ea5e9",
-  Sports:        "#84cc16",
-  Travel:        "#06b6d4",
-  Business:      "#f59e0b",
-  "Другое": "#4488ff",
+  Tech: "#8844ff",
+  Finance: "#44ddff",
+  Lifestyle: "#f97316",
+  Health: "#44ffaa",
+  Gaming: "#ff44aa",
+  "18+": "#ff4444",
+  Politics: "#ff4488",
+  Sports: "#ffdd44",
+  Travel: "#44ffdd",
+  Business: "#88ff44",
+  Science: "#aa44ff",
+  Music: "#ff88aa",
+  Food: "#88ffaa",
+  "AI/ML": "#ff00ff",
+  Cybersecurity: "#00ffff",
+  Другое: "#4488ff",
 };
 
 function getCategoryColor(cat: string | null | undefined): string {
@@ -153,21 +197,23 @@ const LANGUAGE_OPTIONS = [
 ];
 
 const MEMBER_RANGES = [
-  { label: "0–1K",    min: 0,       max: 1_000 },
-  { label: "1K–10K",  min: 1_000,   max: 10_000 },
-  { label: "10K–100K",min: 10_000,  max: 100_000 },
+  { label: "0–1K", min: 0, max: 1_000 },
+  { label: "1K–10K", min: 1_000, max: 10_000 },
+  { label: "10K–100K", min: 10_000, max: 100_000 },
   { label: "100K–1M", min: 100_000, max: 1_000_000 },
-  { label: "1M+",     min: 1_000_000, max: Infinity },
+  { label: "1M+", min: 1_000_000, max: Infinity },
 ];
-
-// ── framer-motion variants ──────────────────────────────────────────────────
 
 const cardVariants = {
   hidden: { opacity: 0, y: 16 },
   visible: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.03, duration: 0.3, ease: [0.16, 1, 0.3, 1] as const },
+    transition: {
+      delay: i * 0.03,
+      duration: 0.3,
+      ease: [0.16, 1, 0.3, 1] as const,
+    },
   }),
 };
 
@@ -177,7 +223,7 @@ const viewSwitchVariants = {
   exit: { opacity: 0, scale: 0.97, transition: { duration: 0.15 } },
 };
 
-// ── Bubble Map types & layout ─────────────────────────────────────────────
+// ── Bubble Map types ──────────────────────────────────────────────────────────
 
 type BubbleNode = {
   ch: ChannelMapEntry;
@@ -203,7 +249,13 @@ type BubbleLayout = {
   height: number;
 };
 
-function logScale(val: number, minVal: number, maxVal: number, minR: number, maxR: number): number {
+function logScale(
+  val: number,
+  minVal: number,
+  maxVal: number,
+  minR: number,
+  maxR: number
+): number {
   if (maxVal <= minVal) return (minR + maxR) / 2;
   const logMin = Math.log1p(minVal);
   const logMax = Math.log1p(maxVal);
@@ -218,13 +270,18 @@ function packCircles(
   maxR: number
 ): Array<{ ch: ChannelMapEntry; lx: number; ly: number; r: number }> {
   if (items.length === 0) return [];
-  // Sort by size desc for better packing (big circles first)
-  const sorted = [...items].sort((a, b) => (b.member_count ?? 0) - (a.member_count ?? 0));
+  const sorted = [...items].sort(
+    (a, b) => (b.member_count ?? 0) - (a.member_count ?? 0)
+  );
   const members = sorted.map((c) => c.member_count ?? 0);
   const minM = Math.min(...members);
   const maxM = Math.max(...members);
-
-  const circles: Array<{ ch: ChannelMapEntry; lx: number; ly: number; r: number }> = [];
+  const circles: Array<{
+    ch: ChannelMapEntry;
+    lx: number;
+    ly: number;
+    r: number;
+  }> = [];
 
   for (const ch of sorted) {
     const r = logScale(ch.member_count ?? 0, minM, maxM, minR, maxR);
@@ -232,11 +289,10 @@ function packCircles(
       circles.push({ ch, lx: 0, ly: 0, r });
       continue;
     }
-    // Fast placement: try positions around existing circles
-    let bestX = 0, bestY = 0, bestDist = Infinity;
+    let bestX = 0,
+      bestY = 0,
+      bestDist = Infinity;
     let placed = false;
-
-    // Try positions tangent to each existing circle at multiple angles
     const angleSteps = Math.min(24, 8 + circles.length);
     for (let ci = 0; ci < Math.min(circles.length, 20); ci++) {
       const ref = circles[ci];
@@ -247,7 +303,8 @@ function packCircles(
         const ty = ref.ly + Math.sin(a) * gap;
         let ok = true;
         for (const c of circles) {
-          const dx = tx - c.lx, dy = ty - c.ly;
+          const dx = tx - c.lx,
+            dy = ty - c.ly;
           if (dx * dx + dy * dy < (r + c.r + 2) * (r + c.r + 2)) {
             ok = false;
             break;
@@ -263,11 +320,10 @@ function packCircles(
           }
         }
       }
-      if (placed) break; // Good enough position found
+      if (placed) break;
     }
     if (!placed) {
-      // Fallback: spiral outward
-      const angle = circles.length * 2.4; // golden angle
+      const angle = circles.length * 2.4;
       const rad = r * 2.5 + circles.length * 3;
       bestX = Math.cos(angle) * rad;
       bestY = Math.sin(angle) * rad;
@@ -278,20 +334,16 @@ function packCircles(
 }
 
 function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
-  if (items.length === 0) return { nodes: [], labels: [], width: 800, height: 600 };
-
-  // Group by category
+  if (items.length === 0)
+    return { nodes: [], labels: [], width: 800, height: 600 };
   const groups: Record<string, ChannelMapEntry[]> = {};
   for (const ch of items) {
     const cat = ch.category ?? "Другое";
     if (!groups[cat]) groups[cat] = [];
     groups[cat].push(ch);
   }
-
-  const catKeys: string[] = Object.keys(groups);
+  const catKeys = Object.keys(groups);
   const totalCats = catKeys.length;
-
-  // Cluster centres: arrange on a circle of clusters
   const clusterRadius = Math.max(200, totalCats * 60);
   const nodes: BubbleNode[] = [];
   const labels: ClusterLabel[] = [];
@@ -302,20 +354,15 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
     const theta = (ci / totalCats) * 2 * Math.PI - Math.PI / 2;
     const cx = Math.cos(theta) * clusterRadius;
     const cy = Math.sin(theta) * clusterRadius;
-
     const color = getCategoryColor(cat);
     const meta = getCategoryMeta(cat);
-
-    // Pack bubbles inside cluster
     const packed = packCircles(chItems, 8, 34);
-
-    // Find bounding box of cluster to shift it around cx/cy
-    let bx = 0, by = 0;
+    let bx = 0,
+      by = 0;
     if (packed.length > 0) {
       bx = packed.reduce((s, p) => s + p.lx, 0) / packed.length;
       by = packed.reduce((s, p) => s + p.ly, 0) / packed.length;
     }
-
     for (const p of packed) {
       nodes.push({
         ch: p.ch,
@@ -326,11 +373,9 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
         category: cat,
       });
     }
-
     labels.push({ category: cat, cx, cy: cy - 10, color, icon: meta.icon });
   }
 
-  // Normalise: shift all coords so min is at (padding, padding)
   const pad = 80;
   const allX = nodes.map((n) => n.x - n.r);
   const allY = nodes.map((n) => n.y - n.r);
@@ -342,7 +387,6 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
   const maxY = Math.max(...allYR);
   const shiftX = -minX + pad;
   const shiftY = -minY + pad;
-
   for (const n of nodes) {
     n.x += shiftX;
     n.y += shiftY;
@@ -351,17 +395,17 @@ function computeLayout(items: ChannelMapEntry[]): BubbleLayout {
     l.cx += shiftX;
     l.cy += shiftY;
   }
-
-  const width = maxX - minX + pad * 2;
-  const height = maxY - minY + pad * 2;
-
-  return { nodes, labels, width, height };
+  return {
+    nodes,
+    labels,
+    width: maxX - minX + pad * 2,
+    height: maxY - minY + pad * 2,
+  };
 }
 
-// ── BubbleMap canvas component ────────────────────────────────────────────
+// ── BubbleMap canvas ──────────────────────────────────────────────────────────
 
 type Tooltip = { x: number; y: number; ch: ChannelMapEntry } | null;
-
 type AnimTarget = {
   zoom: number;
   panX: number;
@@ -391,48 +435,42 @@ function BubbleMapCanvas({
   const minimapRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number>(0);
-  const stateRef = useRef({ zoom: 1, panX: 0, panY: 0, dragging: false, lastX: 0, lastY: 0 });
+  const stateRef = useRef({
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+    dragging: false,
+    lastX: 0,
+    lastY: 0,
+  });
   const animTargetRef = useRef<AnimTarget>(null);
   const initViewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const [tooltip, setTooltip] = useState<Tooltip>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const hoveredRef = useRef<number | null>(null);
-  const [isAnimating, setIsAnimating] = useState(false);
   const [focusedChannelId, setFocusedChannelId] = useState<number | null>(null);
-
-  // Build lookup for fast hover detection
   const nodesRef = useRef<BubbleNode[]>([]);
   nodesRef.current = layout.nodes;
 
-  // Ease-out function
   const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
-  // Draw minimap
   const drawMinimap = useCallback(() => {
     const minimap = minimapRef.current;
     if (!minimap || layout.nodes.length === 0) return;
     const mctx = minimap.getContext("2d");
     if (!mctx) return;
     const dpr = window.devicePixelRatio || 1;
-
     mctx.clearRect(0, 0, minimap.width, minimap.height);
-
-    // Background
     mctx.fillStyle = "rgba(10,10,11,0.8)";
     mctx.fillRect(0, 0, minimap.width, minimap.height);
-
-    // Scale factor to fit layout into minimap
     const mw = MINIMAP_W * dpr;
     const mh = MINIMAP_H * dpr;
     const pad = 8 * dpr;
     const scaleX = (mw - pad * 2) / layout.width;
     const scaleY = (mh - pad * 2) / layout.height;
     const sc = Math.min(scaleX, scaleY);
-
     const offX = pad + (mw - pad * 2 - layout.width * sc) / 2;
     const offY = pad + (mh - pad * 2 - layout.height * sc) / 2;
-
-    // Draw bubbles as small dots
     for (const node of layout.nodes) {
       const mx = offX + node.x * sc;
       const my = offY + node.y * sc;
@@ -442,33 +480,25 @@ function BubbleMapCanvas({
       mctx.fillStyle = node.color + "88";
       mctx.fill();
     }
-
-    // Draw viewport rectangle
     const wrap = wrapRef.current;
     if (wrap) {
       const { zoom, panX, panY } = stateRef.current;
       const W = wrap.clientWidth;
       const H = wrap.clientHeight;
-
-      // Visible world coordinates
       const worldLeft = -panX / zoom;
       const worldTop = -panY / zoom;
       const worldRight = (W - panX) / zoom;
       const worldBottom = (H - panY) / zoom;
-
       const rx = offX + worldLeft * sc;
       const ry = offY + worldTop * sc;
       const rw = (worldRight - worldLeft) * sc;
       const rh = (worldBottom - worldTop) * sc;
-
       mctx.strokeStyle = "#00ff88";
       mctx.lineWidth = 1.5 * dpr;
       mctx.strokeRect(rx, ry, rw, rh);
       mctx.fillStyle = "rgba(0,255,136,0.05)";
       mctx.fillRect(rx, ry, rw, rh);
     }
-
-    // Border
     mctx.strokeStyle = "#00ff88";
     mctx.lineWidth = 1 * dpr;
     mctx.strokeRect(0, 0, minimap.width, minimap.height);
@@ -481,10 +511,7 @@ function BubbleMapCanvas({
     if (!ctx) return;
     const { zoom, panX, panY } = stateRef.current;
     const dpr = window.devicePixelRatio || 1;
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Background grid
     ctx.save();
     ctx.fillStyle = "#0a0a0b";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -506,38 +533,31 @@ function BubbleMapCanvas({
       ctx.stroke();
     }
     ctx.restore();
-
     ctx.save();
     ctx.scale(dpr, dpr);
     ctx.translate(panX, panY);
     ctx.scale(zoom, zoom);
-
     const isFiltering = filterCategory !== "" || filterQuery.trim() !== "";
     const queryLower = filterQuery.trim().toLowerCase();
-
-    // Draw bubbles
     for (const node of layout.nodes) {
-      const isMatch = !isFiltering ||
-        (filterCategory === "" || node.category === filterCategory) &&
-        (queryLower === "" || (node.ch.title?.toLowerCase().includes(queryLower) ?? false) || (node.ch.username?.toLowerCase().includes(queryLower) ?? false));
-
+      const isMatch =
+        !isFiltering ||
+        ((filterCategory === "" || node.category === filterCategory) &&
+          (queryLower === "" ||
+            (node.ch.title?.toLowerCase().includes(queryLower) ?? false) ||
+            (node.ch.username?.toLowerCase().includes(queryLower) ?? false)));
       const isHovered = hoveredRef.current === node.ch.id;
       const isFocused = focusedChannelId === node.ch.id;
       const alpha = isFiltering && !isMatch ? 0.08 : 1;
       const scale = isHovered || isFocused ? 1.18 : 1;
       const r = node.r * scale;
-
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.translate(node.x, node.y);
-
-      // Glow for hovered/matched/focused
       if (isHovered || isFocused || (isFiltering && isMatch)) {
         ctx.shadowColor = node.color;
         ctx.shadowBlur = isHovered || isFocused ? 22 : 10;
       }
-
-      // Bubble fill
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, Math.PI * 2);
       const grad = ctx.createRadialGradient(-r * 0.3, -r * 0.3, 0, 0, 0, r);
@@ -545,777 +565,801 @@ function BubbleMapCanvas({
       grad.addColorStop(1, node.color + "55");
       ctx.fillStyle = grad;
       ctx.fill();
-
-      // Border
-      ctx.strokeStyle = isHovered || isFocused ? node.color : node.color + "88";
-      ctx.lineWidth = isHovered || isFocused ? 2.5 : 1.2;
-      ctx.stroke();
-
       ctx.shadowBlur = 0;
-
-      // Enhancement 1: Avatar initials for large bubbles, truncated title for medium
-      if (r > 30) {
-        // Large bubble: show 2-letter initials centered
-        const initials = getInitials(node.ch.title, node.ch.username);
-        const fontSize = Math.round(r * 0.6);
-        ctx.fillStyle = "#ffffff";
-        ctx.font = `bold ${fontSize}px 'Geist Sans', system-ui, sans-serif`;
+      ctx.strokeStyle = node.color + (isHovered || isFocused ? "ff" : "88");
+      ctx.lineWidth = isHovered || isFocused ? 2 / zoom : 1 / zoom;
+      ctx.stroke();
+      if (zoom > 0.6 && r * zoom > 12) {
+        ctx.fillStyle = isHovered ? "#fff" : node.color + "ee";
+        ctx.font = `bold ${Math.min(r * 0.5, 11) / zoom}px 'Geist Sans', sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText(initials, 0, 0);
-      } else if (r > 18) {
-        ctx.fillStyle = "#ffffffcc";
-        ctx.font = `bold ${Math.min(r * 0.45, 13)}px 'Geist Sans', system-ui, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const label = (node.ch.title ?? node.ch.username ?? "?").slice(0, r > 26 ? 12 : 6);
+        const label =
+          node.ch.username
+            ? `@${node.ch.username.slice(0, 8)}`
+            : (node.ch.title ?? "").slice(0, 8);
         ctx.fillText(label, 0, 0);
       }
-
-      // Focus ring for searched channel
-      if (isFocused) {
-        ctx.beginPath();
-        ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
-        ctx.strokeStyle = "#00ff88";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
+      ctx.restore();
+    }
+    if (zoom > 0.4) {
+      for (const lbl of layout.labels) {
+        ctx.save();
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = lbl.color;
+        ctx.font = `bold ${14 / zoom}px 'Geist Sans', sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "bottom";
+        ctx.shadowColor = lbl.color;
+        ctx.shadowBlur = 8;
+        ctx.fillText(`${lbl.icon} ${lbl.category}`, lbl.cx, lbl.cy);
+        ctx.restore();
       }
-
-      ctx.restore();
     }
-
-    // Draw cluster labels
-    for (const lbl of layout.labels) {
-      ctx.save();
-      ctx.globalAlpha = 0.9;
-      ctx.font = `600 13px 'Geist Sans', system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      const text = `${lbl.icon} ${lbl.category}`;
-      const tw = ctx.measureText(text).width;
-      const bw = tw + 20, bh = 24;
-
-      ctx.fillStyle = "rgba(10,10,11,0.78)";
-      ctx.beginPath();
-      const bx = lbl.cx - bw / 2, by = lbl.cy - bh / 2;
-      ctx.roundRect(bx, by, bw, bh, 6);
-      ctx.fill();
-
-      ctx.strokeStyle = lbl.color + "55";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = lbl.color;
-      ctx.fillText(text, lbl.cx, lbl.cy);
-      ctx.restore();
-    }
-
     ctx.restore();
-
-    // Draw minimap after main canvas
     drawMinimap();
   }, [layout, filterCategory, filterQuery, focusedChannelId, drawMinimap]);
 
-  // Kick off render loop
-  const scheduleRender = useCallback(() => {
-    cancelAnimationFrame(animRef.current);
-    animRef.current = requestAnimationFrame(() => {
-      drawCanvas();
-    });
-  }, [drawCanvas]);
-
-  // Smooth animation loop
-  const runAnimation = useCallback(() => {
-    const target = animTargetRef.current;
-    if (!target) {
-      setIsAnimating(false);
-      return;
+  const animLoop = useCallback(() => {
+    const tgt = animTargetRef.current;
+    if (tgt) {
+      const elapsed = performance.now() - tgt.startTime;
+      const t = Math.min(elapsed / tgt.duration, 1);
+      const e = easeOutCubic(t);
+      stateRef.current.zoom =
+        tgt.startZoom + (tgt.zoom - tgt.startZoom) * e;
+      stateRef.current.panX =
+        tgt.startPanX + (tgt.panX - tgt.startPanX) * e;
+      stateRef.current.panY =
+        tgt.startPanY + (tgt.panY - tgt.startPanY) * e;
+      if (t >= 1) animTargetRef.current = null;
     }
-
-    const now = performance.now();
-    const elapsed = now - target.startTime;
-    const progress = Math.min(elapsed / target.duration, 1);
-    const eased = easeOutCubic(progress);
-
-    stateRef.current.zoom = target.startZoom + (target.zoom - target.startZoom) * eased;
-    stateRef.current.panX = target.startPanX + (target.panX - target.startPanX) * eased;
-    stateRef.current.panY = target.startPanY + (target.panY - target.startPanY) * eased;
-
     drawCanvas();
-
-    if (progress < 1) {
-      animRef.current = requestAnimationFrame(runAnimation);
-    } else {
-      animTargetRef.current = null;
-      setIsAnimating(false);
-    }
+    animRef.current = requestAnimationFrame(animLoop);
   }, [drawCanvas]);
 
-  // Animate to a target view
-  const animateTo = useCallback((targetZoom: number, targetPanX: number, targetPanY: number, duration: number = 300) => {
+  useEffect(() => {
+    animRef.current = requestAnimationFrame(animLoop);
+    return () => cancelAnimationFrame(animRef.current);
+  }, [animLoop]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const wrap = wrapRef.current;
+    if (!canvas || !wrap) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = wrap.clientWidth;
+    const H = wrap.clientHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    const scaleX = W / layout.width;
+    const scaleY = H / layout.height;
+    const fitZoom = Math.min(scaleX, scaleY) * 0.85;
+    const panX = (W - layout.width * fitZoom) / 2;
+    const panY = (H - layout.height * fitZoom) / 2;
+    stateRef.current.zoom = fitZoom;
+    stateRef.current.panX = panX;
+    stateRef.current.panY = panY;
+    initViewRef.current = { zoom: fitZoom, panX, panY };
+    const minimap = minimapRef.current;
+    if (minimap) {
+      minimap.width = MINIMAP_W * dpr;
+      minimap.height = MINIMAP_H * dpr;
+      minimap.style.width = `${MINIMAP_W}px`;
+      minimap.style.height = `${MINIMAP_H}px`;
+    }
+  }, [layout]);
+
+  const hitTest = useCallback(
+    (cx: number, cy: number): BubbleNode | null => {
+      const { zoom, panX, panY } = stateRef.current;
+      const wx = (cx - panX) / zoom;
+      const wy = (cy - panY) / zoom;
+      for (let i = nodesRef.current.length - 1; i >= 0; i--) {
+        const n = nodesRef.current[i];
+        const dx = wx - n.x,
+          dy = wy - n.y;
+        if (dx * dx + dy * dy <= n.r * n.r * 1.3) return n;
+      }
+      return null;
+    },
+    []
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      if (stateRef.current.dragging) {
+        const dx = cx - stateRef.current.lastX;
+        const dy = cy - stateRef.current.lastY;
+        stateRef.current.panX += dx;
+        stateRef.current.panY += dy;
+        stateRef.current.lastX = cx;
+        stateRef.current.lastY = cy;
+        setTooltip(null);
+        return;
+      }
+      const hit = hitTest(cx, cy);
+      if (hit) {
+        if (hoveredRef.current !== hit.ch.id) {
+          hoveredRef.current = hit.ch.id;
+          setHoveredId(hit.ch.id);
+          const { zoom, panX, panY } = stateRef.current;
+          setTooltip({
+            x: hit.x * zoom + panX,
+            y: hit.y * zoom + panY - hit.r * zoom - 12,
+            ch: hit.ch,
+          });
+        }
+        (canvasRef.current as HTMLCanvasElement).style.cursor = "pointer";
+      } else {
+        if (hoveredRef.current !== null) {
+          hoveredRef.current = null;
+          setHoveredId(null);
+          setTooltip(null);
+        }
+        (canvasRef.current as HTMLCanvasElement).style.cursor = "grab";
+      }
+    },
+    [hitTest]
+  );
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      stateRef.current.dragging = true;
+      stateRef.current.lastX = e.clientX;
+      stateRef.current.lastY = e.clientY;
+      (canvasRef.current as HTMLCanvasElement).style.cursor = "grabbing";
+    },
+    []
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (stateRef.current.dragging) {
+        const dist = Math.hypot(
+          e.clientX - stateRef.current.lastX,
+          e.clientY - stateRef.current.lastY
+        );
+        stateRef.current.dragging = false;
+        (canvasRef.current as HTMLCanvasElement).style.cursor = "grab";
+        if (dist > 4) return;
+      }
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      const hit = hitTest(cx, cy);
+      if (hit) {
+        setFocusedChannelId(hit.ch.id === focusedChannelId ? null : hit.ch.id);
+        onSelect(hit.ch.id === focusedChannelId ? null : hit.ch);
+      } else {
+        setFocusedChannelId(null);
+        onSelect(null);
+      }
+    },
+    [hitTest, focusedChannelId, onSelect]
+  );
+
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const delta = e.deltaY > 0 ? 0.85 : 1.18;
+    const { zoom, panX, panY } = stateRef.current;
+    const newZoom = Math.max(0.08, Math.min(6, zoom * delta));
+    stateRef.current.panX = cx - (cx - panX) * (newZoom / zoom);
+    stateRef.current.panY = cy - (cy - panY) * (newZoom / zoom);
+    stateRef.current.zoom = newZoom;
+  }, []);
+
+  const handleReset = useCallback(() => {
+    const { zoom, panX, panY } = initViewRef.current;
     animTargetRef.current = {
-      zoom: targetZoom,
-      panX: targetPanX,
-      panY: targetPanY,
+      zoom,
+      panX,
+      panY,
       startZoom: stateRef.current.zoom,
       startPanX: stateRef.current.panX,
       startPanY: stateRef.current.panY,
       startTime: performance.now(),
-      duration,
+      duration: 600,
     };
-    setIsAnimating(true);
-    cancelAnimationFrame(animRef.current);
-    animRef.current = requestAnimationFrame(runAnimation);
-  }, [runAnimation]);
-
-  // Enhancement 2: Focus on a specific channel (search zoom)
-  const focusOnChannel = useCallback((channelId: number) => {
-    const node = layout.nodes.find((n) => n.ch.id === channelId);
-    if (!node) return;
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-
-    const W = wrap.clientWidth;
-    const H = wrap.clientHeight;
-    const targetZoom = 3;
-    const targetPanX = W / 2 - node.x * targetZoom;
-    const targetPanY = H / 2 - node.y * targetZoom;
-
-    setFocusedChannelId(channelId);
-    animateTo(targetZoom, targetPanX, targetPanY, 300);
-  }, [layout, animateTo]);
-
-  // Enhancement 2: Reset view to initial
-  const resetView = useCallback(() => {
-    const init = initViewRef.current;
-    setFocusedChannelId(null);
-    animateTo(init.zoom, init.panX, init.panY, 300);
-  }, [animateTo]);
-
-  // Resize observer
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const minimap = minimapRef.current;
-
-    const onResize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = wrap.clientWidth;
-      const h = wrap.clientHeight;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-      if (minimap) {
-        minimap.width = MINIMAP_W * dpr;
-        minimap.height = MINIMAP_H * dpr;
-        minimap.style.width = `${MINIMAP_W}px`;
-        minimap.style.height = `${MINIMAP_H}px`;
-      }
-      scheduleRender();
-    };
-
-    const ro = new ResizeObserver(onResize);
-    ro.observe(wrap);
-    onResize();
-    return () => ro.disconnect();
-  }, [scheduleRender]);
-
-  useEffect(() => {
-    scheduleRender();
-    return () => cancelAnimationFrame(animRef.current);
-  }, [scheduleRender, hoveredId]);
-
-  // Centre view when layout changes
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap || layout.nodes.length === 0) return;
-    const W = wrap.clientWidth;
-    const H = wrap.clientHeight;
-    const initZoom = Math.min(W / layout.width, H / layout.height, 1) * 0.85;
-    stateRef.current.zoom = initZoom;
-    stateRef.current.panX = (W - layout.width * initZoom) / 2;
-    stateRef.current.panY = (H - layout.height * initZoom) / 2;
-    initViewRef.current = { zoom: initZoom, panX: stateRef.current.panX, panY: stateRef.current.panY };
-    setFocusedChannelId(null);
-    scheduleRender();
-  }, [layout, scheduleRender]);
-
-  // Pointer -> world coords
-  const toWorld = useCallback((clientX: number, clientY: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { wx: 0, wy: 0 };
-    const rect = canvas.getBoundingClientRect();
-    const { zoom, panX, panY } = stateRef.current;
-    const cx = clientX - rect.left;
-    const cy = clientY - rect.top;
-    return { wx: (cx - panX) / zoom, wy: (cy - panY) / zoom };
   }, []);
-
-  const hitTest = useCallback((wx: number, wy: number): BubbleNode | null => {
-    for (let i = nodesRef.current.length - 1; i >= 0; i--) {
-      const n = nodesRef.current[i];
-      const dx = wx - n.x, dy = wy - n.y;
-      if (dx * dx + dy * dy <= n.r * n.r * 1.4) return n;
-    }
-    return null;
-  }, []);
-
-  // Mouse events
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isAnimating) return;
-    const { wx, wy } = toWorld(e.clientX, e.clientY);
-    const st = stateRef.current;
-
-    if (st.dragging) {
-      st.panX += e.clientX - st.lastX;
-      st.panY += e.clientY - st.lastY;
-      st.lastX = e.clientX;
-      st.lastY = e.clientY;
-      setTooltip(null);
-      scheduleRender();
-      return;
-    }
-
-    const hit = hitTest(wx, wy);
-    const newId = hit ? hit.ch.id : null;
-    if (newId !== hoveredRef.current) {
-      hoveredRef.current = newId;
-      setHoveredId(newId);
-    }
-
-    if (hit) {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, ch: hit.ch });
-    } else {
-      setTooltip(null);
-    }
-  }, [toWorld, hitTest, scheduleRender, isAnimating]);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (isAnimating) return;
-    stateRef.current.dragging = true;
-    stateRef.current.lastX = e.clientX;
-    stateRef.current.lastY = e.clientY;
-    setTooltip(null);
-  }, [isAnimating]);
-
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
-    const wasDragging = stateRef.current.dragging;
-    stateRef.current.dragging = false;
-    if (!wasDragging) return;
-    const dx = Math.abs(e.clientX - stateRef.current.lastX);
-    const dy = Math.abs(e.clientY - stateRef.current.lastY);
-    if (dx < 4 && dy < 4) {
-      const { wx, wy } = toWorld(e.clientX, e.clientY);
-      const hit = hitTest(wx, wy);
-      onSelect(hit ? hit.ch : null);
-    }
-  }, [toWorld, hitTest, onSelect]);
-
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    const { wx, wy } = toWorld(e.clientX, e.clientY);
-    const hit = hitTest(wx, wy);
-    if (hit) {
-      onSelect(hit.ch);
-      focusOnChannel(hit.ch.id);
-    } else {
-      onSelect(null);
-    }
-  }, [toWorld, hitTest, onSelect, focusOnChannel]);
-
-  const handleWheel = useCallback((e: WheelEvent) => {
-    if (isAnimating) return;
-    e.preventDefault();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    const st = stateRef.current;
-    const factor = e.deltaY < 0 ? 1.12 : 0.9;
-    const newZoom = Math.max(0.3, Math.min(5, st.zoom * factor));
-    const scale = newZoom / st.zoom;
-    st.panX = cx - scale * (cx - st.panX);
-    st.panY = cy - scale * (cy - st.panY);
-    st.zoom = newZoom;
-    scheduleRender();
-  }, [scheduleRender, isAnimating]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.addEventListener("wheel", handleWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
-
-  // Enhancement 3: Minimap click handler
-  const handleMinimapClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const minimap = minimapRef.current;
-    const wrap = wrapRef.current;
-    if (!minimap || !wrap || layout.nodes.length === 0) return;
-
-    const rect = minimap.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickY = e.clientY - rect.top;
-
-    // Compute same scale as drawMinimap
-    const pad = 8;
-    const scaleX = (MINIMAP_W - pad * 2) / layout.width;
-    const scaleY = (MINIMAP_H - pad * 2) / layout.height;
-    const sc = Math.min(scaleX, scaleY);
-    const offX = pad + (MINIMAP_W - pad * 2 - layout.width * sc) / 2;
-    const offY = pad + (MINIMAP_H - pad * 2 - layout.height * sc) / 2;
-
-    // Convert minimap coords to world coords
-    const worldX = (clickX - offX) / sc;
-    const worldY = (clickY - offY) / sc;
-
-    // Pan so that this world point is centered
-    const W = wrap.clientWidth;
-    const H = wrap.clientHeight;
-    const currentZoom = stateRef.current.zoom;
-    const targetPanX = W / 2 - worldX * currentZoom;
-    const targetPanY = H / 2 - worldY * currentZoom;
-
-    animateTo(currentZoom, targetPanX, targetPanY, 200);
-  }, [layout, animateTo]);
-
-  // Search match results for external focus
-  const searchMatches = useMemo(() => {
-    const q = filterQuery.trim().toLowerCase();
-    if (!q) return [] as BubbleNode[];
-    return layout.nodes.filter((n) =>
-      (n.ch.title?.toLowerCase().includes(q) ?? false) ||
-      (n.ch.username?.toLowerCase().includes(q) ?? false)
-    );
-  }, [layout.nodes, filterQuery]);
-
-  // Auto-focus first search result when search changes
-  useEffect(() => {
-    if (searchMatches.length === 1) {
-      focusOnChannel(searchMatches[0].ch.id);
-    } else if (searchMatches.length === 0 && filterQuery.trim() === "") {
-      setFocusedChannelId(null);
-    }
-  }, [searchMatches, filterQuery, focusOnChannel]);
 
   return (
     <div
       ref={wrapRef}
-      style={{
-        position: "relative",
-        width: "100%",
-        height: 560,
-        borderRadius: 12,
-        overflow: "hidden",
-        background: "#0a0a0b",
-        border: "1px solid var(--border)",
-        cursor: isAnimating ? "default" : stateRef.current.dragging ? "grabbing" : "grab",
-      }}
+      style={{ position: "relative", width: "100%", height: 600, background: "#0a0a0b", borderRadius: 12, overflow: "hidden" }}
     >
       <canvas
         ref={canvasRef}
+        style={{ display: "block", cursor: "grab" }}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
-        onClick={handleClick}
         onMouseLeave={() => {
-          setTooltip(null);
+          stateRef.current.dragging = false;
           hoveredRef.current = null;
           setHoveredId(null);
+          setTooltip(null);
         }}
-        style={{ display: "block", width: "100%", height: "100%" }}
+        onWheel={handleWheel}
       />
-
-      {/* Tooltip */}
       {tooltip && (
         <div
           style={{
             position: "absolute",
-            left: tooltip.x + 14,
-            top: tooltip.y - 10,
-            background: "rgba(17,17,17,0.96)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            padding: "10px 14px",
+            left: tooltip.x,
+            top: tooltip.y,
+            transform: "translate(-50%, -100%)",
+            background: "rgba(10,10,11,0.95)",
+            border: "1px solid var(--accent)",
+            borderRadius: 8,
+            padding: "8px 12px",
             pointerEvents: "none",
             zIndex: 10,
-            maxWidth: 220,
-            boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
+            minWidth: 160,
+            boxShadow: "0 0 12px rgba(0,255,136,0.25)",
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text)", marginBottom: 4, lineHeight: 1.3 }}>
-            {tooltip.ch.title ?? tooltip.ch.username ?? `#${tooltip.ch.id}`}
+          <div style={{ fontWeight: 700, fontSize: 13, color: "var(--accent)" }}>
+            {tooltip.ch.title ?? `@${tooltip.ch.username}`}
           </div>
           {tooltip.ch.username && (
-            <div style={{ fontSize: 11, color: "var(--accent)", fontFamily: "monospace", marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace" }}>
               @{tooltip.ch.username}
             </div>
           )}
-          <div style={{ display: "flex", gap: 12, fontSize: 12, color: "var(--text-secondary)" }}>
-            <span><Users size={10} style={{ marginRight: 3, verticalAlign: "middle" }} />{formatNumber(tooltip.ch.member_count)}</span>
-            {tooltip.ch.engagement_rate != null && (
-              <span style={{ color: erColor(tooltip.ch.engagement_rate) }}>ER {erLabel(tooltip.ch.engagement_rate)}</span>
-            )}
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
+            {formatNumber(tooltip.ch.member_count)} подписчиков
           </div>
+          {tooltip.ch.category && (
+            <div style={{ fontSize: 11, color: getCategoryColor(tooltip.ch.category), marginTop: 2 }}>
+              {tooltip.ch.category}
+            </div>
+          )}
         </div>
       )}
-
-      {/* Search result list on map */}
-      {searchMatches.length > 1 && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: 14,
-            background: "rgba(10,10,11,0.92)",
-            border: "1px solid var(--border)",
-            borderRadius: 10,
-            padding: "8px 0",
-            maxHeight: 200,
-            overflowY: "auto",
-            zIndex: 12,
-            minWidth: 180,
-          }}
-        >
-          <div style={{ padding: "4px 12px 8px", fontSize: 11, color: "var(--muted)" }}>
-            {searchMatches.length} совпадений
-          </div>
-          {searchMatches.slice(0, 20).map((node) => (
-            <button
-              key={node.ch.id}
-              type="button"
-              onClick={() => {
-                focusOnChannel(node.ch.id);
-                onSelect(node.ch);
-              }}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                display: "block",
-                width: "100%",
-                padding: "6px 12px",
-                fontSize: 12,
-                color: focusedChannelId === node.ch.id ? "#00ff88" : "var(--text-secondary)",
-                background: focusedChannelId === node.ch.id ? "rgba(0,255,136,0.08)" : "transparent",
-                boxSizing: "border-box",
-              }}
-              onMouseEnter={(ev) => { ev.currentTarget.style.background = "rgba(0,255,136,0.08)"; }}
-              onMouseLeave={(ev) => {
-                ev.currentTarget.style.background = focusedChannelId === node.ch.id ? "rgba(0,255,136,0.08)" : "transparent";
-              }}
-            >
-              {node.ch.title ?? node.ch.username ?? `#${node.ch.id}`}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Reset View button */}
-      {focusedChannelId != null && (
-        <button
-          type="button"
-          onClick={resetView}
-          style={{
-            position: "absolute",
-            top: 12,
-            right: 14,
-            background: "rgba(10,10,11,0.88)",
-            border: "1px solid #00ff88",
-            borderRadius: 8,
-            padding: "6px 14px",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 12,
-            color: "#00ff88",
-            zIndex: 12,
-          }}
-        >
-          <RotateCcw size={12} />
-          Сбросить вид
-        </button>
-      )}
-
-      {/* Controls hint */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 12,
-          left: 14,
-          fontSize: 11,
-          color: "var(--muted)",
-          pointerEvents: "none",
-        }}
-      >
-        {"Колесико — зум · Тащите и перетащите — пан"}
-      </div>
-
-      {/* Stats bar */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: MINIMAP_H + 24,
-          right: 14,
-          fontSize: 11,
-          color: "var(--text-secondary)",
-          fontFamily: "monospace",
-          pointerEvents: "none",
-        }}
-      >
-        {layout.nodes.length} {"каналов"} {"·"} {layout.labels.length} {"категорий"}
-      </div>
-
-      {/* Enhancement 3: Mini-map navigator */}
       <canvas
         ref={minimapRef}
-        onClick={handleMinimapClick}
         style={{
           position: "absolute",
-          bottom: 12,
-          right: 14,
-          width: MINIMAP_W,
-          height: MINIMAP_H,
-          borderRadius: 8,
-          cursor: "crosshair",
-          zIndex: 11,
+          bottom: 16,
+          left: 16,
+          borderRadius: 6,
+          opacity: 0.85,
         }}
       />
+      <button
+        type="button"
+        onClick={handleReset}
+        style={{
+          position: "absolute",
+          top: 16,
+          right: 16,
+          all: "unset",
+          cursor: "pointer",
+          background: "rgba(10,10,11,0.8)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: "6px 10px",
+          color: "var(--muted)",
+          fontSize: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <RotateCcw size={12} /> Сброс вида
+      </button>
+      <div
+        style={{
+          position: "absolute",
+          bottom: 16,
+          right: 16,
+          fontSize: 11,
+          color: "var(--muted)",
+          background: "rgba(10,10,11,0.6)",
+          padding: "4px 8px",
+          borderRadius: 6,
+          pointerEvents: "none",
+        }}
+      >
+        Колёсико — зум · Перетащить — панорама · Клик — детали
+      </div>
     </div>
   );
 }
 
-// ── Detail Panel ──────────────────────────────────────────────────────────
+// ── Globe 3D components ───────────────────────────────────────────────────────
 
-function ChannelDetailPanel({
-  ch,
-  onClose,
-}: {
-  ch: ChannelMapEntry;
-  onClose: () => void;
-}) {
-  const meta = getCategoryMeta(ch.category);
+// Continent outlines approximated as latitude/longitude line segments
+// This is a simplified set of continent bounding arcs — no external GeoJSON needed
+function buildContinentLines(): Float32Array[] {
+  const lines: Array<Array<[number, number]>> = [
+    // Europe rough outline
+    [[36, -9],[44, -8],[47, 2],[51, 2],[54, 10],[56, 24],[64, 26],[70, 28],[71, 25],[65, 14],[60, 5],[58, -6],[52, -10],[44, -8]],
+    // Africa rough outline
+    [[37, 10],[37, 36],[11, 42],[-11, 40],[-34, 26],[-34, 18],[-17, 12],[-1, 8],[5, 2],[4, 9],[12, 15],[23, 12],[32, 22],[37, 10]],
+    // Asia rough outline
+    [[36, 27],[42, 40],[44, 50],[46, 60],[55, 60],[62, 68],[72, 68],[72, 142],[60, 142],[52, 140],[42, 132],[36, 130],[22, 114],[1, 104],[-8, 115],[-9, 122],[-8, 140],[1, 136],[10, 125],[18, 121],[22, 120],[22, 109],[18, 106],[10, 98],[8, 78],[20, 73],[20, 58],[12, 44],[12, 43],[20, 37],[28, 35],[36, 27]],
+    // North America rough outline
+    [[72, -73],[66, -82],[60, -95],[60, -138],[66, -166],[72, -160],[72, -141],[60, -133],[50, -126],[48, -122],[42, -124],[38, -122],[30, -116],[24, -110],[22, -100],[18, -92],[18, -85],[26, -80],[36, -75],[44, -66],[48, -53],[52, -56],[60, -64],[66, -64],[72, -73]],
+    // South America rough outline
+    [[12, -72],[10, -62],[4, -52],[0, -50],[-4, -36],[-10, -37],[-22, -42],[-34, -52],[-56, -64],[-54, -68],[-42, -72],[-28, -70],[-18, -72],[-6, -78],[0, -80],[6, -78],[10, -74],[12, -72]],
+    // Australia rough outline
+    [[-14, 128],[-12, 136],[-12, 142],[-18, 148],[-28, 154],[-36, 150],[-38, 146],[-38, 141],[-32, 136],[-28, 114],[-22, 112],[-18, 122],[-14, 128]],
+  ];
+
+  return lines.map((line) => {
+    const pts: number[] = [];
+    for (let i = 0; i < line.length; i++) {
+      const [lat, lng] = line[i];
+      const [x, y, z] = latLngToVec3(lat, lng, 1.002);
+      pts.push(x, y, z);
+      if (i > 0 && i < line.length - 1) {
+        pts.push(x, y, z); // duplicate interior points for line segments
+      }
+    }
+    return new Float32Array(pts);
+  });
+}
+
+const CONTINENT_LINES = buildContinentLines();
+
+// Continent line mesh
+function ContinentLines() {
+  const lineObjects = useMemo(() => {
+    return CONTINENT_LINES.map((pts) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+      const mat = new THREE.LineBasicMaterial({ color: "#1e3a2a", transparent: true, opacity: 0.6 });
+      return new THREE.LineSegments(geo, mat);
+    });
+  }, []);
+
   return (
-    <motion.div
-      key="detail-panel"
-      initial={{ x: 340, opacity: 0 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 340, opacity: 0 }}
-      transition={{ type: "spring", stiffness: 320, damping: 30 }}
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: 340,
-        background: "var(--surface)",
-        borderLeft: "1px solid var(--border)",
-        zIndex: 200,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        boxShadow: "-8px 0 40px rgba(0,0,0,0.5)",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: "18px 20px 14px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "flex-start",
-          gap: 14,
-        }}
-      >
-        <div
-          style={{
-            width: 48,
-            height: 48,
-            borderRadius: "50%",
-            background: `linear-gradient(135deg, ${getCategoryColor(ch.category)}88, ${getCategoryColor(ch.category)}33)`,
-            border: `2px solid ${getCategoryColor(ch.category)}55`,
-            display: "grid",
-            placeItems: "center",
-            fontSize: 22,
-            flexShrink: 0,
-          }}
-        >
-          {meta.icon}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--text)", lineHeight: 1.3, marginBottom: 2 }}>
-            {ch.title ?? ch.username ?? `#${ch.id}`}
-          </div>
-          {ch.username && (
-            <a
-              href={`https://t.me/${ch.username}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                fontSize: 12,
-                color: "var(--accent)",
-                fontFamily: "monospace",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              @{ch.username} <ExternalLink size={11} />
-            </a>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{
-            all: "unset",
-            cursor: "pointer",
-            color: "var(--muted)",
-            padding: 6,
-            borderRadius: 8,
-            display: "grid",
-            placeItems: "center",
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--muted)"; }}
-        >
-          <X size={18} />
-        </button>
-      </div>
-
-      {/* Body */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-        {/* Category & lang */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {ch.category && (
-            <span
-              className="pill"
-              style={{
-                background: `${getCategoryColor(ch.category)}18`,
-                color: getCategoryColor(ch.category),
-                border: `1px solid ${getCategoryColor(ch.category)}33`,
-              }}
-            >
-              {meta.icon} {ch.category}
-            </span>
-          )}
-          <span className="pill" style={{ background: "var(--surface-2)", color: "var(--text-secondary)" }}>
-            {langFlag(ch.language)} {ch.language?.toUpperCase() ?? "?"}
-          </span>
-          <span
-            className="pill"
-            style={{
-              background: ch.has_comments ? "var(--accent-glow)" : "rgba(90,90,94,0.15)",
-              color: ch.has_comments ? "var(--accent)" : "var(--muted)",
-            }}
-          >
-            <MessageCircle size={11} />
-            {ch.has_comments ? "Комменты" : "Без комм."}
-          </span>
-        </div>
-
-        {/* Stats grid */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 10,
-            marginBottom: 16,
-          }}
-        >
-          {[
-            { label: "Подписчики", value: formatNumber(ch.member_count), color: "var(--text)" },
-            { label: "ER", value: erLabel(ch.engagement_rate), color: erColor(ch.engagement_rate) },
-            { label: "Ср. комм.", value: formatNumber(ch.avg_comments_per_post), color: "var(--info)" },
-            { label: "Охват", value: formatNumber(ch.avg_post_reach), color: "var(--text-secondary)" },
-          ].map(({ label, value, color }) => (
-            <div
-              key={label}
-              style={{
-                background: "var(--surface-2)",
-                borderRadius: 10,
-                padding: "10px 12px",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
-                {label}
-              </div>
-              <div style={{ fontSize: 18, fontWeight: 700, color, fontFamily: "monospace" }}>{value}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Description */}
-        {ch.description && (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-              Описание
-            </div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-              {ch.description.slice(0, 300)}{ch.description.length > 300 ? "..." : ""}
-            </div>
-          </div>
-        )}
-
-        {/* Meta */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {ch.post_frequency_daily != null && (
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "var(--muted)" }}>Частота постов</span>
-              <span style={{ fontFamily: "monospace" }}>{ch.post_frequency_daily.toFixed(1)}/день</span>
-            </div>
-          )}
-          {ch.last_indexed_at && (
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "var(--muted)" }}>Индексирован</span>
-              <span style={{ fontFamily: "monospace" }}>{ch.last_indexed_at.slice(0, 10)}</span>
-            </div>
-          )}
-          {ch.source && (
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "var(--muted)" }}>Источник</span>
-              <span style={{ fontFamily: "monospace" }}>{ch.source}</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Footer */}
-      {ch.username && (
-        <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)" }}>
-          <a
-            href={`https://t.me/${ch.username}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="primary-button"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              textDecoration: "none",
-            }}
-          >
-            <ExternalLink size={14} />
-            Открыть в Telegram
-          </a>
-        </div>
-      )}
-    </motion.div>
+    <>
+      {lineObjects.map((obj, i) => (
+        <primitive key={i} object={obj} />
+      ))}
+    </>
   );
 }
 
-// ── sub-components ───────────────────────────────────────────────────────────
+// Atmosphere glow sphere
+function Atmosphere() {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const matRef = useRef<THREE.ShaderMaterial>(null);
+
+  const vertexShader = `
+    varying vec3 vNormal;
+    void main() {
+      vNormal = normalize(normalMatrix * normal);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+
+  const fragmentShader = `
+    varying vec3 vNormal;
+    void main() {
+      float intensity = pow(0.65 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 3.0);
+      gl_FragColor = vec4(0.0, 1.0, 0.533, 1.0) * intensity;
+    }
+  `;
+
+  useFrame(() => {
+    if (matRef.current) {
+      matRef.current.needsUpdate = false;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef} scale={[1.12, 1.12, 1.12]}>
+      <sphereGeometry args={[1, 48, 48]} />
+      <shaderMaterial
+        ref={matRef}
+        vertexShader={vertexShader}
+        fragmentShader={fragmentShader}
+        side={THREE.BackSide}
+        blending={THREE.AdditiveBlending}
+        transparent
+      />
+    </mesh>
+  );
+}
+
+// Grid lines on globe
+function GlobeGrid() {
+  const linesData = useMemo(() => {
+    const result: Float32Array[] = [];
+    // Latitude lines every 30 degrees
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const pts: number[] = [];
+      for (let lng = -180; lng <= 180; lng += 4) {
+        const [x, y, z] = latLngToVec3(lat, lng, 1.001);
+        pts.push(x, y, z);
+        if (lng > -180 && lng < 180) pts.push(x, y, z);
+      }
+      result.push(new Float32Array(pts));
+    }
+    // Longitude lines every 30 degrees
+    for (let lng = -180; lng < 180; lng += 30) {
+      const pts: number[] = [];
+      for (let lat = -90; lat <= 90; lat += 4) {
+        const [x, y, z] = latLngToVec3(lat, lng, 1.001);
+        pts.push(x, y, z);
+        if (lat > -90 && lat < 90) pts.push(x, y, z);
+      }
+      result.push(new Float32Array(pts));
+    }
+    return result;
+  }, []);
+
+  const lineObjects = useMemo(() => {
+    return linesData.map((pts) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pts, 3));
+      const mat = new THREE.LineBasicMaterial({ color: "#0d1a12", transparent: true, opacity: 0.35 });
+      return new THREE.LineSegments(geo, mat);
+    });
+  }, [linesData]);
+
+  return (
+    <>
+      {lineObjects.map((obj, i) => (
+        <primitive key={i} object={obj} />
+      ))}
+    </>
+  );
+}
+
+// Instanced channel points
+type GlobePointsProps = {
+  channels: ChannelMapEntry[];
+  filterCategory: string;
+  filterQuery: string;
+  hoveredId: number | null;
+  onHover: (ch: ChannelMapEntry | null) => void;
+  onSelect: (ch: ChannelMapEntry | null) => void;
+};
+
+function GlobePoints({
+  channels,
+  filterCategory,
+  filterQuery,
+  onHover,
+  onSelect,
+}: GlobePointsProps) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const timeRef = useRef(0);
+  const { camera, gl } = useThree();
+
+  // Channels with valid lat/lng or random distribution for those without
+  const positioned = useMemo(() => {
+    const queryLower = filterQuery.trim().toLowerCase();
+    return channels.map((ch, idx) => {
+      // Use lat/lng from data, or distribute pseudo-randomly based on id
+      const seed = (ch.id * 2654435761) >>> 0;
+      const lat =
+        ((seed % 160) - 80) as number;
+      const lng =
+        (((seed >> 8) % 360) - 180) as number;
+      const color = new THREE.Color(getCategoryColor(ch.category));
+      const members = ch.member_count ?? 0;
+      const size = 0.5 + Math.min(Math.log1p(members) / Math.log1p(10_000_000) * 3.5, 3.5);
+      const isFiltering = filterCategory !== "" || queryLower !== "";
+      const isMatch =
+        !isFiltering ||
+        ((filterCategory === "" || ch.category === filterCategory) &&
+          (queryLower === "" ||
+            (ch.title?.toLowerCase().includes(queryLower) ?? false) ||
+            (ch.username?.toLowerCase().includes(queryLower) ?? false)));
+      return { ch, lat, lng, color, size, isMatch, idx };
+    });
+  }, [channels, filterCategory, filterQuery]);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const dummy = new THREE.Object3D();
+    positioned.forEach(({ lat, lng, size, isMatch }, i) => {
+      const [x, y, z] = latLngToVec3(lat, lng, 1.018);
+      dummy.position.set(x, y, z);
+      dummy.lookAt(0, 0, 0);
+      const s = size * (isMatch ? 1 : 0.3);
+      dummy.scale.set(s, s, s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+      const c = isMatch ? positioned[i].color : new THREE.Color("#333333");
+      mesh.setColorAt(i, c);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }, [positioned]);
+
+  useFrame((state) => {
+    timeRef.current = state.clock.elapsedTime;
+    const mesh = meshRef.current;
+    if (!mesh || positioned.length === 0) return;
+    // Pulse animation: scale points slightly
+    const dummy = new THREE.Object3D();
+    const t = state.clock.elapsedTime;
+    positioned.forEach(({ lat, lng, size, isMatch, idx }, i) => {
+      const [x, y, z] = latLngToVec3(lat, lng, 1.018);
+      dummy.position.set(x, y, z);
+      dummy.lookAt(0, 0, 0);
+      const pulse = 1 + Math.sin(t * 2 + idx * 0.3) * 0.15;
+      const s = size * (isMatch ? 1 : 0.25) * pulse;
+      dummy.scale.set(s, s, s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+
+  // Raycaster for hover/click
+  const raycaster = useMemo(() => new THREE.Raycaster(), []);
+
+  const handlePointerMove = useCallback(
+    (e: { clientX: number; clientY: number }) => {
+      const canvas = gl.domElement;
+      const rect = canvas.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const mesh = meshRef.current;
+      if (!mesh) return;
+      const hits = raycaster.intersectObject(mesh);
+      if (hits.length > 0 && hits[0].instanceId != null) {
+        const idx = hits[0].instanceId;
+        if (idx < positioned.length) {
+          onHover(positioned[idx].ch);
+        }
+      } else {
+        onHover(null);
+      }
+    },
+    [camera, gl, raycaster, positioned, onHover]
+  );
+
+  const handlePointerDown = useCallback(
+    (e: { clientX: number; clientY: number }) => {
+      const canvas = gl.domElement;
+      const rect = canvas.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+      const mesh = meshRef.current;
+      if (!mesh) return;
+      const hits = raycaster.intersectObject(mesh);
+      if (hits.length > 0 && hits[0].instanceId != null) {
+        const idx = hits[0].instanceId;
+        if (idx < positioned.length) {
+          onSelect(positioned[idx].ch);
+        }
+      }
+    },
+    [camera, gl, raycaster, positioned, onSelect]
+  );
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    canvas.addEventListener("pointermove", handlePointerMove);
+    canvas.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      canvas.removeEventListener("pointermove", handlePointerMove);
+      canvas.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [gl, handlePointerMove, handlePointerDown]);
+
+  if (positioned.length === 0) return null;
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, positioned.length]} frustumCulled>
+      <sphereGeometry args={[0.012, 6, 6]} />
+      <meshBasicMaterial vertexColors toneMapped={false} />
+    </instancedMesh>
+  );
+}
+
+// Auto-rotating globe wrapper
+function GlobeScene({
+  channels,
+  filterCategory,
+  filterQuery,
+  hoveredChannel,
+  onHover,
+  onSelect,
+}: {
+  channels: ChannelMapEntry[];
+  filterCategory: string;
+  filterQuery: string;
+  hoveredChannel: ChannelMapEntry | null;
+  onHover: (ch: ChannelMapEntry | null) => void;
+  onSelect: (ch: ChannelMapEntry | null) => void;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const isInteracting = useRef(false);
+
+  useFrame((_, delta) => {
+    if (!isInteracting.current && groupRef.current) {
+      groupRef.current.rotation.y += delta * 0.08;
+    }
+  });
+
+  return (
+    <group ref={groupRef}>
+      {/* Globe base */}
+      <mesh>
+        <sphereGeometry args={[1, 64, 64]} />
+        <meshPhongMaterial
+          color="#060d0a"
+          emissive="#021008"
+          specular="#00ff88"
+          shininess={8}
+        />
+      </mesh>
+
+      {/* Grid lines */}
+      <GlobeGrid />
+
+      {/* Continent outlines */}
+      <ContinentLines />
+
+      {/* Atmosphere */}
+      <Atmosphere />
+
+      {/* Channel points */}
+      <GlobePoints
+        channels={channels}
+        filterCategory={filterCategory}
+        filterQuery={filterQuery}
+        hoveredId={hoveredChannel?.id ?? null}
+        onHover={onHover}
+        onSelect={onSelect}
+      />
+    </group>
+  );
+}
+
+// Tooltip overlay for hovered channel on globe
+function GlobeTooltip({ ch }: { ch: ChannelMapEntry | null }) {
+  if (!ch) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 80,
+        left: "50%",
+        transform: "translateX(-50%)",
+        background: "rgba(10,10,11,0.92)",
+        border: `1px solid ${getCategoryColor(ch.category)}`,
+        borderRadius: 10,
+        padding: "10px 16px",
+        pointerEvents: "none",
+        zIndex: 20,
+        minWidth: 200,
+        boxShadow: `0 0 20px ${getCategoryColor(ch.category)}44`,
+        backdropFilter: "blur(8px)",
+      }}
+    >
+      <div style={{ fontWeight: 700, fontSize: 14, color: getCategoryColor(ch.category) }}>
+        {ch.title ?? `@${ch.username}`}
+      </div>
+      {ch.username && (
+        <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "monospace", marginTop: 2 }}>
+          @{ch.username}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 12, color: "var(--text-secondary)" }}>
+        <span><Users size={11} style={{ verticalAlign: "middle", marginRight: 3 }} />{formatNumber(ch.member_count)}</span>
+        {ch.engagement_rate != null && (
+          <span style={{ color: erColor(ch.engagement_rate) }}>
+            <TrendingUp size={11} style={{ verticalAlign: "middle", marginRight: 3 }} />{erLabel(ch.engagement_rate)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Main Globe view wrapper
+function GlobeView({
+  channels,
+  filterCategory,
+  filterQuery,
+  onSelect,
+}: {
+  channels: ChannelMapEntry[];
+  filterCategory: string;
+  filterQuery: string;
+  onSelect: (ch: ChannelMapEntry | null) => void;
+}) {
+  const [hoveredChannel, setHoveredChannel] = useState<ChannelMapEntry | null>(null);
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: 600, borderRadius: 12, overflow: "hidden", background: "#020705" }}>
+      <Canvas
+        camera={{ position: [0, 0, 2.8], fov: 45 }}
+        gl={{ antialias: true, alpha: false }}
+        style={{ background: "#020705" }}
+      >
+        <Suspense fallback={null}>
+          <ambientLight intensity={0.3} />
+          <directionalLight position={[5, 3, 5]} intensity={0.8} color="#ffffff" />
+          <pointLight position={[-5, -3, -5]} intensity={0.2} color="#00ff88" />
+
+          <GlobeScene
+            channels={channels}
+            filterCategory={filterCategory}
+            filterQuery={filterQuery}
+            hoveredChannel={hoveredChannel}
+            onHover={setHoveredChannel}
+            onSelect={onSelect}
+          />
+
+          <OrbitControls
+            enablePan={false}
+            enableZoom
+            zoomSpeed={0.6}
+            rotateSpeed={0.5}
+            minDistance={1.5}
+            maxDistance={5}
+            autoRotate={false}
+          />
+        </Suspense>
+      </Canvas>
+
+      <GlobeTooltip ch={hoveredChannel} />
+
+      {/* Info overlay */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 16,
+          right: 16,
+          fontSize: 11,
+          color: "var(--muted)",
+          background: "rgba(10,10,11,0.7)",
+          padding: "4px 8px",
+          borderRadius: 6,
+          pointerEvents: "none",
+        }}
+      >
+        Потяните — вращение · Скролл — зум · Клик — детали
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          top: 16,
+          left: 16,
+          fontSize: 11,
+          color: "var(--accent)",
+          background: "rgba(10,10,11,0.7)",
+          padding: "4px 10px",
+          borderRadius: 6,
+          pointerEvents: "none",
+          fontFamily: "monospace",
+          border: "1px solid var(--accent-glow)",
+        }}
+      >
+        {channels.length} каналов на глобусе
+      </div>
+    </div>
+  );
+}
+
+// ── small UI components ───────────────────────────────────────────────────────
 
 function MetricCard({
   label,
@@ -1331,20 +1375,18 @@ function MetricCard({
   icon?: React.ReactNode;
 }) {
   return (
-    <div className="dash-stat">
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {icon && (
-          <span style={{ color: "var(--accent)", opacity: 0.7 }}>{icon}</span>
-        )}
-        <span className="dash-stat-label">{label}</span>
+    <div className="metric-card">
+      <div className="metric-label">
+        {icon}
+        {label}
       </div>
       <div
-        className="dash-stat-value"
-        style={{ color: accent ?? "var(--text)" }}
+        className="metric-value"
+        style={accent ? { color: accent } : undefined}
       >
         {value}
       </div>
-      {sub && <div className="dash-stat-sub">{sub}</div>}
+      {sub && <div className="metric-sub">{sub}</div>}
     </div>
   );
 }
@@ -1372,55 +1414,51 @@ function CategoryCard({
       style={{
         all: "unset",
         cursor: "pointer",
-        background: selected ? "var(--surface-2)" : "var(--surface)",
-        border: selected ? `2px solid ${meta.color}` : "1px solid var(--border)",
-        borderLeft: `3px solid ${meta.color}`,
-        borderRadius: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
         padding: "14px 16px",
-        display: "grid",
-        gap: 8,
+        borderRadius: 12,
+        background: selected ? "var(--accent-glow)" : "var(--surface-2)",
+        border: selected
+          ? `1px solid ${meta.color}`
+          : "1px solid var(--border)",
         transition: "all 200ms cubic-bezier(0.16, 1, 0.3, 1)",
-        boxShadow: selected ? `0 0 16px ${meta.color}22` : "none",
-        minWidth: 0,
-      }}
-      onMouseEnter={(e) => {
-        if (!selected) {
-          e.currentTarget.style.borderColor = "var(--border-bright)";
-          e.currentTarget.style.boxShadow = "var(--glow)";
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!selected) {
-          e.currentTarget.style.borderColor = "var(--border)";
-          e.currentTarget.style.boxShadow = "none";
-        }
+        boxShadow: selected ? `0 0 12px ${meta.color}33` : "none",
+        textAlign: "left",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 20 }}>{meta.icon}</span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>{name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 16 }}>{meta.icon}</span>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 600,
+            color: selected ? meta.color : "var(--text)",
+          }}
+        >
+          {name}
+        </span>
       </div>
       <div
         style={{
-          fontSize: 22,
-          fontWeight: 700,
-          color: selected ? meta.color : "var(--text)",
-          lineHeight: 1,
-          fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: 11,
+          color: "var(--muted)",
+          fontFamily: "'JetBrains Mono Variable', monospace",
         }}
       >
-        {formatNumber(count)}
+        {count} каналов
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <div style={{ fontSize: 11, color: "var(--muted)" }}>
-          Охват {formatNumber(totalReach)}
+      {totalReach > 0 && (
+        <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+          {formatNumber(totalReach)} охват
         </div>
-        {avgEr != null && (
-          <div style={{ fontSize: 11, color: erColor(avgEr), fontWeight: 600 }}>
-            ER {erLabel(avgEr)}
-          </div>
-        )}
-      </div>
+      )}
+      {avgEr != null && (
+        <div style={{ fontSize: 11, color: erColor(avgEr) }}>
+          ER {erLabel(avgEr)}
+        </div>
+      )}
     </button>
   );
 }
@@ -1428,82 +1466,58 @@ function CategoryCard({
 function ChannelCard({
   ch,
   highlightRe,
-  onAddToCampaign,
   index,
 }: {
   ch: ChannelMapEntry;
   highlightRe: RegExp | null;
-  onAddToCampaign?: (ch: ChannelMapEntry) => void;
   index: number;
 }) {
-  const firstLetter = (ch.title ?? ch.username ?? "?")[0].toUpperCase();
-  const gradients = [
-    "linear-gradient(135deg, var(--info), #8b5cf6)",
-    "linear-gradient(135deg, var(--warning), var(--danger))",
-    "linear-gradient(135deg, var(--accent), var(--accent-dim))",
-    "linear-gradient(135deg, #3b82f6, #06b6d4)",
-    "linear-gradient(135deg, #ec4899, #f97316)",
-    "linear-gradient(135deg, #8b5cf6, var(--info))",
-  ];
-  const gradientIndex = (ch.id ?? 0) % gradients.length;
-  const meta = ch.category ? getCategoryMeta(ch.category) : null;
-
-  const titleHtml = ch.title ? highlight(ch.title, highlightRe) : null;
-  const usernameHtml = ch.username ? highlight(`@${ch.username}`, highlightRe) : null;
+  const meta = getCategoryMeta(ch.category);
+  const initials = getInitials(ch.title, ch.username);
 
   return (
     <motion.div
-      custom={index}
+      className="card"
       variants={cardVariants}
       initial="hidden"
       animate="visible"
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 16,
-        padding: "18px 18px 14px",
-        display: "grid",
-        gap: 12,
-        transition: "border-color 200ms, box-shadow 200ms",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "var(--border-bright)";
-        e.currentTarget.style.boxShadow = "var(--glow)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "var(--border)";
-        e.currentTarget.style.boxShadow = "none";
-      }}
+      custom={index}
+      style={{ display: "flex", flexDirection: "column", gap: 12 }}
     >
-      {/* Header row */}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        {/* Avatar */}
         <div
           style={{
             width: 44,
             height: 44,
-            borderRadius: "50%",
-            background: gradients[gradientIndex],
-            display: "grid",
-            placeItems: "center",
-            color: "white",
+            borderRadius: 10,
+            background: `linear-gradient(135deg, ${meta.color}33, ${meta.color}11)`,
+            border: `1px solid ${meta.color}44`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 16,
             fontWeight: 700,
-            fontSize: 18,
+            color: meta.color,
             flexShrink: 0,
-            boxShadow: "0 0 12px rgba(0,0,0,0.3)",
           }}
         >
-          {firstLetter}
+          {initials}
         </div>
-        {/* Name + username */}
-        <div style={{ minWidth: 0, flex: 1 }}>
-          {ch.title && (
-            <div
-              style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.3, marginBottom: 2, color: "var(--text)" }}
-              dangerouslySetInnerHTML={{ __html: titleHtml ?? ch.title }}
-            />
-          )}
-          {ch.username ? (
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 600,
+              fontSize: 14,
+              marginBottom: 2,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+            dangerouslySetInnerHTML={{
+              __html: highlight(ch.title ?? ch.username ?? String(ch.id), highlightRe),
+            }}
+          />
+          {ch.username && (
             <a
               href={`https://t.me/${ch.username}`}
               target="_blank"
@@ -1511,150 +1525,389 @@ function ChannelCard({
               style={{
                 fontSize: 12,
                 color: "var(--accent)",
-                fontWeight: 500,
-                fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace",
+                fontFamily: "'JetBrains Mono Variable', monospace",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 4,
               }}
-              dangerouslySetInnerHTML={{ __html: usernameHtml ?? `@${ch.username}` }}
-            />
-          ) : (
-            <span style={{ fontSize: 12, color: "var(--muted)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
-              #{ch.id}
-            </span>
+            >
+              @{ch.username}
+              <ExternalLink size={10} />
+            </a>
           )}
         </div>
-        {/* Lang flag */}
-        <span style={{ fontSize: 18, flexShrink: 0 }} title={ch.language ?? ""}>
-          {langFlag(ch.language)}
-        </span>
       </div>
-
-      {/* Metrics row */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          fontSize: 11,
+          color: "var(--text-secondary)",
+        }}
+      >
+        {ch.category && (
+          <span
+            className="pill"
+            style={{
+              background: `${meta.color}18`,
+              color: meta.color,
+            }}
+          >
+            {meta.icon} {ch.category}
+          </span>
+        )}
+        {ch.language && (
+          <span className="pill">{langFlag(ch.language)} {ch.language.toUpperCase()}</span>
+        )}
+        {ch.has_comments && (
+          <span
+            className="pill"
+            style={{
+              background: "var(--accent-glow)",
+              color: "var(--accent)",
+            }}
+          >
+            <MessageCircle size={10} /> коммент.
+          </span>
+        )}
+      </div>
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: 8,
+          paddingTop: 8,
+          borderTop: "1px solid var(--border)",
         }}
       >
-        <div
-          style={{
-            background: "var(--surface-2)",
-            borderRadius: 10,
-            padding: "8px 10px",
-            border: "1px solid var(--border)",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            <Users size={10} style={{ marginRight: 4, verticalAlign: "middle" }} />
+        <div>
+          <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 2 }}>
             Подписчики
           </div>
           <div
             style={{
+              fontSize: 14,
               fontWeight: 700,
-              fontSize: 18,
-              fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace",
-              color: "var(--text)",
+              fontFamily: "'JetBrains Mono Variable', monospace",
             }}
           >
             {formatNumber(ch.member_count)}
           </div>
         </div>
-        <div
-          style={{
-            background: "var(--surface-2)",
-            borderRadius: 10,
-            padding: "8px 10px",
-            border: "1px solid var(--border)",
-          }}
-        >
-          <div style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            <TrendingUp size={10} style={{ marginRight: 4, verticalAlign: "middle" }} />
+        <div>
+          <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 2 }}>
             ER
           </div>
           <div
             style={{
+              fontSize: 14,
               fontWeight: 700,
-              fontSize: 18,
               color: erColor(ch.engagement_rate),
-              fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace",
+              fontFamily: "'JetBrains Mono Variable', monospace",
             }}
           >
             {erLabel(ch.engagement_rate)}
           </div>
         </div>
       </div>
+    </motion.div>
+  );
+}
 
-      {/* Tags row */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-        {ch.category && meta && (
-          <span className="pill" style={{ background: `${meta.color}18`, color: meta.color, border: `1px solid ${meta.color}33` }}>
-            {meta.icon} {ch.category}
-          </span>
-        )}
-        <span
-          className={`pill${ch.has_comments ? "" : " warning"}`}
+// Channel detail panel (slides in from right)
+function ChannelDetailPanel({
+  ch,
+  onClose,
+}: {
+  ch: ChannelMapEntry;
+  onClose: () => void;
+}) {
+  const meta = getCategoryMeta(ch.category);
+  const initials = getInitials(ch.title, ch.username);
+  const color = getCategoryColor(ch.category);
+
+  return (
+    <motion.div
+      initial={{ x: "100%", opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: "100%", opacity: 0 }}
+      transition={{ type: "spring", damping: 28, stiffness: 280 }}
+      style={{
+        position: "fixed",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 360,
+        background: "rgba(10,10,11,0.97)",
+        borderLeft: `1px solid ${color}44`,
+        zIndex: 200,
+        display: "flex",
+        flexDirection: "column",
+        boxShadow: `-20px 0 60px ${color}22`,
+        backdropFilter: "blur(12px)",
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: "20px 20px 16px",
+          borderBottom: `1px solid ${color}22`,
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 12,
+        }}
+      >
+        <div
           style={{
-            background: ch.has_comments ? "var(--accent-glow)" : "rgba(90,90,94,0.15)",
-            color: ch.has_comments ? "var(--accent)" : "var(--muted)",
-            border: ch.has_comments ? "1px solid rgba(0,255,136,0.25)" : "1px solid var(--border)",
+            width: 56,
+            height: 56,
+            borderRadius: 14,
+            background: `linear-gradient(135deg, ${color}44, ${color}11)`,
+            border: `1px solid ${color}66`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 20,
+            fontWeight: 800,
+            color,
+            flexShrink: 0,
           }}
         >
-          <MessageCircle size={11} />
-          {ch.has_comments ? "Комменты" : "Без коммент."}
-        </span>
+          {initials}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, lineHeight: 1.3 }}>
+            {ch.title ?? `@${ch.username}`}
+          </div>
+          {ch.username && (
+            <a
+              href={`https://t.me/${ch.username}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: 12,
+                color: "var(--accent)",
+                fontFamily: "monospace",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                marginTop: 2,
+              }}
+            >
+              @{ch.username}
+              <ExternalLink size={10} />
+            </a>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            color: "var(--muted)",
+            padding: 4,
+            borderRadius: 6,
+            lineHeight: 1,
+          }}
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+        {/* Badges */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+          {ch.category && (
+            <span
+              className="pill"
+              style={{ background: `${color}22`, color, fontSize: 12 }}
+            >
+              {meta.icon} {ch.category}
+            </span>
+          )}
+          {ch.language && (
+            <span className="pill" style={{ fontSize: 12 }}>
+              {langFlag(ch.language)} {ch.language.toUpperCase()}
+            </span>
+          )}
+          {ch.verified && (
+            <span
+              className="pill"
+              style={{
+                background: "rgba(68,136,255,0.15)",
+                color: "#4488ff",
+                fontSize: 12,
+              }}
+            >
+              Верифицирован
+            </span>
+          )}
+          {ch.has_comments && (
+            <span
+              className="pill"
+              style={{
+                background: "var(--accent-glow)",
+                color: "var(--accent)",
+                fontSize: 12,
+              }}
+            >
+              <MessageCircle size={10} /> Комментарии
+            </span>
+          )}
+        </div>
+
+        {/* Stats grid */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+            marginBottom: 16,
+          }}
+        >
+          {[
+            { label: "Подписчики", value: formatNumber(ch.member_count) },
+            {
+              label: "Вовлечённость",
+              value: erLabel(ch.engagement_rate),
+              color: erColor(ch.engagement_rate),
+            },
+            {
+              label: "Охват поста",
+              value: formatNumber(ch.avg_post_reach),
+            },
+            {
+              label: "Коммент/пост",
+              value: formatNumber(ch.avg_comments_per_post),
+            },
+            {
+              label: "Постов в день",
+              value: ch.post_frequency_daily != null
+                ? ch.post_frequency_daily.toFixed(1)
+                : "—",
+            },
+          ].map(({ label, value, color: c }) => (
+            <div
+              key={label}
+              style={{
+                background: "var(--surface-2)",
+                borderRadius: 8,
+                padding: "10px 12px",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 4 }}>
+                {label}
+              </div>
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  fontFamily: "monospace",
+                  color: c ?? "var(--text)",
+                }}
+              >
+                {value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Description */}
+        {ch.description && (
+          <div
+            style={{
+              background: "var(--surface-2)",
+              borderRadius: 8,
+              padding: "12px 14px",
+              border: "1px solid var(--border)",
+              fontSize: 13,
+              color: "var(--text-secondary)",
+              lineHeight: 1.6,
+              marginBottom: 16,
+            }}
+          >
+            {ch.description}
+          </div>
+        )}
+
+        {/* Last indexed */}
+        {ch.last_indexed_at && (
+          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 16 }}>
+            Проиндексирован:{" "}
+            {new Date(ch.last_indexed_at).toLocaleDateString("ru-RU")}
+          </div>
+        )}
       </div>
 
       {/* Footer */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "'JetBrains Mono Variable', monospace" }}>
-          {ch.last_indexed_at ? ch.last_indexed_at.slice(0, 10) : "—"}
-        </span>
-        {onAddToCampaign && (
-          <button
-            type="button"
-            onClick={() => onAddToCampaign(ch)}
-            className="secondary-button"
-            style={{
-              padding: "5px 12px",
-              fontSize: 12,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-            }}
+      <div
+        style={{
+          padding: "12px 20px",
+          borderTop: `1px solid ${color}22`,
+          display: "flex",
+          gap: 8,
+        }}
+      >
+        {ch.username && (
+          <a
+            href={`https://t.me/${ch.username}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="primary-button"
+            style={{ flex: 1, textAlign: "center", textDecoration: "none", fontSize: 13 }}
           >
-            + В кампанию
-          </button>
+            <ExternalLink size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
+            Открыть в Telegram
+          </a>
         )}
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={onClose}
+          style={{ fontSize: 13 }}
+        >
+          Закрыть
+        </button>
       </div>
     </motion.div>
   );
 }
 
-function HBarChart({
-  entries,
-  max,
+function BarChart({
+  data,
+  maxVal,
   barClass,
 }: {
-  entries: Array<{ label: string; value: number }>;
-  max: number;
-  barClass: string;
+  data: { label: string; value: number }[];
+  maxVal: number;
+  barClass?: string;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {entries.map(({ label, value }) => {
-        const pct = max > 0 ? (value / max) * 100 : 0;
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {data.map(({ label, value }) => {
+        const pct = maxVal > 0 ? (value / maxVal) * 100 : 0;
         return (
-          <div key={label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ minWidth: 110, fontSize: 12, color: "var(--muted)" }}>{label}</span>
+          <div key={label} style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div
+              style={{
+                minWidth: 60,
+                fontSize: 11,
+                color: "var(--text-secondary)",
+                textAlign: "right",
+              }}
+            >
+              {label}
+            </div>
             <div
               style={{
                 flex: 1,
-                height: 8,
+                height: 6,
                 background: "var(--surface-3)",
-                borderRadius: 4,
+                borderRadius: 3,
                 overflow: "hidden",
               }}
             >
@@ -1663,18 +1916,19 @@ function HBarChart({
                 style={{
                   width: `${pct}%`,
                   height: "100%",
-                  borderRadius: 4,
-                  transition: "width 400ms ease",
+                  background: "var(--accent)",
+                  borderRadius: 3,
+                  transition: "width 600ms cubic-bezier(0.16,1,0.3,1)",
                 }}
               />
             </div>
             <span
               style={{
-                minWidth: 40,
+                minWidth: 36,
+                fontSize: 11,
+                color: "var(--muted)",
+                fontFamily: "'JetBrains Mono Variable', monospace",
                 textAlign: "right",
-                fontSize: 12,
-                color: "var(--text-secondary)",
-                fontFamily: "'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', monospace",
               }}
             >
               {formatNumber(value)}
@@ -1686,9 +1940,83 @@ function HBarChart({
   );
 }
 
-// ── main page ────────────────────────────────────────────────────────────────
+// ── Category legend for globe overlay ────────────────────────────────────────
 
-type ViewMode = "cards" | "table" | "map";
+function GlobeCategoryLegend({
+  categories,
+  byCategory,
+  selected,
+  onSelect,
+}: {
+  categories: string[];
+  byCategory: Record<string, number>;
+  selected: string;
+  onSelect: (cat: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        maxHeight: 400,
+        overflowY: "auto",
+      }}
+    >
+      {categories.slice(0, 16).map((cat) => {
+        const color = getCategoryColor(cat);
+        const count = byCategory[cat] ?? 0;
+        const isActive = selected === cat;
+        return (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => onSelect(isActive ? "" : cat)}
+            style={{
+              all: "unset",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "5px 10px",
+              borderRadius: 6,
+              background: isActive ? `${color}22` : "transparent",
+              border: isActive ? `1px solid ${color}66` : "1px solid transparent",
+              transition: "all 150ms ease",
+              fontSize: 12,
+              color: isActive ? color : "var(--text-secondary)",
+            }}
+          >
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: color,
+                boxShadow: isActive ? `0 0 6px ${color}` : "none",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ flex: 1, whiteSpace: "nowrap" }}>{cat}</span>
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--muted)",
+                fontFamily: "monospace",
+              }}
+            >
+              {formatNumber(count)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── main page ─────────────────────────────────────────────────────────────────
+
+type ViewMode = "globe" | "cards" | "table" | "map";
 
 export function ChannelMapPage() {
   const { accessToken } = useAuth();
@@ -1700,7 +2028,6 @@ export function ChannelMapPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // Filter state
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedLanguage, setSelectedLanguage] = useState("");
@@ -1708,14 +2035,11 @@ export function ChannelMapPage() {
   const [hasCommentsOnly, setHasCommentsOnly] = useState(false);
   const [selectedRegion, setSelectedRegion] = useState("");
 
-  // UI state
-  const [viewMode, setViewMode] = useState<ViewMode>("cards");
+  // DEFAULT view is "globe"
+  const [viewMode, setViewMode] = useState<ViewMode>("globe");
   const [selectedChannel, setSelectedChannel] = useState<ChannelMapEntry | null>(null);
 
-  // Memoize highlight regex (compiled once per query change, not per card)
   const highlightRe = useMemo(() => buildHighlightRe(query), [query]);
-
-  // ── derived stats ────────────────────────────────────────────────────────
 
   const byCategory = (stats.by_category as Record<string, number> | undefined) ?? {};
   const byLanguage = (stats.by_language as Record<string, number> | undefined) ?? {};
@@ -1732,15 +2056,20 @@ export function ChannelMapPage() {
     return valid.reduce((sum, ch) => sum + (ch.engagement_rate ?? 0), 0) / valid.length;
   }, [items]);
 
-  const commentsCount = useMemo(() => items.filter((ch) => ch.has_comments).length, [items]);
+  const commentsCount = useMemo(
+    () => items.filter((ch) => ch.has_comments).length,
+    [items]
+  );
 
-  // Category enrichment: count / avgEr / reach from loaded items
   const categoryStats = useMemo(() => {
-    const result: Record<string, { count: number; totalEr: number; erCount: number; totalReach: number }> =
-      {};
+    const result: Record<
+      string,
+      { count: number; totalEr: number; erCount: number; totalReach: number }
+    > = {};
     for (const ch of items) {
       const cat = ch.category ?? "Другое";
-      if (!result[cat]) result[cat] = { count: 0, totalEr: 0, erCount: 0, totalReach: 0 };
+      if (!result[cat])
+        result[cat] = { count: 0, totalEr: 0, erCount: 0, totalReach: 0 };
       result[cat].count += 1;
       result[cat].totalReach += ch.member_count ?? 0;
       if (ch.engagement_rate != null) {
@@ -1751,7 +2080,6 @@ export function ChannelMapPage() {
     return result;
   }, [items]);
 
-  // Member range distribution
   const memberRangeCounts = useMemo(() => {
     return MEMBER_RANGES.map((r) => ({
       label: r.label,
@@ -1761,15 +2089,11 @@ export function ChannelMapPage() {
     }));
   }, [items]);
 
-  // ── filtered display items ──────────────────────────────────────────────
-
   const displayItems = useMemo(() => {
     let filtered = items;
     if (hasCommentsOnly) filtered = filtered.filter((ch) => ch.has_comments);
     return filtered;
   }, [items, hasCommentsOnly]);
-
-  // ── bubble map layout (pre-computed, expensive) ─────────────────────────
 
   const bubbleLayout = useMemo(() => {
     if (viewMode !== "map" || displayItems.length === 0) {
@@ -1778,15 +2102,13 @@ export function ChannelMapPage() {
     return computeLayout(displayItems);
   }, [viewMode, displayItems]);
 
-  // ── data loading ─────────────────────────────────────────────────────────
-
   const loadCategories = useCallback(async () => {
     if (!accessToken) return;
     try {
       const payload = await channelMapApi.categories(accessToken);
       setCategories(payload.categories ?? []);
     } catch {
-      // categories optional
+      // optional
     }
   }, [accessToken]);
 
@@ -1796,7 +2118,7 @@ export function ChannelMapPage() {
       const payload = await channelMapApi.stats(accessToken);
       setStats(payload);
     } catch {
-      // stats optional
+      // optional
     }
   }, [accessToken]);
 
@@ -1812,7 +2134,7 @@ export function ChannelMapPage() {
           category: selectedCategory || undefined,
           language: selectedLanguage || undefined,
           min_members: minMembers > 0 ? minMembers : undefined,
-          limit: 300,
+          limit: 500,
         });
         setItems(payload.items);
         setTotal(payload.total);
@@ -1834,7 +2156,7 @@ export function ChannelMapPage() {
         category: selectedCategory || undefined,
         language: selectedLanguage || undefined,
         min_members: minMembers > 0 ? minMembers : undefined,
-        limit: 500,
+        limit: 5000,
       });
       setItems(payload.items);
       setTotal(payload.total);
@@ -1858,7 +2180,6 @@ export function ChannelMapPage() {
     }
   }, [selectedCategory, selectedLanguage, minMembers]);
 
-  // Apply region filter as language shortcut
   const handleRegionClick = (regionKey: string) => {
     setSelectedRegion(regionKey);
     const region = REGION_CONFIG.find((r) => r.key === regionKey);
@@ -1867,7 +2188,6 @@ export function ChannelMapPage() {
     } else if (region.languages.length === 1) {
       setSelectedLanguage(region.languages[0]);
     } else {
-      // For multi-language regions (e.g. CIS), clear language filter - handled by query
       setSelectedLanguage("");
     }
   };
@@ -1888,25 +2208,28 @@ export function ChannelMapPage() {
     setMinMembers(0);
     setHasCommentsOnly(false);
     setSelectedRegion("");
-    void Promise.all([
-      channelMapApi.list(accessToken!, {}).then((p) => {
+    void channelMapApi
+      .list(accessToken!, { limit: 5000 })
+      .then((p) => {
         setItems(p.items);
         setTotal(p.total);
-      }),
-    ]).catch(() => {});
+      })
+      .catch(() => {});
   };
 
-  // ── render ────────────────────────────────────────────────────────────────
-
   const allCategoryNames = useMemo(
-    () => [...new Set([...categories, ...Object.keys(byCategory), ...Object.keys(CATEGORY_META)])],
-    [categories, byCategory],
+    () => [
+      ...new Set([
+        ...categories,
+        ...Object.keys(byCategory),
+        ...Object.keys(CATEGORY_META),
+      ]),
+    ],
+    [categories, byCategory]
   );
 
   const maxCatCount = Math.max(
-    ...allCategoryNames.map(
-      (c) => categoryStats[c]?.count ?? byCategory[c] ?? 0
-    ),
+    ...allCategoryNames.map((c) => categoryStats[c]?.count ?? byCategory[c] ?? 0),
     1
   );
 
@@ -1921,9 +2244,15 @@ export function ChannelMapPage() {
   const maxLangCount = Math.max(...langEntries.map((e) => e.value), 1);
   const maxRangeCount = Math.max(...memberRangeCounts.map((r) => r.value), 1);
 
+  const VIEW_BUTTONS: Array<{ mode: ViewMode; icon: React.ReactNode; label: string }> = [
+    { mode: "globe", icon: <Globe size={14} />, label: "Глобус" },
+    { mode: "map", icon: <Layers size={14} />, label: "Карта" },
+    { mode: "cards", icon: <Grid3X3 size={14} />, label: "Карточки" },
+    { mode: "table", icon: <List size={14} />, label: "Таблица" },
+  ];
+
   return (
     <div className="page-grid">
-      {/* Mark element styling for search highlights */}
       <style>{`
         mark {
           background: var(--accent-glow);
@@ -1934,9 +2263,16 @@ export function ChannelMapPage() {
         .chmap-bar-cat { background: linear-gradient(90deg, var(--info), #8b5cf6) !important; }
         .chmap-bar-lang { background: linear-gradient(90deg, var(--warning), var(--danger)) !important; }
         .chmap-bar-size { background: linear-gradient(90deg, var(--accent), var(--accent-dim)) !important; }
+        .globe-overlay-panel {
+          background: rgba(10,10,11,0.82);
+          border: 1px solid rgba(0,255,136,0.15);
+          border-radius: 10px;
+          padding: 12px 14px;
+          backdrop-filter: blur(10px);
+        }
       `}</style>
 
-      {/* ── Top metric cards ─────────────────────────────────────────────── */}
+      {/* Top metric cards */}
       <section className="dash-stats">
         <MetricCard
           label="Всего каналов"
@@ -1947,7 +2283,7 @@ export function ChannelMapPage() {
         <MetricCard
           label="Суммарный охват"
           value={formatNumber(totalReach)}
-          sub={`по ${formatNumber(totalIndexed)} каналам`}
+          sub={`по ${formatNumber(displayItems.length)} каналам`}
           icon={<Globe size={14} />}
         />
         <MetricCard
@@ -1970,7 +2306,7 @@ export function ChannelMapPage() {
         />
       </section>
 
-      {/* ── Region selector ──────────────────────────────────────────────── */}
+      {/* Region selector */}
       <section className="panel wide">
         <div className="panel-header">
           <div>
@@ -2008,28 +2344,10 @@ export function ChannelMapPage() {
                   minWidth: 80,
                   textAlign: "center",
                 }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.borderColor = "var(--border-bright)";
-                    e.currentTarget.style.boxShadow = "var(--glow)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.borderColor = "var(--border)";
-                    e.currentTarget.style.boxShadow = "none";
-                  }
-                }}
               >
                 <span style={{ fontSize: 18 }}>{r.label}</span>
                 {count > 0 && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      opacity: 0.7,
-                      fontFamily: "'JetBrains Mono Variable', monospace",
-                    }}
-                  >
+                  <span style={{ fontSize: 11, opacity: 0.7, fontFamily: "monospace" }}>
                     {formatNumber(count)}
                   </span>
                 )}
@@ -2039,7 +2357,546 @@ export function ChannelMapPage() {
         </div>
       </section>
 
-      {/* ── Category grid ────────────────────────────────────────────────── */}
+      {/* Main visualization panel */}
+      <section className="panel wide">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">
+              <Globe size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+              Визуализация
+            </div>
+            <h2 style={{ fontSize: "1.2rem" }}>
+              Карта каналов
+              {displayItems.length > 0 && (
+                <span
+                  style={{
+                    color: "var(--muted)",
+                    fontSize: "0.75em",
+                    fontFamily: "monospace",
+                    marginLeft: 8,
+                  }}
+                >
+                  {displayItems.length} из {total}
+                </span>
+              )}
+            </h2>
+          </div>
+
+          {/* View mode switcher */}
+          <div
+            style={{
+              display: "flex",
+              background: "var(--surface-2)",
+              borderRadius: 10,
+              border: "1px solid var(--border)",
+              padding: 3,
+              gap: 2,
+            }}
+          >
+            {VIEW_BUTTONS.map(({ mode, icon, label }) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                style={{
+                  all: "unset",
+                  cursor: "pointer",
+                  padding: "6px 14px",
+                  borderRadius: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 13,
+                  fontWeight: viewMode === mode ? 600 : 400,
+                  color: viewMode === mode ? "var(--accent)" : "var(--muted)",
+                  background:
+                    viewMode === mode ? "var(--accent-glow)" : "transparent",
+                  transition: "all 200ms ease",
+                }}
+              >
+                {icon} {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Globe view */}
+        {viewMode === "globe" && (
+          <div style={{ display: "flex", gap: 16 }}>
+            {/* Globe canvas */}
+            <div style={{ flex: 1 }}>
+              <GlobeView
+                channels={displayItems}
+                filterCategory={selectedCategory}
+                filterQuery={query}
+                onSelect={setSelectedChannel}
+              />
+            </div>
+
+            {/* Right overlay: legend + search */}
+            <div
+              style={{
+                width: 200,
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              {/* Quick search */}
+              <div className="globe-overlay-panel">
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--muted)",
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Search size={11} /> Поиск
+                </div>
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void doSearch();
+                  }}
+                  placeholder="Название, @username..."
+                  style={{
+                    width: "100%",
+                    background: "var(--surface-3)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    fontSize: 12,
+                    color: "var(--text)",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+
+              {/* Category legend */}
+              <div className="globe-overlay-panel" style={{ flex: 1 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--muted)",
+                    marginBottom: 8,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <Filter size={11} /> Категории
+                  {selectedCategory && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory("")}
+                      style={{
+                        all: "unset",
+                        cursor: "pointer",
+                        color: "var(--accent)",
+                        fontSize: 10,
+                        marginLeft: "auto",
+                      }}
+                    >
+                      сбросить
+                    </button>
+                  )}
+                </div>
+                <GlobeCategoryLegend
+                  categories={allCategoryNames}
+                  byCategory={
+                    Object.fromEntries(
+                      allCategoryNames.map((c) => [
+                        c,
+                        categoryStats[c]?.count ?? byCategory[c] ?? 0,
+                      ])
+                    )
+                  }
+                  selected={selectedCategory}
+                  onSelect={setSelectedCategory}
+                />
+              </div>
+
+              {/* Stats */}
+              <div className="globe-overlay-panel">
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>
+                  Статистика
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {[
+                    { label: "Каналов загружено", value: formatNumber(displayItems.length) },
+                    { label: "Всего в индексе", value: formatNumber(totalIndexed) },
+                    { label: "Охват", value: formatNumber(totalReach) },
+                  ].map(({ label, value }) => (
+                    <div
+                      key={label}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 11,
+                      }}
+                    >
+                      <span style={{ color: "var(--text-secondary)" }}>{label}</span>
+                      <span
+                        style={{
+                          color: "var(--accent)",
+                          fontFamily: "monospace",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bubble map view */}
+        {viewMode === "map" && (
+          <BubbleMapCanvas
+            layout={bubbleLayout}
+            filterCategory={selectedCategory}
+            filterQuery={query}
+            onSelect={setSelectedChannel}
+          />
+        )}
+
+        {busy && viewMode !== "globe" && <p className="muted">Загружаем…</p>}
+
+        {/* Cards view */}
+        <AnimatePresence mode="wait">
+          {!busy && displayItems.length > 0 && viewMode === "cards" && (
+            <motion.div
+              key="cards-view"
+              variants={viewSwitchVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                gap: 16,
+              }}
+            >
+              {displayItems.map((ch, i) => (
+                <ChannelCard
+                  key={ch.id}
+                  ch={ch}
+                  highlightRe={highlightRe}
+                  index={i}
+                />
+              ))}
+            </motion.div>
+          )}
+
+          {/* Table view */}
+          {!busy && displayItems.length > 0 && viewMode === "table" && (
+            <motion.div
+              key="table-view"
+              variants={viewSwitchVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="table-wrap"
+            >
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Канал</th>
+                    <th>Категория</th>
+                    <th>Язык</th>
+                    <th>Подписчики</th>
+                    <th>Комментарии</th>
+                    <th>Охват</th>
+                    <th>ER%</th>
+                    <th>Проиндексирован</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayItems.map((ch) => (
+                    <tr
+                      key={ch.id}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => setSelectedChannel(ch)}
+                    >
+                      <td>
+                        <div>
+                          <strong>
+                            {ch.username ? (
+                              <a
+                                href={`https://t.me/${ch.username}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  color: "var(--accent)",
+                                  fontFamily: "monospace",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 4,
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                @{ch.username}
+                                <ExternalLink size={11} style={{ opacity: 0.5 }} />
+                              </a>
+                            ) : (
+                              <span
+                                style={{
+                                  fontFamily: "monospace",
+                                  color: "var(--muted)",
+                                }}
+                              >
+                                #{ch.id}
+                              </span>
+                            )}
+                          </strong>
+                          {ch.title && (
+                            <div
+                              style={{
+                                fontSize: 11,
+                                color: "var(--text-secondary)",
+                              }}
+                            >
+                              {ch.title}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {ch.category ? (
+                          <span
+                            className="pill"
+                            style={{
+                              background: `${getCategoryMeta(ch.category).color}18`,
+                              color: getCategoryMeta(ch.category).color,
+                            }}
+                          >
+                            {getCategoryMeta(ch.category).icon} {ch.category}
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {ch.language ? (
+                          <span>
+                            {langFlag(ch.language)} {ch.language.toUpperCase()}
+                          </span>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "monospace",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {formatNumber(ch.member_count)}
+                      </td>
+                      <td>
+                        {ch.has_comments ? (
+                          <span
+                            className="pill"
+                            style={{
+                              background: "var(--accent-glow)",
+                              color: "var(--accent)",
+                            }}
+                          >
+                            Да
+                          </span>
+                        ) : (
+                          <span className="muted">Нет</span>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "monospace",
+                        }}
+                      >
+                        {formatNumber(ch.avg_post_reach)}
+                      </td>
+                      <td
+                        style={{
+                          fontFamily: "monospace",
+                          color: erColor(ch.engagement_rate),
+                          fontWeight: 600,
+                        }}
+                      >
+                        {erLabel(ch.engagement_rate)}
+                      </td>
+                      <td style={{ fontSize: 11, color: "var(--muted)" }}>
+                        {ch.last_indexed_at
+                          ? new Date(ch.last_indexed_at).toLocaleDateString("ru-RU")
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {!busy && displayItems.length === 0 && viewMode !== "globe" && (
+          <p className="muted">
+            Каналы не найдены. Попробуйте изменить фильтры или запустите индексирование.
+          </p>
+        )}
+      </section>
+
+      {/* Search form */}
+      <section className="panel wide">
+        <div className="panel-header">
+          <div>
+            <div className="eyebrow">
+              <Search size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
+              Фильтры
+            </div>
+            <h2 style={{ fontSize: "1.2rem" }}>Найти каналы</h2>
+          </div>
+        </div>
+        <form className="stack-form" onSubmit={handleSearch}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr 1fr",
+              gap: 12,
+            }}
+          >
+            <label className="field" style={{ gridColumn: "1 / 3" }}>
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <Search size={13} /> Ключевое слово
+              </span>
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Например: маркетинг, крипта, e-commerce..."
+              />
+            </label>
+            <label className="field">
+              <span
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                <Globe size={13} /> Язык
+              </span>
+              <select
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value)}
+              >
+                {LANGUAGE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="field">
+            <span
+              style={{
+                color: "var(--text-secondary)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Users size={13} />
+              Минимум подписчиков:{" "}
+              <span
+                style={{
+                  color: "var(--accent)",
+                  fontFamily: "monospace",
+                  fontWeight: 600,
+                }}
+              >
+                {minMembers > 0 ? formatNumber(minMembers) : "не задано"}
+              </span>
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1_000_000}
+              step={5_000}
+              value={minMembers}
+              onChange={(e) => setMinMembers(Number(e.target.value))}
+              style={{ accentColor: "var(--accent)" }}
+            />
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                userSelect: "none",
+                fontSize: 14,
+                color: "var(--text-secondary)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={hasCommentsOnly}
+                onChange={(e) => setHasCommentsOnly(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
+              />
+              <MessageCircle size={14} style={{ color: "var(--accent)" }} />
+              Только с комментариями
+            </label>
+          </div>
+          <div className="actions-row">
+            <button className="primary-button" type="submit" disabled={busy}>
+              <Search
+                size={14}
+                style={{ marginRight: 6, verticalAlign: "middle" }}
+              />
+              {busy ? "Ищем…" : "Найти"}
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={busy}
+              onClick={handleReset}
+            >
+              Сбросить всё
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              disabled={busy}
+              onClick={() => void loadAll()}
+              style={{ marginLeft: "auto" }}
+            >
+              <RotateCcw size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
+              Обновить
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {error ? <div className="status-banner">{error}</div> : null}
+
+      {/* Category grid */}
       {allCategoryNames.length > 0 && (
         <section className="panel wide">
           <div className="panel-header">
@@ -2095,501 +2952,75 @@ export function ChannelMapPage() {
         </section>
       )}
 
-      {/* ── Search form ─────────────────────────────────────────────────── */}
-      <section className="panel wide">
-        <div className="panel-header">
-          <div>
-            <div className="eyebrow">
-              <Search size={12} style={{ marginRight: 4, verticalAlign: "middle" }} />
-              Умный поиск
-            </div>
-            <h2 style={{ fontSize: "1.2rem" }}>Найти каналы</h2>
-          </div>
-          {/* View toggle — three modes */}
-          <div
-            style={{
-              display: "flex",
-              background: "var(--surface-2)",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              padding: 3,
-              gap: 2,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setViewMode("cards")}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                padding: "6px 14px",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 13,
-                fontWeight: viewMode === "cards" ? 600 : 400,
-                color: viewMode === "cards" ? "var(--accent)" : "var(--muted)",
-                background: viewMode === "cards" ? "var(--accent-glow)" : "transparent",
-                transition: "all 200ms ease",
-              }}
-            >
-              <Grid3X3 size={14} /> Карточки
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("table")}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                padding: "6px 14px",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 13,
-                fontWeight: viewMode === "table" ? 600 : 400,
-                color: viewMode === "table" ? "var(--accent)" : "var(--muted)",
-                background: viewMode === "table" ? "var(--accent-glow)" : "transparent",
-                transition: "all 200ms ease",
-              }}
-            >
-              <List size={14} /> Таблица
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("map")}
-              style={{
-                all: "unset",
-                cursor: "pointer",
-                padding: "6px 14px",
-                borderRadius: 8,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                fontSize: 13,
-                fontWeight: viewMode === "map" ? 600 : 400,
-                color: viewMode === "map" ? "var(--accent)" : "var(--muted)",
-                background: viewMode === "map" ? "var(--accent-glow)" : "transparent",
-                transition: "all 200ms ease",
-              }}
-            >
-              <Layers size={14} /> Карта
-            </button>
-          </div>
-        </div>
-        <form className="stack-form" onSubmit={handleSearch}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
-              gap: 12,
-            }}
-          >
-            <label className="field" style={{ gridColumn: "1 / 3" }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)" }}>
-                <Search size={13} /> Ключевое слово
-              </span>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Например: маркетинг, крипта, e-commerce..."
-              />
-            </label>
-            <label className="field">
-              <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--text-secondary)" }}>
-                <Globe size={13} /> Язык
-              </span>
-              <select
-                value={selectedLanguage}
-                onChange={(e) => setSelectedLanguage(e.target.value)}
-              >
-                {LANGUAGE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span style={{ color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6 }}>
-              <Users size={13} />
-              Минимум подписчиков:{" "}
-              <span
-                style={{
-                  color: "var(--accent)",
-                  fontFamily: "'JetBrains Mono Variable', monospace",
-                  fontWeight: 600,
-                }}
-              >
-                {minMembers > 0 ? formatNumber(minMembers) : "не задано"}
-              </span>
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={1_000_000}
-              step={5_000}
-              value={minMembers}
-              onChange={(e) => setMinMembers(Number(e.target.value))}
-              style={{ accentColor: "var(--accent)" }}
-            />
-          </label>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: "pointer",
-                userSelect: "none",
-                fontSize: 14,
-                color: "var(--text-secondary)",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={hasCommentsOnly}
-                onChange={(e) => setHasCommentsOnly(e.target.checked)}
-                style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
-              />
-              <MessageCircle size={14} style={{ color: "var(--accent)" }} />
-              Только с комментариями
-            </label>
-          </div>
-          <div className="actions-row">
-            <button className="primary-button" type="submit" disabled={busy}>
-              <Search size={14} style={{ marginRight: 6, verticalAlign: "middle" }} />
-              {busy ? "Ищем…" : "Найти"}
-            </button>
-            <button
-              className="ghost-button"
-              type="button"
-              disabled={busy}
-              onClick={handleReset}
-            >
-              Сбросить всё
-            </button>
-            <button
-              className="ghost-button"
-              type="button"
-              disabled={busy}
-              onClick={() => void loadAll()}
-              style={{ marginLeft: "auto" }}
-            >
-              Обновить
-            </button>
-          </div>
-        </form>
-      </section>
-
-      {error ? <div className="status-banner">{error}</div> : null}
-
-      {/* ── Results ────────────────────────────────────────────────────────── */}
-      <section className="panel wide">
-        <div className="panel-header">
-          <div>
-            <div className="eyebrow">Результаты</div>
-            <h2 style={{ fontSize: "1.2rem" }}>
-              Каналы{" "}
-              {displayItems.length > 0 ? (
-                <span style={{ color: "var(--muted)", fontSize: "0.8em", fontFamily: "'JetBrains Mono Variable', monospace" }}>
-                  ({displayItems.length} из {total})
-                </span>
-              ) : null}
-            </h2>
-          </div>
-        </div>
-
-        {busy && <p className="muted">Загружаем…</p>}
-
-        {!busy && displayItems.length === 0 && (
-          <p className="muted">
-            Каналы не найдены. Попробуйте изменить фильтры или запустите
-            индексирование через парсер.
-          </p>
-        )}
-
-        <AnimatePresence mode="wait">
-          {!busy && displayItems.length > 0 && viewMode === "cards" && (
-            <motion.div
-              key="cards-view"
-              variants={viewSwitchVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-                gap: 16,
-              }}
-            >
-              {displayItems.map((ch, i) => (
-                <ChannelCard key={ch.id} ch={ch} highlightRe={highlightRe} index={i} />
-              ))}
-            </motion.div>
-          )}
-
-          {!busy && displayItems.length > 0 && viewMode === "table" && (
-            <motion.div
-              key="table-view"
-              variants={viewSwitchVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="table-wrap"
-            >
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Канал</th>
-                    <th>Категория</th>
-                    <th>Язык</th>
-                    <th>Подписчики</th>
-                    <th>Комментарии</th>
-                    <th>Охват</th>
-                    <th>ER%</th>
-                    <th>Проиндексирован</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayItems.map((ch) => (
-                    <tr key={ch.id}>
-                      <td>
-                        <div>
-                          <strong>
-                            {ch.username ? (
-                              <a
-                                href={`https://t.me/${ch.username}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  color: "var(--accent)",
-                                  fontFamily: "'JetBrains Mono Variable', monospace",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                }}
-                              >
-                                @{ch.username}
-                                <ExternalLink size={11} style={{ opacity: 0.5 }} />
-                              </a>
-                            ) : (
-                              <span style={{ fontFamily: "'JetBrains Mono Variable', monospace", color: "var(--muted)" }}>
-                                #{ch.id}
-                              </span>
-                            )}
-                          </strong>
-                          {ch.title ? (
-                            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                              {ch.title}
-                            </div>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td>
-                        {ch.category ? (
-                          <span
-                            className="pill"
-                            style={{
-                              background: `${getCategoryMeta(ch.category).color}18`,
-                              color: getCategoryMeta(ch.category).color,
-                            }}
-                          >
-                            {getCategoryMeta(ch.category).icon} {ch.category}
-                            {ch.subcategory ? ` / ${ch.subcategory}` : ""}
-                          </span>
-                        ) : (
-                          <span style={{ color: "var(--muted)" }}>—</span>
-                        )}
-                      </td>
-                      <td>
-                        {langFlag(ch.language)} {ch.language?.toUpperCase() ?? "—"}
-                      </td>
-                      <td
-                        style={{
-                          fontWeight: 600,
-                          fontFamily: "'JetBrains Mono Variable', monospace",
-                          color: "var(--text)",
-                        }}
-                      >
-                        {formatNumber(ch.member_count)}
-                      </td>
-                      <td>
-                        <span
-                          className="pill"
-                          style={{
-                            background: ch.has_comments ? "var(--accent-glow)" : "rgba(90,90,94,0.15)",
-                            color: ch.has_comments ? "var(--accent)" : "var(--muted)",
-                            border: ch.has_comments ? "1px solid rgba(0,255,136,0.25)" : "1px solid var(--border)",
-                          }}
-                        >
-                          {ch.has_comments ? "Есть" : "Нет"}
-                        </span>
-                      </td>
-                      <td style={{ fontFamily: "'JetBrains Mono Variable', monospace", color: "var(--text-secondary)" }}>
-                        {formatNumber(ch.avg_post_reach)}
-                      </td>
-                      <td>
-                        <span
-                          style={{
-                            color: erColor(ch.engagement_rate),
-                            fontWeight: 600,
-                            fontFamily: "'JetBrains Mono Variable', monospace",
-                          }}
-                        >
-                          {erLabel(ch.engagement_rate)}
-                        </span>
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 11,
-                          color: "var(--muted)",
-                          fontFamily: "'JetBrains Mono Variable', monospace",
-                        }}
-                      >
-                        {ch.last_indexed_at ? ch.last_indexed_at.slice(0, 10) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </motion.div>
-          )}
-
-          {!busy && displayItems.length > 0 && viewMode === "map" && (
-            <motion.div
-              key="map-view"
-              variants={viewSwitchVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              <BubbleMapCanvas
-                layout={bubbleLayout}
-                filterCategory={selectedCategory}
-                filterQuery={query}
-                onSelect={(ch) => setSelectedChannel(ch)}
-              />
-              {/* Legend */}
-              <div
-                style={{
-                  marginTop: 16,
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 10,
-                }}
-              >
-                {bubbleLayout.labels.map((lbl) => (
-                  <div
-                    key={lbl.category}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: "50%",
-                        background: lbl.color,
-                        flexShrink: 0,
-                        boxShadow: `0 0 6px ${lbl.color}88`,
-                      }}
-                    />
-                    {lbl.icon} {lbl.category}
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </section>
-
-      {/* ── Distribution charts ─────────────────────────────────────────── */}
-      <section
+      {/* Analytics sidebar */}
+      <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(3, minmax(0,1fr))",
-          gap: 20,
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 16,
         }}
       >
-        {/* By category */}
-        {allCategoryNames.length > 0 && (
-          <div className="panel">
+        {langEntries.length > 0 && (
+          <section className="panel">
             <div className="panel-header">
               <div>
-                <div className="eyebrow">Распределение</div>
-                <h2 style={{ fontSize: "1.1rem" }}>По категориям</h2>
+                <div className="eyebrow">Языки</div>
+                <h2 style={{ fontSize: "1rem" }}>Распределение по языкам</h2>
               </div>
             </div>
-            <HBarChart
-              entries={allCategoryNames
-                .map((cat) => ({
-                  label: `${getCategoryMeta(cat).icon} ${cat}`,
-                  value: categoryStats[cat]?.count ?? byCategory[cat] ?? 0,
+            <BarChart
+              data={langEntries}
+              maxVal={maxLangCount}
+              barClass="chmap-bar-lang"
+            />
+          </section>
+        )}
+
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <div className="eyebrow">Размер</div>
+              <h2 style={{ fontSize: "1rem" }}>По числу подписчиков</h2>
+            </div>
+          </div>
+          <BarChart
+            data={memberRangeCounts}
+            maxVal={maxRangeCount}
+            barClass="chmap-bar-size"
+          />
+        </section>
+
+        {allCategoryNames.length > 0 && (
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Топ категорий</div>
+                <h2 style={{ fontSize: "1rem" }}>По числу каналов</h2>
+              </div>
+            </div>
+            <BarChart
+              data={allCategoryNames
+                .map((c) => ({
+                  label: `${getCategoryMeta(c).icon} ${c}`,
+                  value: categoryStats[c]?.count ?? byCategory[c] ?? 0,
                 }))
                 .sort((a, b) => b.value - a.value)
                 .slice(0, 10)}
-              max={maxCatCount}
+              maxVal={maxCatCount}
               barClass="chmap-bar-cat"
             />
-          </div>
+          </section>
         )}
+      </div>
 
-        {/* By language */}
-        {langEntries.length > 0 && (
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <div className="eyebrow">Распределение</div>
-                <h2 style={{ fontSize: "1.1rem" }}>По языкам</h2>
-              </div>
-            </div>
-            <HBarChart entries={langEntries} max={maxLangCount} barClass="chmap-bar-lang" />
-          </div>
-        )}
-
-        {/* By member ranges */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <div className="eyebrow">Распределение</div>
-              <h2 style={{ fontSize: "1.1rem" }}>По размеру</h2>
-            </div>
-          </div>
-          <HBarChart entries={memberRangeCounts} max={maxRangeCount} barClass="chmap-bar-size" />
-        </div>
-      </section>
-
-      {/* ── Channel detail slide-in panel ───────────────────────────────── */}
+      {/* Channel detail panel */}
       <AnimatePresence>
         {selectedChannel && (
-          <>
-            {/* Backdrop */}
-            <motion.div
-              key="backdrop"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedChannel(null)}
-              style={{
-                position: "fixed",
-                inset: 0,
-                background: "rgba(0,0,0,0.45)",
-                zIndex: 199,
-              }}
-            />
-            <ChannelDetailPanel
-              ch={selectedChannel}
-              onClose={() => setSelectedChannel(null)}
-            />
-          </>
+          <ChannelDetailPanel
+            key={selectedChannel.id}
+            ch={selectedChannel}
+            onClose={() => setSelectedChannel(null)}
+          />
         )}
       </AnimatePresence>
     </div>
