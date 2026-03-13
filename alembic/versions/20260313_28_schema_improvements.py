@@ -14,40 +14,76 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    # 1. Add missing created_at columns
-    op.add_column("campaign_runs", sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True))
-    op.add_column("account_health_scores", sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True))
-    op.add_column("alert_configs", sa.Column("created_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True))
-    op.add_column("alert_configs", sa.Column("updated_at", sa.DateTime(), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=True))
+def _safe_add_column(table: str, col_name: str, col_sql: str) -> None:
+    """Add column only if it doesn't already exist."""
+    op.execute(
+        f"DO $$ BEGIN "
+        f"ALTER TABLE {table} ADD COLUMN {col_name} {col_sql}; "
+        f"EXCEPTION WHEN duplicate_column THEN NULL; "
+        f"END $$"
+    )
 
-    # 2. Convert Float money columns to Numeric for precision
-    # ai_model_profiles
-    op.alter_column("ai_model_profiles", "input_cost_per_1m", type_=sa.Numeric(precision=10, scale=6), existing_type=sa.Float())
-    op.alter_column("ai_model_profiles", "output_cost_per_1m", type_=sa.Numeric(precision=10, scale=6), existing_type=sa.Float())
-    # ai_requests
-    op.alter_column("ai_requests", "estimated_cost_usd", type_=sa.Numeric(precision=12, scale=6), existing_type=sa.Float())
-    op.alter_column("ai_requests", "actual_cost_usd", type_=sa.Numeric(precision=12, scale=6), existing_type=sa.Float())
-    # ai_request_attempts
-    op.alter_column("ai_request_attempts", "cost_usd", type_=sa.Numeric(precision=12, scale=6), existing_type=sa.Float())
-    # ai_budget_counters
-    op.alter_column("ai_budget_counters", "total_cost_usd", type_=sa.Numeric(precision=12, scale=6), existing_type=sa.Float())
+
+def _safe_alter_type(table: str, column: str, new_type: str) -> None:
+    """Alter column type only if the column exists."""
+    op.execute(
+        f"DO $$ BEGIN "
+        f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {new_type} USING {column}::{new_type}; "
+        f"EXCEPTION WHEN undefined_column THEN NULL; "
+        f"END $$"
+    )
+
+
+def upgrade() -> None:
+    # 1. Add missing created_at columns (idempotent)
+    _safe_add_column("campaign_runs", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    _safe_add_column("account_health_scores", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    _safe_add_column("alert_configs", "created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    _safe_add_column("alert_configs", "updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+    # 2. Convert Float money columns to Numeric for precision (skip if column missing)
+    _safe_alter_type("ai_model_profiles", "input_cost_per_1m", "NUMERIC(10,6)")
+    _safe_alter_type("ai_model_profiles", "output_cost_per_1m", "NUMERIC(10,6)")
+    _safe_alter_type("ai_requests", "estimated_cost_usd", "NUMERIC(12,6)")
+    _safe_alter_type("ai_requests", "actual_cost_usd", "NUMERIC(12,6)")
+    _safe_alter_type("ai_request_attempts", "cost_usd", "NUMERIC(12,6)")
+    _safe_alter_type("ai_budget_counters", "total_cost_usd", "NUMERIC(12,6)")
 
     # 3. Add server_default for analytics_daily_cache
-    op.alter_column("analytics_daily_cache", "created_at", server_default=sa.text("CURRENT_TIMESTAMP"))
+    op.execute(
+        "DO $$ BEGIN "
+        "ALTER TABLE analytics_daily_cache ALTER COLUMN created_at SET DEFAULT CURRENT_TIMESTAMP; "
+        "EXCEPTION WHEN undefined_column THEN NULL; "
+        "END $$"
+    )
 
 
 def downgrade() -> None:
-    op.alter_column("analytics_daily_cache", "created_at", server_default=None)
+    op.execute(
+        "DO $$ BEGIN "
+        "ALTER TABLE analytics_daily_cache ALTER COLUMN created_at DROP DEFAULT; "
+        "EXCEPTION WHEN undefined_column THEN NULL; "
+        "END $$"
+    )
 
-    op.alter_column("ai_budget_counters", "total_cost_usd", type_=sa.Float(), existing_type=sa.Numeric(precision=12, scale=6))
-    op.alter_column("ai_request_attempts", "cost_usd", type_=sa.Float(), existing_type=sa.Numeric(precision=12, scale=6))
-    op.alter_column("ai_requests", "actual_cost_usd", type_=sa.Float(), existing_type=sa.Numeric(precision=12, scale=6))
-    op.alter_column("ai_requests", "estimated_cost_usd", type_=sa.Float(), existing_type=sa.Numeric(precision=12, scale=6))
-    op.alter_column("ai_model_profiles", "output_cost_per_1m", type_=sa.Float(), existing_type=sa.Numeric(precision=10, scale=6))
-    op.alter_column("ai_model_profiles", "input_cost_per_1m", type_=sa.Float(), existing_type=sa.Numeric(precision=10, scale=6))
+    _safe_alter_type("ai_budget_counters", "total_cost_usd", "DOUBLE PRECISION")
+    _safe_alter_type("ai_request_attempts", "cost_usd", "DOUBLE PRECISION")
+    _safe_alter_type("ai_requests", "actual_cost_usd", "DOUBLE PRECISION")
+    _safe_alter_type("ai_requests", "estimated_cost_usd", "DOUBLE PRECISION")
+    _safe_alter_type("ai_model_profiles", "output_cost_per_1m", "DOUBLE PRECISION")
+    _safe_alter_type("ai_model_profiles", "input_cost_per_1m", "DOUBLE PRECISION")
 
-    op.drop_column("alert_configs", "updated_at")
-    op.drop_column("alert_configs", "created_at")
-    op.drop_column("account_health_scores", "created_at")
-    op.drop_column("campaign_runs", "created_at")
+    for col in ["updated_at", "created_at"]:
+        op.execute(
+            f"DO $$ BEGIN "
+            f"ALTER TABLE alert_configs DROP COLUMN {col}; "
+            f"EXCEPTION WHEN undefined_column THEN NULL; "
+            f"END $$"
+        )
+    for table in ["account_health_scores", "campaign_runs"]:
+        op.execute(
+            f"DO $$ BEGIN "
+            f"ALTER TABLE {table} DROP COLUMN created_at; "
+            f"EXCEPTION WHEN undefined_column THEN NULL; "
+            f"END $$"
+        )
