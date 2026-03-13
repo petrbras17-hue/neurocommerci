@@ -6340,7 +6340,7 @@ def _format_compact_number(n: int | float) -> str:
 
 @app.get("/v1/channel-map/telemetry")
 async def channel_map_telemetry(
-    mode: str = Query("intel", regex="^(intel|farm|analytics)$"),
+    mode: str = Query("intel", pattern="^(intel|farm|analytics)$"),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:

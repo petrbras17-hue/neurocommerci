@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `b4343e6` |
+| Last committed HEAD | `bdfd404` |
 | VPS safe branch | `main` |
-| VPS safe commit | `66548bf` |
+| VPS safe commit | `bdfd404` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -64,6 +64,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-13 | Health history + Proxy rotation | `main` | `working-tree` | Account health history graph + proxy rotation UI | Added AccountHealthHistory ORM model (daily snapshots per account), migration 20260313_29 (new table with FORCE RLS policy; rotation_strategy/auto_rotation columns on proxies), GET /v1/health/scores/{id}/history (tenant-scoped, ?days=30), PUT /v1/proxies/{id}/strategy (sticky/round_robin/geo_match, auto_rotation toggle), HealthMiniChart SVG component in HealthPage (color-coded polyline + dashed survivability line), rotation strategy select + auto-rotation checkbox per row in ProxiesPage. ops_api.py and models.py compile clean; tsc --noEmit passes. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
 
 | 2026-03-13 | Custom Comment Styles | `main` | `working-tree` | Custom comment style CRUD | Added `workspace_id`, `system_prompt`, `examples` columns to `CommentStyleTemplate`; Alembic migration `20260313_31`; 4 CRUD endpoints (`GET/POST /v1/comments/custom-styles`, `PUT/DELETE /v1/comments/custom-styles/{id}`) with tenant isolation and RLS; "Кастомные стили" tab in `CommentDashboardPage.tsx` with create/edit modal, is_active toggle, delete. 307 tests pass, tsc clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
+
+| 2026-03-14 | Channel Map Planet | `main` | `bdfd404` | Channel Map redesign | Replaced 2104-line monolithic R3F globe with modular react-globe.gl: 14 files, H3 hex clustering, 3 HUD modes, drill-down zoom, detail panel with similar channels, mobile bottom sheet, WebGL fallback, Cmd+K search, 4 new backend endpoints. Deployed to VPS, health OK. | Green | Green | Test globe interactively at /app/channel-map. |
 
 ## Update Rules
 
