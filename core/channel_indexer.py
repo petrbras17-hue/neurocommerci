@@ -85,11 +85,17 @@ class ChannelIndexer:
         self,
         username_or_id: str,
         session: AsyncSession,
+        *,
+        batch_mode: bool = False,
     ) -> ChannelMapEntry:
         """Fetch Telegram metadata for a single channel and upsert into
         channel_map_entries with tenant_id = NULL.
 
         Falls back to a stub entry when no Telethon client is available.
+
+        When *batch_mode* is True the DB rows are added/updated but the
+        session is NOT committed — the caller is responsible for the final
+        commit.  Use this from bulk_index() to reduce per-channel round-trips.
         """
         client = await self._get_client()
         if client is None:
@@ -97,9 +103,9 @@ class ChannelIndexer:
                 f"ChannelIndexer.index_channel: no Telethon session available, "
                 f"returning stub for '{username_or_id}'"
             )
-            return await self._upsert_stub(str(username_or_id), session)
+            return await self._upsert_stub(str(username_or_id), session, batch_mode=batch_mode)
 
-        return await self._fetch_and_upsert(client, username_or_id, session)
+        return await self._fetch_and_upsert(client, username_or_id, session, batch_mode=batch_mode)
 
     async def bulk_index(
         self,
@@ -110,6 +116,9 @@ class ChannelIndexer:
         """Batch-index a list of channel usernames with inter-request rate
         limiting.
 
+        All upserts are accumulated in the session and committed in a single
+        transaction at the end, instead of one commit per channel.
+
         Returns the list of upserted ChannelMapEntry objects.
         """
         results: list[ChannelMapEntry] = []
@@ -117,16 +126,29 @@ class ChannelIndexer:
             if i > 0:
                 await asyncio.sleep(delay_seconds)
             try:
-                entry = await self.index_channel(username, session)
+                entry = await self.index_channel(username, session, batch_mode=True)
                 results.append(entry)
                 log.info(
                     f"ChannelIndexer.bulk_index: {i + 1}/{len(usernames)} "
-                    f"indexed '{username}' id={entry.id}"
+                    f"staged '{username}'"
                 )
             except Exception as exc:
                 log.warning(
                     f"ChannelIndexer.bulk_index: failed '{username}': {exc}"
                 )
+
+        if results:
+            await session.commit()
+            # Refresh all entries so callers get populated PKs/defaults.
+            for entry in results:
+                try:
+                    await session.refresh(entry)
+                except Exception:
+                    pass
+            log.info(
+                f"ChannelIndexer.bulk_index: committed {len(results)}/{len(usernames)} entries"
+            )
+
         return results
 
     async def refresh_stale(
@@ -219,6 +241,8 @@ class ChannelIndexer:
         client: Any,
         username_or_id: str,
         session: AsyncSession,
+        *,
+        batch_mode: bool = False,
     ) -> ChannelMapEntry:
         """Fetch full channel info from Telegram and upsert the ORM row."""
         from telethon import functions as tl_functions
@@ -230,13 +254,13 @@ class ChannelIndexer:
             log.warning(
                 f"ChannelIndexer._fetch_and_upsert: get_entity '{username_or_id}' failed: {exc}"
             )
-            return await self._upsert_stub(str(username_or_id), session)
+            return await self._upsert_stub(str(username_or_id), session, batch_mode=batch_mode)
 
         if not isinstance(entity, TLChannel) or not getattr(entity, "broadcast", False):
             log.warning(
                 f"ChannelIndexer._fetch_and_upsert: '{username_or_id}' is not a broadcast channel"
             )
-            return await self._upsert_stub(str(username_or_id), session)
+            return await self._upsert_stub(str(username_or_id), session, batch_mode=batch_mode)
 
         # Full channel details
         try:
@@ -247,7 +271,7 @@ class ChannelIndexer:
                 f"ChannelIndexer._fetch_and_upsert: GetFullChannelRequest failed "
                 f"for '{username_or_id}': {exc}"
             )
-            return await self._upsert_stub(str(username_or_id), session)
+            return await self._upsert_stub(str(username_or_id), session, batch_mode=batch_mode)
 
         about = (getattr(full_chat, "about", "") or "").strip()
         linked_chat_id = getattr(full_chat, "linked_chat_id", None)
@@ -288,17 +312,26 @@ class ChannelIndexer:
             "last_refreshed_at": now,
         }
 
-        return await self._upsert_entry(channel_data, session)
+        return await self._upsert_entry(channel_data, session, batch_mode=batch_mode)
 
     async def _upsert_stub(
-        self, username: str, session: AsyncSession
+        self,
+        username: str,
+        session: AsyncSession,
+        *,
+        batch_mode: bool = False,
     ) -> ChannelMapEntry:
-        """Create or return a minimal stub entry when live data is unavailable."""
+        """Create or return a minimal stub entry when live data is unavailable.
+
+        When *batch_mode* is True the session is NOT committed — the caller
+        owns the transaction.
+        """
         clean_username = username.lstrip("@")
         existing = await self._find_by_username(clean_username, session)
         if existing is not None:
             existing.last_refreshed_at = utcnow()
-            await session.commit()
+            if not batch_mode:
+                await session.commit()
             return existing
 
         entry = ChannelMapEntry(
@@ -310,15 +343,25 @@ class ChannelIndexer:
             last_refreshed_at=utcnow(),
         )
         session.add(entry)
-        await session.commit()
-        await session.refresh(entry)
+        if not batch_mode:
+            await session.commit()
+            await session.refresh(entry)
         log.info(f"ChannelIndexer._upsert_stub: created stub entry for '{clean_username}'")
         return entry
 
     async def _upsert_entry(
-        self, data: dict, session: AsyncSession
+        self,
+        data: dict,
+        session: AsyncSession,
+        *,
+        batch_mode: bool = False,
     ) -> ChannelMapEntry:
-        """Upsert a channel_map_entries row keyed by (username, tenant_id=NULL)."""
+        """Upsert a channel_map_entries row keyed by (username, tenant_id=NULL).
+
+        When *batch_mode* is True the session is NOT committed — the caller
+        owns the transaction.  session.refresh() is also skipped so that IDs
+        can be resolved in a single final commit by the caller.
+        """
         username = data.get("username")
         telegram_id = data.get("telegram_id")
 
@@ -332,14 +375,16 @@ class ChannelIndexer:
             for key, value in data.items():
                 if value is not None:
                     setattr(existing, key, value)
-            await session.commit()
-            await session.refresh(existing)
+            if not batch_mode:
+                await session.commit()
+                await session.refresh(existing)
             return existing
 
         entry = ChannelMapEntry(tenant_id=None, **data)
         session.add(entry)
-        await session.commit()
-        await session.refresh(entry)
+        if not batch_mode:
+            await session.commit()
+            await session.refresh(entry)
         return entry
 
     async def _find_by_username(

@@ -55,13 +55,13 @@ class FarmOrchestrator:
     # Public lifecycle API
     # ------------------------------------------------------------------
 
-    async def start_farm(self, farm_id: int, session: AsyncSession) -> dict:
+    async def start_farm(self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None) -> dict:
         """Load farm config, create threads, assign channels, start monitoring."""
         if farm_id in self._active_farms:
             log.warning(f"Farm {farm_id}: already running, returning current status")
             return await self.get_farm_status(farm_id, session)
 
-        farm = await self._load_farm(farm_id, session)
+        farm = await self._load_farm(farm_id, session, tenant_id=tenant_id)
         if farm is None:
             raise ValueError(f"Farm {farm_id} not found")
 
@@ -69,11 +69,19 @@ class FarmOrchestrator:
             log.warning(f"Farm {farm_id}: DB status already running but not in memory, resuming")
 
         # Load accounts assigned to this farm (via farm_threads rows)
-        thread_rows = await self._load_thread_rows(farm_id, session)
+        thread_rows = await self._load_thread_rows(farm_id, session, tenant_id=farm.tenant_id)
         if not thread_rows:
             raise ValueError(
                 f"Farm {farm_id}: no threads configured. "
                 "Assign accounts to the farm first."
+            )
+
+        from config import settings as _settings
+        max_threads = getattr(_settings, "FARM_MAX_THREADS_PER_FARM", 50)
+        if len(thread_rows) > max_threads:
+            raise ValueError(
+                f"Farm {farm_id}: thread count {len(thread_rows)} exceeds "
+                f"FARM_MAX_THREADS_PER_FARM limit of {max_threads}"
             )
 
         # Load channels for the farm's workspace
@@ -172,14 +180,18 @@ class FarmOrchestrator:
         )
         return await self.get_farm_status(farm_id, session)
 
-    async def stop_farm(self, farm_id: int, session: AsyncSession) -> dict:
+    async def stop_farm(self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None) -> dict:
         """Signal all threads to stop gracefully, then update DB."""
+        farm = await self._load_farm(farm_id, session, tenant_id=tenant_id)
+        if farm is None:
+            raise ValueError(f"Farm {farm_id} not found")
+
         entry = self._active_farms.get(farm_id)
         if entry is None:
             log.warning(f"Farm {farm_id}: not in active registry, updating DB only")
             await session.execute(
                 update(FarmConfig)
-                .where(FarmConfig.id == farm_id)
+                .where(FarmConfig.id == farm_id, FarmConfig.tenant_id == farm.tenant_id)
                 .values(status="stopped", updated_at=utcnow())
             )
             await session.commit()
@@ -223,8 +235,12 @@ class FarmOrchestrator:
         log.info(f"Farm {farm_id} stopped")
         return {"farm_id": farm_id, "status": "stopped"}
 
-    async def pause_farm(self, farm_id: int, session: AsyncSession) -> dict:
+    async def pause_farm(self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None) -> dict:
         """Pause all threads (they will finish their current comment then sleep)."""
+        farm = await self._load_farm(farm_id, session, tenant_id=tenant_id)
+        if farm is None:
+            raise ValueError(f"Farm {farm_id} not found")
+
         entry = self._active_farms.get(farm_id)
         if entry is None:
             raise ValueError(f"Farm {farm_id} is not running")
@@ -249,8 +265,12 @@ class FarmOrchestrator:
         )
         return {"farm_id": farm_id, "status": "paused"}
 
-    async def resume_farm(self, farm_id: int, session: AsyncSession) -> dict:
+    async def resume_farm(self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None) -> dict:
         """Resume all paused threads."""
+        farm = await self._load_farm(farm_id, session, tenant_id=tenant_id)
+        if farm is None:
+            raise ValueError(f"Farm {farm_id} not found")
+
         entry = self._active_farms.get(farm_id)
         if entry is None:
             raise ValueError(f"Farm {farm_id} is not running")
@@ -444,7 +464,7 @@ class FarmOrchestrator:
                     # Never fall back to 0 — skip RLS-unscoped writes.
                     tenant_id = None
                     farm_entry = self._active_farms.get(farm_id)
-                    if farm_entry and farm_entry.get("tenant_id"):
+                    if farm_entry and farm_entry.get("tenant_id") is not None:
                         tenant_id = farm_entry["tenant_id"]
                     else:
                         row = (await sess.execute(
@@ -452,7 +472,7 @@ class FarmOrchestrator:
                         )).scalar_one_or_none()
                         tenant_id = row if row else None
 
-                    if not tenant_id:
+                    if tenant_id is None:
                         log.warning(
                             f"FarmOrchestrator.publish_event: cannot resolve "
                             f"tenant_id for farm {farm_id}, skipping DB write"
@@ -486,10 +506,13 @@ class FarmOrchestrator:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _load_farm(self, farm_id: int, session: AsyncSession) -> Optional[FarmConfig]:
-        result = await session.execute(
-            select(FarmConfig).where(FarmConfig.id == farm_id)
-        )
+    async def _load_farm(
+        self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None
+    ) -> Optional[FarmConfig]:
+        conditions = [FarmConfig.id == farm_id]
+        if tenant_id is not None:
+            conditions.append(FarmConfig.tenant_id == tenant_id)
+        result = await session.execute(select(FarmConfig).where(*conditions))
         return result.scalar_one_or_none()
 
     async def _load_farm_no_session(self, farm_id: int, tenant_id: Optional[int] = None) -> Optional[FarmConfig]:
@@ -506,11 +529,23 @@ class FarmOrchestrator:
                 return result.scalar_one_or_none()
 
     async def _load_thread_rows(
-        self, farm_id: int, session: AsyncSession
+        self, farm_id: int, session: AsyncSession, tenant_id: Optional[int] = None
     ) -> list[FarmThreadModel]:
-        result = await session.execute(
-            select(FarmThreadModel).where(FarmThreadModel.farm_id == farm_id).limit(1000)
-        )
+        if tenant_id is not None:
+            # Join with FarmConfig to guarantee the farm belongs to this tenant
+            result = await session.execute(
+                select(FarmThreadModel)
+                .join(FarmConfig, FarmThreadModel.farm_id == FarmConfig.id)
+                .where(
+                    FarmThreadModel.farm_id == farm_id,
+                    FarmConfig.tenant_id == tenant_id,
+                )
+                .limit(1000)
+            )
+        else:
+            result = await session.execute(
+                select(FarmThreadModel).where(FarmThreadModel.farm_id == farm_id).limit(1000)
+            )
         return list(result.scalars().all())
 
     async def _load_channels_for_farm(

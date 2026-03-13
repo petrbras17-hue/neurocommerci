@@ -8,7 +8,7 @@ from datetime import datetime
 
 import sqlalchemy as sa
 from sqlalchemy import (
-    Column, Integer, BigInteger, String, Float, Boolean, DateTime, Text, ForeignKey,
+    Column, Integer, BigInteger, String, Float, Boolean, DateTime, Date, Text, ForeignKey,
     UniqueConstraint, JSON, Index, Numeric,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -212,6 +212,11 @@ class Account(Base):
     session_backup_at = Column(DateTime, nullable=True)
     account_age_days = Column(Integer, default=0)  # Возраст аккаунта (из register_time)
     manual_notes = Column(Text, nullable=True)
+    # Per-account batch-configurable settings
+    proxy_strategy = Column(String(20), nullable=True)  # round_robin, sticky, geo_match
+    ai_protection = Column(String(20), nullable=True)   # off, conservative, aggressive
+    account_comment_language = Column(String(10), nullable=True)  # ru, en, auto
+    warmup_mode = Column(String(20), nullable=True)     # conservative, moderate, aggressive
     created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
 
@@ -848,6 +853,7 @@ class ParsingJob(Base):
     filters = Column(JSONType, nullable=True)
     max_results = Column(Integer, default=50)
     results_count = Column(Integer, default=0)
+    progress = Column(Integer, default=0)  # 0-100 percent
     target_database_id = Column(Integer, ForeignKey("channel_databases.id"), nullable=True)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -1057,6 +1063,25 @@ class AccountHealthScore(Base):
     factors = Column(JSONType, nullable=True)  # detailed factor breakdown
 
 
+class AccountHealthHistory(Base):
+    """Daily health score snapshots for trend graphs."""
+    __tablename__ = "account_health_history"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "account_id", "snapshot_date", name="uq_health_history_tenant_account_date"),
+        Index("ix_account_health_history_tenant_id", "tenant_id"),
+        Index("ix_account_health_history_account_id", "account_id"),
+        Index("ix_account_health_history_snapshot_date", "snapshot_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    snapshot_date = Column(Date, nullable=False)  # date-only, one row per day per account
+    health_score = Column(Integer, default=100)
+    survivability_score = Column(Integer, default=100)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class ContentTemplate(Base):
     """DB-first контент-шаблоны (посты/комменты)."""
     __tablename__ = "content_templates"
@@ -1099,6 +1124,9 @@ class Proxy(Base):
     last_success_at = Column(DateTime, nullable=True)
     invalidated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
+    # Rotation strategy for this proxy
+    rotation_strategy = Column(String(20), default="sticky")  # sticky, round_robin, geo_match
+    auto_rotation = Column(Boolean, default=False)  # auto-reassign on failure
 
     user = relationship("User", back_populates="proxies")
     accounts = relationship("Account", back_populates="proxy")
@@ -1481,17 +1509,21 @@ class PaymentEvent(Base):
 
 
 class CommentStyleTemplate(Base):
-    """Шаблоны стилей комментариев для A/B тестирования."""
+    """Шаблоны стилей комментариев для A/B тестирования и кастомные стили."""
     __tablename__ = "comment_style_templates"
     __table_args__ = (
         Index("ix_comment_style_templates_tenant_id", "tenant_id"),
+        Index("ix_comment_style_templates_workspace_id", "workspace_id"),
         Index("ix_comment_style_templates_is_active", "is_active"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=True)
     name = Column(String(100), nullable=False)            # question, agree, joke, etc.
     description = Column(Text, nullable=True)
+    system_prompt = Column(Text, nullable=True)           # custom AI system prompt for this style
+    examples = Column(JSONType, nullable=True)            # list[str] — example comment texts
     template_pattern = Column(Text, nullable=True)        # prompt template with {{placeholders}}
     tone = Column(String(50), nullable=True)              # maps to VALID_TONES
     is_active = Column(Boolean, default=True)

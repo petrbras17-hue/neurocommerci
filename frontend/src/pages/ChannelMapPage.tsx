@@ -7,9 +7,18 @@ import {
   Suspense,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html } from "@react-three/drei";
+import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { channelMapApi, ChannelMapEntry } from "../api";
+import {
+  channelMapApi,
+  ChannelMapEntry,
+  farmApi,
+  FarmConfig,
+  channelDbApi,
+  ChannelDatabase,
+  campaignsApi,
+  Campaign,
+} from "../api";
 import { useAuth } from "../auth";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -26,6 +35,11 @@ import {
   X,
   Layers,
   RotateCcw,
+  CheckSquare,
+  Square,
+  Tractor,
+  Megaphone,
+  Ban,
 } from "lucide-react";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1497,10 +1511,14 @@ function ChannelCard({
   ch,
   highlightRe,
   index,
+  selected,
+  onToggleSelect,
 }: {
   ch: ChannelMapEntry;
   highlightRe: RegExp | null;
   index: number;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const meta = getCategoryMeta(ch.category);
   const initials = getInitials(ch.title, ch.username);
@@ -1512,8 +1530,33 @@ function ChannelCard({
       initial="hidden"
       animate="visible"
       custom={index}
-      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        outline: selected ? "1px solid var(--accent)" : "none",
+        background: selected ? "rgba(0,255,136,0.04)" : undefined,
+        position: "relative",
+      }}
     >
+      {onToggleSelect && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
+          style={{
+            all: "unset",
+            cursor: "pointer",
+            position: "absolute",
+            top: 10,
+            right: 10,
+            color: selected ? "var(--accent)" : "var(--muted)",
+            display: "flex",
+            zIndex: 1,
+          }}
+        >
+          {selected ? <CheckSquare size={16} /> : <Square size={16} />}
+        </button>
+      )}
       <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
         <div
           style={{
@@ -1649,9 +1692,13 @@ function ChannelCard({
 function ChannelDetailPanel({
   ch,
   onClose,
+  onAddToFarm,
+  onAddToCampaign,
 }: {
   ch: ChannelMapEntry;
   onClose: () => void;
+  onAddToFarm?: () => void;
+  onAddToCampaign?: () => void;
 }) {
   const meta = getCategoryMeta(ch.category);
   const initials = getInitials(ch.title, ch.username);
@@ -1879,31 +1926,240 @@ function ChannelDetailPanel({
           padding: "12px 20px",
           borderTop: `1px solid ${color}22`,
           display: "flex",
+          flexDirection: "column",
           gap: 8,
         }}
       >
-        {ch.username && (
-          <a
-            href={`https://t.me/${ch.username}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="primary-button"
-            style={{ flex: 1, textAlign: "center", textDecoration: "none", fontSize: 13 }}
+        {/* Action buttons */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {onAddToFarm && (
+            <button
+              type="button"
+              onClick={onAddToFarm}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "9px 12px",
+                borderRadius: 8,
+                background: "rgba(0,255,136,0.1)",
+                border: "1px solid rgba(0,255,136,0.35)",
+                color: "var(--accent)",
+                fontSize: 13,
+                fontWeight: 600,
+                transition: "all 150ms ease",
+              }}
+            >
+              <Tractor size={13} />
+              В ферму
+            </button>
+          )}
+          {onAddToCampaign && (
+            <button
+              type="button"
+              onClick={onAddToCampaign}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "9px 12px",
+                borderRadius: 8,
+                background: "rgba(68,136,255,0.1)",
+                border: "1px solid rgba(68,136,255,0.35)",
+                color: "#4488ff",
+                fontSize: 13,
+                fontWeight: 600,
+                transition: "all 150ms ease",
+              }}
+            >
+              <Megaphone size={13} />
+              В кампанию
+            </button>
+          )}
+        </div>
+        {/* Secondary row */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {ch.username && (
+            <a
+              href={`https://t.me/${ch.username}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="primary-button"
+              style={{ flex: 1, textAlign: "center", textDecoration: "none", fontSize: 13 }}
+            >
+              <ExternalLink size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
+              Telegram
+            </a>
+          )}
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onClose}
+            style={{ fontSize: 13 }}
           >
-            <ExternalLink size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
-            Открыть в Telegram
-          </a>
-        )}
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={onClose}
-          style={{ fontSize: 13 }}
-        >
-          Закрыть
-        </button>
+            Закрыть
+          </button>
+        </div>
       </div>
     </motion.div>
+  );
+}
+
+// ── Selection modal (Farm / Campaign) ────────────────────────────────────────
+
+type SelectionModalVariant = "farm" | "campaign";
+
+function SelectionModal({
+  variant,
+  farms,
+  channelDbs,
+  campaigns,
+  onConfirm,
+  onClose,
+  busy,
+}: {
+  variant: SelectionModalVariant;
+  farms: FarmConfig[];
+  channelDbs: ChannelDatabase[];
+  campaigns: Campaign[];
+  onConfirm: (id: number, dbId?: number) => void;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  const [selectedId, setSelectedId] = useState<number | "">("");
+  const [selectedDbId, setSelectedDbId] = useState<number | "">("");
+
+  const isFarm = variant === "farm";
+  const farmHasDbs = isFarm && channelDbs.length > 0;
+
+  const canConfirm = isFarm
+    ? selectedId !== "" && (!farmHasDbs || selectedDbId !== "")
+    : selectedId !== "";
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 400,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.7)",
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.93 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.93 }}
+        transition={{ duration: 0.18 }}
+        style={{
+          background: "#0a0a0b",
+          border: "1px solid var(--accent)",
+          borderRadius: 14,
+          padding: "24px 28px",
+          width: 360,
+          boxShadow: "0 0 40px rgba(0,255,136,0.15)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 16, color: "var(--accent)", display: "flex", alignItems: "center", gap: 8 }}>
+            {isFarm ? <Tractor size={16} /> : <Megaphone size={16} />}
+            {isFarm ? "Добавить в ферму" : "Добавить в кампанию"}
+          </div>
+          <button type="button" onClick={onClose} style={{ all: "unset", cursor: "pointer", color: "var(--muted)", lineHeight: 1 }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        {isFarm ? (
+          <>
+            <label className="field" style={{ marginBottom: 12 }}>
+              <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Ферма</span>
+              <select
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value === "" ? "" : Number(e.target.value))}
+                style={{ width: "100%" }}
+              >
+                <option value="">-- выберите ферму --</option>
+                {farms.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name} ({f.status})</option>
+                ))}
+              </select>
+            </label>
+            {farmHasDbs && (
+              <label className="field" style={{ marginBottom: 12 }}>
+                <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>База каналов</span>
+                <select
+                  value={selectedDbId}
+                  onChange={(e) => setSelectedDbId(e.target.value === "" ? "" : Number(e.target.value))}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">-- выберите базу --</option>
+                  {channelDbs.map((db) => (
+                    <option key={db.id} value={db.id}>{db.name} ({db.channel_count ?? 0} каналов)</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {farms.length === 0 && (
+              <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+                Фермы не найдены. Создайте ферму в разделе Farm.
+              </p>
+            )}
+          </>
+        ) : (
+          <>
+            <label className="field" style={{ marginBottom: 12 }}>
+              <span style={{ color: "var(--text-secondary)", fontSize: 13 }}>Кампания</span>
+              <select
+                value={selectedId}
+                onChange={(e) => setSelectedId(e.target.value === "" ? "" : Number(e.target.value))}
+                style={{ width: "100%" }}
+              >
+                <option value="">-- выберите кампанию --</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.status})</option>
+                ))}
+              </select>
+            </label>
+            {campaigns.length === 0 && (
+              <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+                Кампании не найдены. Создайте кампанию в разделе Campaigns.
+              </p>
+            )}
+          </>
+        )}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button
+            type="button"
+            className="primary-button"
+            disabled={!canConfirm || busy}
+            onClick={() => canConfirm && onConfirm(
+              selectedId as number,
+              isFarm && selectedDbId !== "" ? (selectedDbId as number) : undefined
+            )}
+            style={{ flex: 1, fontSize: 13 }}
+          >
+            {busy ? "Добавляем…" : "Добавить"}
+          </button>
+          <button type="button" className="ghost-button" onClick={onClose} style={{ fontSize: 13 }}>
+            Отмена
+          </button>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
@@ -2069,6 +2325,21 @@ export function ChannelMapPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("globe");
   const [selectedChannel, setSelectedChannel] = useState<ChannelMapEntry | null>(null);
 
+  // Bulk selection
+  const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
+
+  // Farm / campaign / channel-db data for modals
+  const [farms, setFarms] = useState<FarmConfig[]>([]);
+  const [channelDbs, setChannelDbs] = useState<ChannelDatabase[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+
+  // Modal state: null | "farm" | "campaign"
+  const [modalVariant, setModalVariant] = useState<"farm" | "campaign" | null>(null);
+  // Channels to add when modal confirms (null = use selectedChannel)
+  const [pendingChannels, setPendingChannels] = useState<ChannelMapEntry[]>([]);
+  const [modalBusy, setModalBusy] = useState(false);
+  const [actionMsg, setActionMsg] = useState("");
+
   const highlightRe = useMemo(() => buildHighlightRe(query), [query]);
 
   const byCategory = (stats.by_category as Record<string, number> | undefined) ?? {};
@@ -2125,12 +2396,129 @@ export function ChannelMapPage() {
     return filtered;
   }, [items, hasCommentsOnly]);
 
+  const selectAll = useCallback(() => {
+    setBulkSelected(new Set(displayItems.map((ch) => ch.id)));
+  }, [displayItems]);
+
   const bubbleLayout = useMemo(() => {
     if (viewMode !== "map" || displayItems.length === 0) {
       return { nodes: [], labels: [], width: 800, height: 600 };
     }
     return computeLayout(displayItems);
   }, [viewMode, displayItems]);
+
+  const loadFarmData = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const [farmsRes, dbsRes] = await Promise.all([
+        farmApi.list(accessToken),
+        channelDbApi.list(accessToken),
+      ]);
+      setFarms(farmsRes.items ?? []);
+      setChannelDbs(dbsRes.items ?? []);
+    } catch {
+      // optional
+    }
+  }, [accessToken]);
+
+  const loadCampaignData = useCallback(async () => {
+    if (!accessToken) return;
+    try {
+      const res = await campaignsApi.list(accessToken);
+      setCampaigns(res.items ?? []);
+    } catch {
+      // optional
+    }
+  }, [accessToken]);
+
+  const openFarmModal = useCallback((channels: ChannelMapEntry[]) => {
+    setPendingChannels(channels);
+    setActionMsg("");
+    setModalVariant("farm");
+  }, []);
+
+  const openCampaignModal = useCallback((channels: ChannelMapEntry[]) => {
+    setPendingChannels(channels);
+    setActionMsg("");
+    setModalVariant("campaign");
+  }, []);
+
+  const handleModalConfirm = useCallback(async (id: number, dbId?: number) => {
+    if (!accessToken || pendingChannels.length === 0) return;
+    setModalBusy(true);
+    try {
+      if (modalVariant === "farm") {
+        // Add channels to channel database
+        const targetDbId = dbId ?? id; // if no separate db, use first available db
+        const usernames = pendingChannels
+          .map((ch) => ch.username)
+          .filter((u): u is string => !!u);
+        if (usernames.length === 0) {
+          setActionMsg("Нет каналов с username для добавления.");
+          setModalVariant(null);
+          return;
+        }
+        const res = await channelDbApi.importChannels(accessToken, targetDbId, usernames);
+        setActionMsg(`Добавлено ${res.imported} каналов в базу фермы (пропущено: ${res.skipped}).`);
+      } else if (modalVariant === "campaign") {
+        // Add channel database to campaign (update campaign's channel_database_id)
+        // Since there's no direct "add channels to campaign" endpoint,
+        // we use the channel-db import flow: import channels into campaign's existing db,
+        // or just report success with what we know.
+        const usernames = pendingChannels
+          .map((ch) => ch.username)
+          .filter((u): u is string => !!u);
+        if (usernames.length === 0) {
+          setActionMsg("Нет каналов с username для добавления.");
+          setModalVariant(null);
+          return;
+        }
+        // Find the campaign's channel_database_id
+        const campaign = campaigns.find((c) => c.id === id);
+        if (campaign?.channel_database_id) {
+          const res = await channelDbApi.importChannels(accessToken, campaign.channel_database_id, usernames);
+          setActionMsg(`Добавлено ${res.imported} каналов в базу кампании "${campaign.name}" (пропущено: ${res.skipped}).`);
+        } else {
+          // Campaign has no channel db yet — just show a message
+          setActionMsg(`Кампания не имеет привязанной базы каналов. Привяжите базу в настройках кампании.`);
+        }
+      }
+      setModalVariant(null);
+      setBulkSelected(new Set());
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : "Ошибка добавления.");
+      setModalVariant(null);
+    } finally {
+      setModalBusy(false);
+    }
+  }, [accessToken, modalVariant, pendingChannels, campaigns]);
+
+  const handleBulkBlacklist = useCallback(async () => {
+    if (!accessToken || bulkSelected.size === 0) return;
+    const toBlacklist = items.filter((ch) => bulkSelected.has(ch.id));
+    setActionMsg(`Помечаем ${toBlacklist.length} каналов как чёрный список...`);
+    // Use channelsApi.blacklist per channel (map entry ids are channel_map ids, not channel_db ids)
+    // We can only toggle blacklist on channel_map entries if the endpoint supports it.
+    // For now, show a info message since channel_map entries don't have a direct blacklist endpoint.
+    setActionMsg(`Чёрный список в Channel Map пока не поддерживается. Используйте раздел Channel DB.`);
+    setBulkSelected(new Set());
+  }, [accessToken, bulkSelected, items]);
+
+  const toggleBulkSelect = useCallback((id: number) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setBulkSelected(new Set());
+  }, []);
 
   const loadCategories = useCallback(async () => {
     if (!accessToken) return;
@@ -2198,7 +2586,7 @@ export function ChannelMapPage() {
   }, [accessToken, selectedCategory, selectedLanguage, minMembers]);
 
   useEffect(() => {
-    void Promise.all([loadAll(), loadCategories(), loadStats()]).catch(() => {});
+    void Promise.all([loadAll(), loadCategories(), loadStats(), loadFarmData(), loadCampaignData()]).catch(() => {});
   }, [accessToken]);
 
   useEffect(() => {
@@ -2598,6 +2986,105 @@ export function ChannelMapPage() {
           />
         )}
 
+        {/* Bulk action bar — shown in cards/table when items selected */}
+        {bulkSelected.size > 0 && (viewMode === "cards" || viewMode === "table") && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 14px",
+              background: "rgba(0,255,136,0.07)",
+              border: "1px solid rgba(0,255,136,0.25)",
+              borderRadius: 10,
+              marginBottom: 4,
+            }}
+          >
+            <span style={{ fontSize: 13, color: "var(--accent)", fontWeight: 600 }}>
+              Выбрано: {bulkSelected.size}
+            </span>
+            <button
+              type="button"
+              onClick={() => openFarmModal(displayItems.filter((ch) => bulkSelected.has(ch.id)))}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "5px 12px",
+                borderRadius: 7,
+                background: "rgba(0,255,136,0.12)",
+                border: "1px solid rgba(0,255,136,0.3)",
+                color: "var(--accent)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <Tractor size={13} /> В ферму
+            </button>
+            <button
+              type="button"
+              onClick={() => openCampaignModal(displayItems.filter((ch) => bulkSelected.has(ch.id)))}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "5px 12px",
+                borderRadius: 7,
+                background: "rgba(68,136,255,0.12)",
+                border: "1px solid rgba(68,136,255,0.3)",
+                color: "#4488ff",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <Megaphone size={13} /> В кампанию
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkBlacklist}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "5px 12px",
+                borderRadius: 7,
+                background: "rgba(255,68,68,0.1)",
+                border: "1px solid rgba(255,68,68,0.25)",
+                color: "var(--danger)",
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <Ban size={13} /> В черный список
+            </button>
+            <button
+              type="button"
+              onClick={clearSelection}
+              style={{
+                all: "unset",
+                cursor: "pointer",
+                marginLeft: "auto",
+                color: "var(--muted)",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              <X size={12} /> Снять выбор
+            </button>
+          </motion.div>
+        )}
+
         {busy && viewMode !== "globe" && <p className="muted">Загружаем…</p>}
 
         {/* Cards view */}
@@ -2621,6 +3108,8 @@ export function ChannelMapPage() {
                   ch={ch}
                   highlightRe={highlightRe}
                   index={i}
+                  selected={bulkSelected.has(ch.id)}
+                  onToggleSelect={() => toggleBulkSelect(ch.id)}
                 />
               ))}
             </motion.div>
@@ -2639,6 +3128,17 @@ export function ChannelMapPage() {
               <table className="data-table">
                 <thead>
                   <tr>
+                    <th style={{ width: 36 }}>
+                      <button
+                        type="button"
+                        onClick={() => bulkSelected.size === displayItems.length ? clearSelection() : selectAll()}
+                        style={{ all: "unset", cursor: "pointer", color: "var(--accent)", display: "flex" }}
+                      >
+                        {bulkSelected.size === displayItems.length && displayItems.length > 0
+                          ? <CheckSquare size={15} />
+                          : <Square size={15} />}
+                      </button>
+                    </th>
                     <th>Канал</th>
                     <th>Категория</th>
                     <th>Язык</th>
@@ -2653,9 +3153,23 @@ export function ChannelMapPage() {
                   {displayItems.map((ch) => (
                     <tr
                       key={ch.id}
-                      style={{ cursor: "pointer" }}
+                      style={{
+                        cursor: "pointer",
+                        background: bulkSelected.has(ch.id) ? "rgba(0,255,136,0.05)" : undefined,
+                      }}
                       onClick={() => setSelectedChannel(ch)}
                     >
+                      <td
+                        onClick={(e) => { e.stopPropagation(); toggleBulkSelect(ch.id); }}
+                        style={{ width: 36 }}
+                      >
+                        <button
+                          type="button"
+                          style={{ all: "unset", cursor: "pointer", color: bulkSelected.has(ch.id) ? "var(--accent)" : "var(--muted)", display: "flex" }}
+                        >
+                          {bulkSelected.has(ch.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                        </button>
+                      </td>
                       <td>
                         <div>
                           <strong>
@@ -3043,6 +3557,59 @@ export function ChannelMapPage() {
         )}
       </div>
 
+      {/* Action result message */}
+      <AnimatePresence>
+        {actionMsg && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            style={{
+              position: "fixed",
+              bottom: 24,
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: "#0a0a0b",
+              border: "1px solid var(--accent)",
+              borderRadius: 10,
+              padding: "12px 20px",
+              zIndex: 500,
+              fontSize: 13,
+              color: "var(--accent)",
+              boxShadow: "0 0 20px rgba(0,255,136,0.2)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            {actionMsg}
+            <button
+              type="button"
+              onClick={() => setActionMsg("")}
+              style={{ all: "unset", cursor: "pointer", color: "var(--muted)", display: "flex" }}
+            >
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Selection modal */}
+      <AnimatePresence>
+        {modalVariant && (
+          <SelectionModal
+            key={modalVariant}
+            variant={modalVariant}
+            farms={farms}
+            channelDbs={channelDbs}
+            campaigns={campaigns}
+            onConfirm={handleModalConfirm}
+            onClose={() => setModalVariant(null)}
+            busy={modalBusy}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Channel detail panel */}
       <AnimatePresence>
         {selectedChannel && (
@@ -3050,6 +3617,8 @@ export function ChannelMapPage() {
             key={selectedChannel.id}
             ch={selectedChannel}
             onClose={() => setSelectedChannel(null)}
+            onAddToFarm={() => openFarmModal([selectedChannel])}
+            onAddToCampaign={() => openCampaignModal([selectedChannel])}
           />
         )}
       </AnimatePresence>

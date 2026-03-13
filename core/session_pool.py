@@ -45,7 +45,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from config import settings
 from utils.logger import log
@@ -211,7 +211,7 @@ class SessionPool:
                     f"(account_id={account_id})."
                 )
 
-            phone = await self._resolve_phone(account_id, db_session)
+            phone = await self._resolve_phone(account_id, db_session, tenant_id=tenant_id)
             client = await self._build_and_connect(
                 account_id, phone, db_session=db_session, tenant_id=tenant_id
             )
@@ -715,13 +715,16 @@ class SessionPool:
         except Exception:
             return False
 
-    async def _resolve_phone(self, account_id: int, db_session) -> str:
+    async def _resolve_phone(
+        self, account_id: int, db_session, tenant_id: int | None = None
+    ) -> str:
         """Load just the phone number for a given account_id."""
         from sqlalchemy import select
         from storage.models import Account
 
-        result = await db_session.execute(
-            select(Account.phone).where(Account.id == account_id)
-        )
+        query = select(Account.phone).where(Account.id == account_id)
+        if tenant_id is not None:
+            query = query.where(Account.tenant_id == tenant_id)
+        result = await db_session.execute(query)
         row = result.first()
         return row[0] if row else str(account_id)

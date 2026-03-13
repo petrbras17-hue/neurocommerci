@@ -99,14 +99,21 @@ class ChannelParserService:
                 f"account_not_connected: phone={account.phone}"
             )
 
-        # Update job to running
+        # Update job to running — guard against failure so callers always get
+        # a consistent job status even if the status update itself fails.
         job = (await session.execute(
             select(ParsingJob).where(ParsingJob.id == job_id)
         )).scalar_one_or_none()
-        if job is not None:
-            job.status = "running"
-            job.started_at = utcnow()
-            await session.commit()
+        try:
+            if job is not None:
+                job.status = "running"
+                job.started_at = utcnow()
+                await session.commit()
+        except Exception as status_exc:
+            log.warning(
+                f"ChannelParserService.parse_channels: could not set job "
+                f"job_id={job_id} to running: {status_exc}"
+            )
 
         discovered: dict[int, dict] = {}
 
@@ -118,52 +125,108 @@ class ChannelParserService:
         language_filter: Optional[str] = filters.get("language")
         active_only: bool = bool(filters.get("active_only", True))
 
-        for i, keyword in enumerate(cleaned_keywords):
-            if len(discovered) >= max_results:
-                break
+        total_keywords = len(cleaned_keywords)
 
-            if i > 0:
-                await asyncio.sleep(2.0)  # avoid FloodWait between keyword searches
-
-            try:
-                results = await self._search_one_keyword(client, keyword, limit=50)
-            except RuntimeError as exc:
-                log.warning(f"ChannelParserService: keyword '{keyword}' search failed: {exc}")
-                continue
-
-            for raw_channel in results:
+        try:
+            for i, keyword in enumerate(cleaned_keywords):
                 if len(discovered) >= max_results:
                     break
 
-                tg_id = raw_channel.get("telegram_id")
-                if tg_id is None or tg_id in discovered:
-                    continue
+                # Check for cancellation before each keyword batch.
+                try:
+                    await session.refresh(job)
+                    if job is not None and job.status == "cancelled":
+                        log.info(
+                            f"ChannelParserService: job_id={job_id} cancelled — stopping loop."
+                        )
+                        break
+                except Exception:
+                    pass
+
+                if i > 0:
+                    await asyncio.sleep(2.0)  # avoid FloodWait between keyword searches
 
                 try:
-                    validated = await self.validate_channel(
-                        client,
-                        raw_channel["_entity"],
-                        min_members=min_members,
-                        max_members=max_members,
-                        require_comments=require_comments,
-                        active_only=active_only,
-                        language_filter=language_filter,
+                    results = await self._search_one_keyword(client, keyword, limit=50)
+                except RuntimeError as exc:
+                    log.warning(f"ChannelParserService: keyword '{keyword}' search failed: {exc}")
+                    results = []
+
+                for raw_channel in results:
+                    if len(discovered) >= max_results:
+                        break
+
+                    tg_id = raw_channel.get("telegram_id")
+                    if tg_id is None or tg_id in discovered:
+                        continue
+
+                    try:
+                        validated = await self.validate_channel(
+                            client,
+                            raw_channel["_entity"],
+                            min_members=min_members,
+                            max_members=max_members,
+                            require_comments=require_comments,
+                            active_only=active_only,
+                            language_filter=language_filter,
+                        )
+                    except Exception as val_exc:
+                        # FloodWait or frozen — stop this keyword batch
+                        log.warning(
+                            f"ChannelParserService: validate_channel error: {val_exc}"
+                        )
+                        break
+                    if validated is not None:
+                        discovered[validated["telegram_id"]] = validated
+
+                # Update progress and results_count after each keyword.
+                try:
+                    if job is not None:
+                        job.progress = int((i + 1) / total_keywords * 100)
+                        job.results_count = len(discovered)
+                        await session.commit()
+                except Exception as progress_exc:
+                    log.debug(
+                        f"ChannelParserService: progress update failed "
+                        f"job_id={job_id}: {progress_exc}"
                     )
-                except Exception as val_exc:
-                    # FloodWait or frozen — stop this keyword batch
-                    log.warning(
-                        f"ChannelParserService: validate_channel error: {val_exc}"
-                    )
-                    break
-                if validated is not None:
-                    discovered[validated["telegram_id"]] = validated
+
+        except Exception as search_exc:
+            # Update job to failed before re-raising so callers/run_parsing_job
+            # do not see a job stuck in "running".
+            log.error(
+                f"ChannelParserService.parse_channels: search loop failed "
+                f"job_id={job_id}: {search_exc}"
+            )
+            try:
+                job = (await session.execute(
+                    select(ParsingJob).where(ParsingJob.id == job_id)
+                )).scalar_one_or_none()
+                if job is not None:
+                    job.status = "failed"
+                    job.error = str(search_exc)[:1000]
+                    job.completed_at = utcnow()
+                    await session.commit()
+            except Exception as inner:
+                log.error(
+                    f"ChannelParserService.parse_channels: could not mark job "
+                    f"job_id={job_id} as failed: {inner}"
+                )
+            raise
 
         channels = list(discovered.values())
 
-        # Update job results_count
-        if job is not None:
-            job.results_count = len(channels)
-            await session.commit()
+        # Update job results_count and mark progress complete
+        try:
+            if job is not None:
+                job.results_count = len(channels)
+                job.progress = 100
+                await session.commit()
+        except Exception as update_exc:
+            log.warning(
+                f"ChannelParserService.parse_channels: could not update "
+                f"results_count for job_id={job_id}: {update_exc}"
+            )
 
         return channels
 
@@ -281,18 +344,31 @@ class ChannelParserService:
                 f"channel_database_not_found: database_id={database_id} tenant_id={tenant_id}"
             )
 
-        # Load existing telegram_ids for this database to detect duplicates.
-        existing_result = await session.execute(
-            select(ChannelEntry.telegram_id).where(
-                and_(
-                    ChannelEntry.database_id == database_id,
-                    ChannelEntry.tenant_id == tenant_id,
+        # Collect candidate telegram_ids from the incoming batch.  Only query
+        # the DB for IDs that are actually present in this batch — avoids
+        # loading the entire channel_entries table into Python memory.
+        candidate_ids: list[int] = [
+            ch["telegram_id"]
+            for ch in channels
+            if ch.get("telegram_id") is not None
+        ]
+
+        existing_ids: set[int] = set()
+        _CHUNK = 500  # keep each IN-clause well within Postgres limits
+        for chunk_start in range(0, len(candidate_ids), _CHUNK):
+            chunk = candidate_ids[chunk_start : chunk_start + _CHUNK]
+            existing_result = await session.execute(
+                select(ChannelEntry.telegram_id).where(
+                    and_(
+                        ChannelEntry.database_id == database_id,
+                        ChannelEntry.tenant_id == tenant_id,
+                        ChannelEntry.telegram_id.in_(chunk),
+                    )
                 )
             )
-        )
-        existing_ids: set[int] = {
-            row[0] for row in existing_result.all() if row[0] is not None
-        }
+            existing_ids.update(
+                row[0] for row in existing_result.all() if row[0] is not None
+            )
 
         added = 0
         for ch in channels:

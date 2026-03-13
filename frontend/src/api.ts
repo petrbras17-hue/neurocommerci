@@ -141,6 +141,7 @@ export type ParsingJob = {
   filters: Record<string, unknown>;
   max_results: number;
   results_count: number;
+  progress: number;
   target_database_id: number | null;
   started_at: string | null;
   completed_at: string | null;
@@ -247,6 +248,12 @@ export const parserApi = {
 
   getJob: (token: string, id: number) =>
     apiFetch<ParsingJob>(`/v1/parser/jobs/${id}`, { accessToken: token }),
+
+  cancelJob: (token: string, id: number) =>
+    apiFetch<{ job_id: number; status: string }>(`/v1/parser/jobs/${id}`, {
+      method: "DELETE",
+      accessToken: token,
+    }),
 };
 
 export const profileApi = {
@@ -378,12 +385,24 @@ export type QuarantinedAccount = {
   quarantine_until: string | null;
 };
 
+export type HealthHistoryPoint = {
+  date: string;
+  score: number;
+  survivability: number;
+};
+
 export const healthApi = {
   listScores: (token: string) =>
     apiFetch<{ items: AccountHealthScore[]; total: number }>("/v1/health/scores", { accessToken: token }),
 
   getScore: (token: string, accountId: number) =>
     apiFetch<AccountHealthScore>(`/v1/health/scores/${accountId}`, { accessToken: token }),
+
+  getHistory: (token: string, accountId: number, days = 30) =>
+    apiFetch<{ account_id: number; days: number; items: HealthHistoryPoint[] }>(
+      `/v1/health/scores/${accountId}/history?days=${days}`,
+      { accessToken: token }
+    ),
 
   recalculate: (token: string) =>
     apiFetch<{ status: string }>("/v1/health/recalculate", { method: "POST", accessToken: token }),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { healthApi, quarantineApi, AccountHealthScore, QuarantinedAccount } from "../api";
+import { healthApi, quarantineApi, AccountHealthScore, QuarantinedAccount, HealthHistoryPoint } from "../api";
 import { useAuth } from "../auth";
 
 type SortKey = "health_score" | "survivability_score";
@@ -24,6 +24,144 @@ function ScoreLabel({ score }: { score: number }) {
   return <span style={{ color, fontSize: 12, fontWeight: 600 }}>{text}</span>;
 }
 
+function scoreColor(score: number): string {
+  return score >= 70 ? "#22c55e" : score >= 40 ? "#eab308" : "#ef4444";
+}
+
+function HealthMiniChart({ points }: { points: HealthHistoryPoint[] }) {
+  if (points.length === 0) {
+    return (
+      <div style={{ padding: "20px 0", textAlign: "center", color: "#666", fontSize: 12 }}>
+        Нет данных за выбранный период
+      </div>
+    );
+  }
+
+  const W = 320;
+  const H = 80;
+  const PAD = { top: 8, right: 8, bottom: 20, left: 28 };
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+
+  const maxScore = 100;
+  const minScore = 0;
+
+  const toX = (i: number) =>
+    PAD.left + (points.length > 1 ? (i / (points.length - 1)) * innerW : innerW / 2);
+  const toY = (v: number) =>
+    PAD.top + innerH - ((v - minScore) / (maxScore - minScore)) * innerH;
+
+  const healthPts = points.map((p, i) => `${toX(i)},${toY(p.score)}`).join(" ");
+  const survPts = points.map((p, i) => `${toX(i)},${toY(p.survivability)}`).join(" ");
+
+  // Y-axis labels
+  const yTicks = [0, 40, 70, 100];
+
+  // X-axis: show first and last dates
+  const firstDate = points[0].date.slice(5); // MM-DD
+  const lastDate = points[points.length - 1].date.slice(5);
+
+  return (
+    <div>
+      <svg width={W} height={H} style={{ display: "block", overflow: "visible" }}>
+        {/* Grid lines */}
+        {yTicks.map((tick) => (
+          <g key={tick}>
+            <line
+              x1={PAD.left}
+              x2={PAD.left + innerW}
+              y1={toY(tick)}
+              y2={toY(tick)}
+              stroke="#2d2d2d"
+              strokeWidth={1}
+            />
+            <text
+              x={PAD.left - 4}
+              y={toY(tick) + 4}
+              textAnchor="end"
+              fontSize={9}
+              fill="#555"
+            >
+              {tick}
+            </text>
+          </g>
+        ))}
+
+        {/* Health score polyline (green/yellow/red segments) */}
+        {points.length > 1 ? (
+          points.slice(1).map((p, i) => {
+            const x1 = toX(i);
+            const y1 = toY(points[i].score);
+            const x2 = toX(i + 1);
+            const y2 = toY(p.score);
+            const avgScore = (points[i].score + p.score) / 2;
+            return (
+              <line
+                key={i}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke={scoreColor(avgScore)}
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            );
+          })
+        ) : (
+          <polyline
+            points={healthPts}
+            fill="none"
+            stroke={scoreColor(points[0].score)}
+            strokeWidth={2}
+          />
+        )}
+
+        {/* Survivability polyline (dashed blue) */}
+        <polyline
+          points={survPts}
+          fill="none"
+          stroke="#4488ff"
+          strokeWidth={1.5}
+          strokeDasharray="3,3"
+          opacity={0.7}
+        />
+
+        {/* Data points for health */}
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={toX(i)}
+            cy={toY(p.score)}
+            r={3}
+            fill={scoreColor(p.score)}
+          />
+        ))}
+
+        {/* X-axis labels */}
+        <text x={PAD.left} y={H - 2} fontSize={9} fill="#555" textAnchor="middle">
+          {firstDate}
+        </text>
+        {points.length > 1 ? (
+          <text x={PAD.left + innerW} y={H - 2} fontSize={9} fill="#555" textAnchor="middle">
+            {lastDate}
+          </text>
+        ) : null}
+      </svg>
+      <div style={{ display: "flex", gap: 16, marginTop: 6, fontSize: 11, color: "#888" }}>
+        <span>
+          <span style={{ display: "inline-block", width: 16, height: 2, background: "#22c55e", verticalAlign: "middle", marginRight: 4 }} />
+          Health score
+        </span>
+        <span>
+          <span style={{ display: "inline-block", width: 16, height: 2, background: "#4488ff", verticalAlign: "middle", marginRight: 4, borderTop: "1.5px dashed #4488ff" }} />
+          Survivability
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const FACTOR_LABELS: Record<string, string> = {
   flood_wait_penalty: "Штраф flood_wait",
   spam_block_penalty: "Штраф спам-блок",
@@ -39,6 +177,8 @@ export function HealthPage() {
   const [scores, setScores] = useState<AccountHealthScore[]>([]);
   const [quarantined, setQuarantined] = useState<QuarantinedAccount[]>([]);
   const [selectedScore, setSelectedScore] = useState<AccountHealthScore | null>(null);
+  const [historyPoints, setHistoryPoints] = useState<HealthHistoryPoint[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("health_score");
   const [sortAsc, setSortAsc] = useState(false);
 
@@ -97,6 +237,16 @@ export function HealthPage() {
     try {
       const detail = await healthApi.getScore(accessToken, accountId);
       setSelectedScore(detail);
+      setHistoryPoints([]);
+      setHistoryLoading(true);
+      try {
+        const hist = await healthApi.getHistory(accessToken, accountId, 30);
+        setHistoryPoints(hist.items);
+      } catch {
+        // history is best-effort; silently ignore
+      } finally {
+        setHistoryLoading(false);
+      }
     } catch {
       setStatusMessage("Не удалось загрузить детали аккаунта.");
     }
@@ -304,14 +454,14 @@ export function HealthPage() {
 
       {/* Account detail drawer */}
       {selectedScore ? (
-        <div className="modal-overlay" onClick={() => setSelectedScore(null)}>
+        <div className="modal-overlay" onClick={() => { setSelectedScore(null); setHistoryPoints([]); }}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="panel-header">
               <div>
                 <div className="eyebrow">Детальный анализ</div>
                 <h2>{selectedScore.account_phone ?? `Аккаунт #${selectedScore.account_id}`}</h2>
               </div>
-              <button className="ghost-button" type="button" onClick={() => setSelectedScore(null)}>
+              <button className="ghost-button" type="button" onClick={() => { setSelectedScore(null); setHistoryPoints([]); }}>
                 Закрыть
               </button>
             </div>
@@ -383,6 +533,16 @@ export function HealthPage() {
                   </div>
                 </div>
               ) : null}
+
+              {/* Health history chart */}
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 10 }}>История здоровья (30 дней)</div>
+                {historyLoading ? (
+                  <div style={{ color: "#666", fontSize: 12 }}>Загрузка...</div>
+                ) : (
+                  <HealthMiniChart points={historyPoints} />
+                )}
+              </div>
 
               {/* Event history */}
               {selectedScore.recent_events && selectedScore.recent_events.length > 0 ? (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch, channelDbApi, parserApi, ChannelDatabase, ChannelEntry, ParsingJob } from "../api";
 import { useAuth } from "../auth";
 
@@ -13,18 +13,215 @@ type AccountsResponse = {
   total: number;
 };
 
+// ---------------------------------------------------------------------------
+// Status helpers
+// ---------------------------------------------------------------------------
+
 const JOB_STATUS_LABELS: Record<string, string> = {
   pending: "Ожидание",
   running: "Запущено",
   completed: "Завершено",
   failed: "Ошибка",
+  cancelled: "Отменено",
 };
 
-function statusBadgeClass(status: string): string {
-  if (status === "completed" || status === "running") return "badge-green";
-  if (status === "failed") return "badge-red";
+function statusBadgeClass(st: string): string {
+  if (st === "completed") return "badge-green";
+  if (st === "running") return "badge-green badge-pulse";
+  if (st === "failed") return "badge-red";
+  if (st === "cancelled") return "badge-yellow";
   return "badge-gray";
 }
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+type ProgressBarProps = {
+  progress: number;
+  resultsCount: number;
+};
+
+function JobProgressBar({ progress, resultsCount }: ProgressBarProps) {
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div
+        style={{
+          background: "var(--border-color, #1e1e20)",
+          borderRadius: 4,
+          height: 6,
+          overflow: "hidden",
+          width: "100%",
+        }}
+      >
+        <div
+          style={{
+            background: "#00ff88",
+            height: "100%",
+            width: `${Math.min(100, progress)}%`,
+            transition: "width 0.4s ease",
+          }}
+        />
+      </div>
+      <span className="muted" style={{ fontSize: 11, marginTop: 2, display: "block" }}>
+        {progress}% — Найдено: {resultsCount} каналов
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Keyword tag input
+// ---------------------------------------------------------------------------
+
+type KeywordTagsProps = {
+  keywords: string[];
+  onChange: (kws: string[]) => void;
+};
+
+function KeywordTags({ keywords, onChange }: KeywordTagsProps) {
+  const [batchText, setBatchText] = useState("");
+  const [inputValue, setInputValue] = useState("");
+
+  const addKeyword = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed && !keywords.includes(trimmed)) {
+      onChange([...keywords, trimmed]);
+    }
+  };
+
+  const handleInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      addKeyword(inputValue);
+      setInputValue("");
+    } else if (e.key === "Backspace" && !inputValue && keywords.length > 0) {
+      onChange(keywords.slice(0, -1));
+    }
+  };
+
+  const applyBatch = () => {
+    const lines = batchText
+      .split(/[\n,]+/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const unique = Array.from(new Set([...keywords, ...lines]));
+    onChange(unique);
+    setBatchText("");
+  };
+
+  return (
+    <div>
+      {/* Tag display */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+          padding: "8px 10px",
+          background: "var(--input-bg, #111113)",
+          border: "1px solid var(--border-color, #1e1e20)",
+          borderRadius: 6,
+          minHeight: 40,
+          cursor: "text",
+        }}
+        onClick={() => document.getElementById("kw-input")?.focus()}
+      >
+        {keywords.map((kw) => (
+          <span
+            key={kw}
+            style={{
+              background: "#00ff8822",
+              color: "#00ff88",
+              border: "1px solid #00ff8855",
+              borderRadius: 4,
+              padding: "2px 8px",
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            {kw}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange(keywords.filter((k) => k !== kw));
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#00ff88",
+                cursor: "pointer",
+                padding: 0,
+                fontSize: 14,
+                lineHeight: 1,
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          id="kw-input"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleInputKey}
+          onBlur={() => {
+            if (inputValue.trim()) {
+              addKeyword(inputValue);
+              setInputValue("");
+            }
+          }}
+          placeholder={keywords.length ? "" : "маркетинг, продажи…"}
+          style={{
+            background: "none",
+            border: "none",
+            outline: "none",
+            color: "inherit",
+            fontSize: 13,
+            flex: 1,
+            minWidth: 120,
+          }}
+        />
+      </div>
+
+      {/* Batch textarea */}
+      <details style={{ marginTop: 8 }}>
+        <summary
+          className="muted"
+          style={{ cursor: "pointer", fontSize: 12, userSelect: "none" }}
+        >
+          Массовый импорт ключевых слов (одно на строку)
+        </summary>
+        <div style={{ marginTop: 8 }}>
+          <textarea
+            className="assistant-textarea"
+            value={batchText}
+            onChange={(e) => setBatchText(e.target.value)}
+            placeholder={"маркетинг\nпродажи\nнедвижимость\nIT-стартапы"}
+            rows={5}
+            style={{ width: "100%", boxSizing: "border-box" }}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            style={{ marginTop: 6 }}
+            onClick={applyBatch}
+            disabled={!batchText.trim()}
+          >
+            Добавить ключевые слова
+          </button>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 
 export function ParserPage() {
   const { accessToken } = useAuth();
@@ -45,14 +242,17 @@ export function ParserPage() {
   // Import channels state
   const [importText, setImportText] = useState("");
 
-  // Parser state
-  const [parserKeywords, setParserKeywords] = useState("");
+  // Parser state — keywords now as array (tags)
+  const [parserKeywords, setParserKeywords] = useState<string[]>([]);
   const [parserMinMembers, setParserMinMembers] = useState(0);
   const [parserLanguage, setParserLanguage] = useState("");
   const [parserActiveOnly, setParserActiveOnly] = useState(false);
   const [parserMaxResults, setParserMaxResults] = useState(50);
   const [parserAccountId, setParserAccountId] = useState<number | null>(null);
   const [parserTargetDbId, setParserTargetDbId] = useState<number | null>(null);
+
+  // Polling ref — maps job_id → interval handle
+  const pollingRefs = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
 
   const loadDatabases = async () => {
     if (!accessToken) return;
@@ -70,6 +270,7 @@ export function ParserPage() {
     if (!accessToken) return;
     const payload = await parserApi.listJobs(accessToken);
     setParsingJobs(payload.items);
+    return payload.items;
   };
 
   const loadAccounts = async () => {
@@ -78,8 +279,60 @@ export function ParserPage() {
     setAccounts(payload.items);
   };
 
+  // Poll a single job and update it in the state list.
+  const pollJob = async (jobId: number) => {
+    if (!accessToken) return;
+    try {
+      const updated = await parserApi.getJob(accessToken, jobId);
+      setParsingJobs((prev) =>
+        prev.map((j) => (j.id === jobId ? updated : j))
+      );
+      // Stop polling when terminal state.
+      if (["completed", "failed", "cancelled"].includes(updated.status)) {
+        stopPolling(jobId);
+        if (updated.status === "completed" && selectedDb) {
+          void loadDbDetail(selectedDb.id).catch(() => {});
+        }
+      }
+    } catch {
+      stopPolling(jobId);
+    }
+  };
+
+  const startPolling = (jobId: number) => {
+    if (pollingRefs.current.has(jobId)) return;
+    const handle = setInterval(() => {
+      void pollJob(jobId);
+    }, 3000);
+    pollingRefs.current.set(jobId, handle);
+  };
+
+  const stopPolling = (jobId: number) => {
+    const handle = pollingRefs.current.get(jobId);
+    if (handle !== undefined) {
+      clearInterval(handle);
+      pollingRefs.current.delete(jobId);
+    }
+  };
+
+  // On mount: load everything and start polling active jobs.
   useEffect(() => {
-    void Promise.all([loadDatabases(), loadJobs(), loadAccounts()]).catch(() => {});
+    void Promise.all([loadDatabases(), loadJobs(), loadAccounts()])
+      .then(([, jobs]) => {
+        if (Array.isArray(jobs)) {
+          jobs
+            .filter((j) => j.status === "running" || j.status === "pending")
+            .forEach((j) => startPolling(j.id));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      // Clean up all polling intervals on unmount.
+      pollingRefs.current.forEach((handle) => clearInterval(handle));
+      pollingRefs.current.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken]);
 
   useEffect(() => {
@@ -159,11 +412,7 @@ export function ParserPage() {
 
   const handleStartParsing = async () => {
     if (!accessToken) return;
-    const keywords = parserKeywords
-      .split(",")
-      .map((k) => k.trim())
-      .filter(Boolean);
-    if (!keywords.length) {
+    if (!parserKeywords.length) {
       setStatusMessage("Введите хотя бы одно ключевое слово.");
       return;
     }
@@ -175,8 +424,8 @@ export function ParserPage() {
       if (parserLanguage) filters.language = parserLanguage;
       if (parserActiveOnly) filters.active_only = true;
 
-      await parserApi.startChannelParsing(accessToken, {
-        keywords,
+      const created = await parserApi.startChannelParsing(accessToken, {
+        keywords: parserKeywords,
         filters,
         max_results: parserMaxResults,
         account_id: parserAccountId,
@@ -184,10 +433,30 @@ export function ParserPage() {
       });
       setStatusMessage("Задача парсинга запущена.");
       await loadJobs();
+      // Start polling the new job immediately.
+      if (created && typeof (created as { job_id?: number }).job_id === "number") {
+        startPolling((created as { job_id: number }).job_id);
+      }
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : "parsing_failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleCancelJob = async (jobId: number) => {
+    if (!accessToken) return;
+    try {
+      await parserApi.cancelJob(accessToken, jobId);
+      setStatusMessage(`Задача #${jobId} отменена.`);
+      stopPolling(jobId);
+      setParsingJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobId ? { ...j, status: "cancelled" } : j
+        )
+      );
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "cancel_failed");
     }
   };
 
@@ -374,12 +643,8 @@ export function ParserPage() {
         </div>
         <div className="stack-form">
           <label className="field">
-            <span>Ключевые слова (через запятую)</span>
-            <input
-              value={parserKeywords}
-              onChange={(e) => setParserKeywords(e.target.value)}
-              placeholder="маркетинг, продажи, недвижимость"
-            />
+            <span>Ключевые слова</span>
+            <KeywordTags keywords={parserKeywords} onChange={setParserKeywords} />
           </label>
           <div className="two-column-grid" style={{ gap: 12 }}>
             <label className="field">
@@ -451,7 +716,7 @@ export function ParserPage() {
           <button
             className="primary-button"
             type="button"
-            disabled={busy || !parserKeywords.trim()}
+            disabled={busy || !parserKeywords.length}
             onClick={() => void handleStartParsing()}
           >
             {busy ? "Запускаем…" : "Начать парсинг"}
@@ -478,39 +743,58 @@ export function ParserPage() {
           </div>
         </div>
         {parsingJobs.length ? (
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Тип</th>
-                  <th>Статус</th>
-                  <th>Ключевые слова</th>
-                  <th>Результатов</th>
-                  <th>Начато</th>
-                  <th>Завершено</th>
-                  <th>Ошибка</th>
-                </tr>
-              </thead>
-              <tbody>
-                {parsingJobs.map((job) => (
-                  <tr key={job.id}>
-                    <td>{job.id}</td>
-                    <td>{job.job_type}</td>
-                    <td>
-                      <span className={`pill ${statusBadgeClass(job.status)}`}>
-                        {JOB_STATUS_LABELS[job.status] ?? job.status}
-                      </span>
-                    </td>
-                    <td>{(job.keywords || []).join(", ") || "—"}</td>
-                    <td>{job.results_count}</td>
-                    <td>{job.started_at ?? "—"}</td>
-                    <td>{job.completed_at ?? "—"}</td>
-                    <td>{job.error ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="creative-list">
+            {parsingJobs.map((job) => (
+              <div key={job.id} className="creative-item">
+                <div className="thread-meta" style={{ flexWrap: "wrap", gap: 8 }}>
+                  <strong>#{job.id}</strong>
+                  <span className={`pill ${statusBadgeClass(job.status)}`}>
+                    {JOB_STATUS_LABELS[job.status] ?? job.status}
+                  </span>
+                  <span className="muted">{job.job_type}</span>
+                  <span className="muted">
+                    {(job.keywords || []).join(", ") || "—"}
+                  </span>
+                  <span className="muted">
+                    Найдено: {job.results_count} / {job.max_results}
+                  </span>
+                  {job.started_at ? (
+                    <span className="muted">Начато: {job.started_at}</span>
+                  ) : null}
+                  {job.completed_at ? (
+                    <span className="muted">Завершено: {job.completed_at}</span>
+                  ) : null}
+                  {job.error ? (
+                    <span className="muted" style={{ color: "#ff5555" }}>
+                      {job.error}
+                    </span>
+                  ) : null}
+                  {(job.status === "pending" || job.status === "running") ? (
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      style={{ color: "#ffcc00", borderColor: "#ffcc00" }}
+                      onClick={() => void handleCancelJob(job.id)}
+                    >
+                      Отменить
+                    </button>
+                  ) : null}
+                </div>
+
+                {/* Progress bar — shown while running */}
+                {job.status === "running" ? (
+                  <JobProgressBar
+                    progress={job.progress ?? 0}
+                    resultsCount={job.results_count}
+                  />
+                ) : null}
+
+                {/* Completed progress bar — full green */}
+                {job.status === "completed" ? (
+                  <JobProgressBar progress={100} resultsCount={job.results_count} />
+                ) : null}
+              </div>
+            ))}
           </div>
         ) : (
           <p className="muted">Нет задач парсинга. Запустите первый поиск каналов.</p>

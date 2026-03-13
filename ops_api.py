@@ -86,6 +86,7 @@ from core.proxy_router import NoAvailableProxyError, ProxyRouter
 from core.account_lifecycle import AccountLifecycle, LifecycleTransitionError
 from storage.models import (
     Account,
+    AccountHealthHistory,
     AccountHealthScore,
     AccountStageEvent,
     AIBudgetCounter,
@@ -2116,6 +2117,8 @@ def _serialize_proxy(proxy: "Proxy", bound_account_phone: Optional[str] = None) 
         "url": safe_url,
         "bound_account_phone": bound_account_phone,
         "bound_account_id": None,
+        "rotation_strategy": proxy.rotation_strategy or "sticky",
+        "auto_rotation": proxy.auto_rotation or False,
     }
 
 
@@ -2473,6 +2476,61 @@ async def proxy_single_check(
     return _serialize_proxy(proxy, bound_account_phone=bound_phone)
 
 
+_VALID_ROTATION_STRATEGIES = {"sticky", "round_robin", "geo_match"}
+
+
+class ProxyRotationStrategyPayload(BaseModel):
+    strategy: str
+    auto_rotation: Optional[bool] = None
+
+
+@app.put("/v1/proxies/{proxy_id}/strategy", status_code=status.HTTP_200_OK)
+async def proxy_set_strategy(
+    proxy_id: int,
+    payload: ProxyRotationStrategyPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Set rotation strategy (sticky/round_robin/geo_match) and optional auto-rotation flag for a proxy."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    if payload.strategy not in _VALID_ROTATION_STRATEGIES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"invalid_strategy; allowed: {sorted(_VALID_ROTATION_STRATEGIES)}",
+        )
+
+    proxy = (
+        await session.execute(
+            select(Proxy).where(
+                Proxy.id == proxy_id,
+                Proxy.tenant_id == tenant_context.tenant_id,
+            ).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if proxy is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="proxy_not_found")
+
+    proxy.rotation_strategy = payload.strategy
+    if payload.auto_rotation is not None:
+        proxy.auto_rotation = payload.auto_rotation
+
+    # Fetch bound phone for serialization
+    bound_phone: Optional[str] = (
+        await session.execute(
+            select(Account.phone).where(
+                Account.proxy_id == proxy_id,
+                Account.tenant_id == tenant_context.tenant_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    result = _serialize_proxy(proxy, bound_account_phone=bound_phone)
+    result["rotation_strategy"] = proxy.rotation_strategy
+    result["auto_rotation"] = proxy.auto_rotation
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Proxy Smart Routing — /v1/proxies/auto-assign, mass-assign, load, cleanup-dead
 # ---------------------------------------------------------------------------
@@ -2628,6 +2686,18 @@ async def web_get_account_timeline(
 class BulkActionPayload(BaseModel):
     action: Literal["warmup_all", "start_farm", "stop_farm", "pause_farm"]
     account_ids: Optional[List[int]] = None
+
+
+class AccountBatchSettings(BaseModel):
+    proxy_strategy: Optional[Literal["round_robin", "sticky", "geo_match"]] = None
+    ai_protection: Optional[Literal["off", "conservative", "aggressive"]] = None
+    comment_language: Optional[Literal["ru", "en", "auto"]] = None
+    warmup_mode: Optional[Literal["conservative", "moderate", "aggressive"]] = None
+
+
+class BatchSettingsPayload(BaseModel):
+    account_ids: List[int] = Field(..., min_length=1, max_length=500)
+    settings: AccountBatchSettings
 
 
 class CheckDuplicatesPayload(BaseModel):
@@ -3083,6 +3153,66 @@ async def accounts_bulk_action(
             errors.append(f"account:{account.id}:{exc}")
 
     return {"action": payload.action, "affected": affected, "errors": errors}
+
+
+@app.post("/v1/accounts/batch-settings")
+async def accounts_batch_settings(
+    request: Request,
+    payload: BatchSettingsPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Apply per-account settings to a batch of accounts that belong to the current tenant.
+    Only fields explicitly provided (non-None) are updated.
+    Returns count of updated accounts.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    settings = payload.settings
+    # At least one setting field must be provided
+    if all(
+        v is None
+        for v in (
+            settings.proxy_strategy,
+            settings.ai_protection,
+            settings.comment_language,
+            settings.warmup_mode,
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="at_least_one_settings_field_required",
+        )
+
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    # Fetch only accounts belonging to this tenant/workspace (cross-tenant safe, cap 500)
+    result = await session.execute(
+        select(Account)
+        .where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.id.in_(payload.account_ids),
+        )
+        .limit(500)
+        .with_for_update()
+    )
+    accounts_to_update = list(result.scalars().all())
+
+    for account in accounts_to_update:
+        if settings.proxy_strategy is not None:
+            account.proxy_strategy = settings.proxy_strategy
+        if settings.ai_protection is not None:
+            account.ai_protection = settings.ai_protection
+        if settings.comment_language is not None:
+            account.account_comment_language = settings.comment_language
+        if settings.warmup_mode is not None:
+            account.warmup_mode = settings.warmup_mode
+
+    await session.flush()
+    return {"updated": len(accounts_to_update)}
 
 
 @app.get("/v1/accounts/stats")
@@ -3753,6 +3883,7 @@ def _serialize_parsing_job(j: ParsingJob) -> dict[str, Any]:
         "filters": j.filters or {},
         "max_results": j.max_results,
         "results_count": j.results_count,
+        "progress": j.progress if j.progress is not None else 0,
         "account_id": j.account_id,
         "target_database_id": j.target_database_id,
         "started_at": j.started_at.isoformat() if j.started_at else None,
@@ -4552,6 +4683,35 @@ async def parser_job_get(
     return result
 
 
+@app.delete("/v1/parser/jobs/{job_id}")
+async def parser_job_cancel(
+    job_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Cancel a pending or running parsing job."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    parsing_job = (
+        await session.execute(
+            select(ParsingJob).where(
+                ParsingJob.id == job_id,
+                ParsingJob.tenant_id == tenant_context.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if parsing_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="parsing_job_not_found")
+    if parsing_job.status not in ("pending", "running"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"cannot_cancel_job_in_status:{parsing_job.status}",
+        )
+    parsing_job.status = "cancelled"
+    parsing_job.completed_at = utcnow()
+    await session.commit()
+    return {"job_id": job_id, "status": "cancelled"}
+
+
 # ---------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------
@@ -5117,6 +5277,53 @@ async def health_score_detail(
     ]
 
     return result
+
+
+@app.get("/v1/health/scores/{account_id}/history")
+async def health_score_history(
+    account_id: int,
+    days: int = Query(default=30, ge=1, le=365),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return daily health score snapshots for the given account over the last N days."""
+    from datetime import date as _date, timedelta as _td
+    cutoff = _date.today() - _td(days=days)
+
+    # Verify the account belongs to this tenant
+    account_exists = (
+        await session.execute(
+            select(Account.id).where(
+                Account.id == account_id,
+                Account.tenant_id == tenant_context.tenant_id,
+            ).limit(1)
+        )
+    ).scalar_one_or_none()
+    if account_exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_found")
+
+    rows = (
+        await session.execute(
+            select(AccountHealthHistory)
+            .where(
+                AccountHealthHistory.account_id == account_id,
+                AccountHealthHistory.tenant_id == tenant_context.tenant_id,
+                AccountHealthHistory.snapshot_date >= cutoff,
+            )
+            .order_by(AccountHealthHistory.snapshot_date.asc())
+            .limit(days)
+        )
+    ).scalars().all()
+
+    items = [
+        {
+            "date": r.snapshot_date.isoformat(),
+            "score": r.health_score or 0,
+            "survivability": r.survivability_score or 0,
+        }
+        for r in rows
+    ]
+    return {"account_id": account_id, "days": days, "items": items}
 
 
 @app.post("/v1/health/recalculate")
@@ -8360,6 +8567,172 @@ async def comments_preview(
         existing_comments=payload.existing_comments,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Custom Comment Styles CRUD
+# ---------------------------------------------------------------------------
+
+
+class CustomStyleCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=2000)
+    system_prompt: str = Field(default="", max_length=8000)
+    examples: list[str] = Field(default_factory=list, max_length=20)
+    tone: str = Field(default="positive", max_length=50)
+    workspace_id: Optional[int] = Field(default=None)
+
+
+class CustomStyleUpdatePayload(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    system_prompt: Optional[str] = Field(default=None, max_length=8000)
+    examples: Optional[list[str]] = Field(default=None, max_length=20)
+    tone: Optional[str] = Field(default=None, max_length=50)
+    is_active: Optional[bool] = Field(default=None)
+
+
+def _style_to_dict(s: "CommentStyleTemplate") -> dict:
+    return {
+        "id": s.id,
+        "tenant_id": s.tenant_id,
+        "workspace_id": s.workspace_id,
+        "name": s.name,
+        "description": s.description,
+        "system_prompt": s.system_prompt,
+        "examples": s.examples or [],
+        "tone": s.tone,
+        "is_active": s.is_active,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+
+
+@app.get("/v1/comments/custom-styles")
+async def list_custom_styles(
+    workspace_id: Optional[int] = Query(default=None),
+    is_active: Optional[bool] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List tenant's custom comment styles."""
+    stmt = select(CommentStyleTemplate).where(
+        CommentStyleTemplate.tenant_id == tenant_context.tenant_id
+    )
+    if workspace_id is not None:
+        stmt = stmt.where(CommentStyleTemplate.workspace_id == workspace_id)
+    if is_active is not None:
+        stmt = stmt.where(CommentStyleTemplate.is_active == is_active)
+
+    count_result = await session.execute(select(func.count()).select_from(stmt.subquery()))
+    total = int(count_result.scalar_one() or 0)
+
+    rows = (
+        await session.execute(
+            stmt.order_by(CommentStyleTemplate.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    return {"items": [_style_to_dict(r) for r in rows], "total": total}
+
+
+@app.post("/v1/comments/custom-styles", status_code=201)
+async def create_custom_style(
+    payload: CustomStyleCreatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Create a new custom comment style for the tenant."""
+    if payload.tone not in {"positive", "hater", "emotional", "expert", "witty", ""}:
+        raise HTTPException(status_code=422, detail="invalid_tone")
+
+    # Validate workspace belongs to the tenant if provided
+    if payload.workspace_id is not None:
+        ws_check = await session.execute(
+            select(Workspace).where(
+                Workspace.id == payload.workspace_id,
+                Workspace.tenant_id == tenant_context.tenant_id,
+            )
+        )
+        if ws_check.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="workspace_not_found")
+
+    style = CommentStyleTemplate(
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=payload.workspace_id,
+        name=payload.name,
+        description=payload.description or None,
+        system_prompt=payload.system_prompt or None,
+        examples=payload.examples if payload.examples else None,
+        tone=payload.tone or None,
+        is_active=True,
+    )
+    session.add(style)
+    await session.flush()
+    await session.refresh(style)
+    return _style_to_dict(style)
+
+
+@app.put("/v1/comments/custom-styles/{style_id}")
+async def update_custom_style(
+    style_id: int,
+    payload: CustomStyleUpdatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Update a custom comment style."""
+    result = await session.execute(
+        select(CommentStyleTemplate).where(
+            CommentStyleTemplate.id == style_id,
+            CommentStyleTemplate.tenant_id == tenant_context.tenant_id,
+        )
+    )
+    style = result.scalar_one_or_none()
+    if style is None:
+        raise HTTPException(status_code=404, detail="style_not_found")
+
+    if payload.name is not None:
+        style.name = payload.name
+    if payload.description is not None:
+        style.description = payload.description
+    if payload.system_prompt is not None:
+        style.system_prompt = payload.system_prompt or None
+    if payload.examples is not None:
+        style.examples = payload.examples if payload.examples else None
+    if payload.tone is not None:
+        if payload.tone not in {"positive", "hater", "emotional", "expert", "witty", ""}:
+            raise HTTPException(status_code=422, detail="invalid_tone")
+        style.tone = payload.tone or None
+    if payload.is_active is not None:
+        style.is_active = payload.is_active
+
+    style.updated_at = utcnow()
+    await session.flush()
+    await session.refresh(style)
+    return _style_to_dict(style)
+
+
+@app.delete("/v1/comments/custom-styles/{style_id}", status_code=204)
+async def delete_custom_style(
+    style_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> None:
+    """Delete a custom comment style."""
+    result = await session.execute(
+        select(CommentStyleTemplate).where(
+            CommentStyleTemplate.id == style_id,
+            CommentStyleTemplate.tenant_id == tenant_context.tenant_id,
+        )
+    )
+    style = result.scalar_one_or_none()
+    if style is None:
+        raise HTTPException(status_code=404, detail="style_not_found")
+    await session.delete(style)
 
 
 # ---------------------------------------------------------------------------

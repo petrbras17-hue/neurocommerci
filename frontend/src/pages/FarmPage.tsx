@@ -100,6 +100,20 @@ export function FarmPage() {
   const [autoResponderEnabled, setAutoResponderEnabled] = useState(false);
   const [autoResponderPrompt, setAutoResponderPrompt] = useState("");
 
+  // Edit farm modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editFarmId, setEditFarmId] = useState<number | null>(null);
+  const [editFarmName, setEditFarmName] = useState("");
+  const [editCommentPrompt, setEditCommentPrompt] = useState("");
+  const [editCommentTone, setEditCommentTone] = useState("neutral");
+  const [editCommentLanguage, setEditCommentLanguage] = useState("auto");
+  const [editAiProtectionMode, setEditAiProtectionMode] = useState("aggressive");
+  const [editCommentPercentage, setEditCommentPercentage] = useState(100);
+  const [editDelayMin, setEditDelayMin] = useState(30);
+  const [editDelayMax, setEditDelayMax] = useState(120);
+  const [editAutoResponderEnabled, setEditAutoResponderEnabled] = useState(false);
+  const [editAutoResponderPrompt, setEditAutoResponderPrompt] = useState("");
+
   // Start farm modal state
   const [showStartModal, setShowStartModal] = useState(false);
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
@@ -234,6 +248,68 @@ export function FarmPage() {
     );
   };
 
+  const openEditModal = (farm: FarmConfig) => {
+    setEditFarmId(farm.id);
+    setEditFarmName(farm.name);
+    setEditCommentPrompt(farm.comment_prompt ?? "");
+    setEditCommentTone(farm.comment_tone);
+    setEditCommentLanguage(farm.comment_language);
+    setEditAiProtectionMode(farm.ai_protection_mode);
+    setEditCommentPercentage(farm.comment_percentage);
+    setEditDelayMin(farm.delay_before_comment_min);
+    setEditDelayMax(farm.delay_before_comment_max);
+    setEditAutoResponderEnabled(farm.auto_responder_enabled);
+    setEditAutoResponderPrompt(farm.auto_responder_prompt ?? "");
+    setShowEditModal(true);
+  };
+
+  const handleEditFarm = async () => {
+    if (!accessToken || editFarmId === null || !editFarmName.trim()) {
+      setStatusMessage("Введите название фермы.");
+      return;
+    }
+    setBusy(true);
+    setStatusMessage("");
+    try {
+      const updated = await farmApi.update(accessToken, editFarmId, {
+        name: editFarmName.trim(),
+        comment_prompt: editCommentPrompt || null,
+        comment_tone: editCommentTone,
+        comment_language: editCommentLanguage,
+        ai_protection_mode: editAiProtectionMode,
+        comment_percentage: editCommentPercentage,
+        delay_before_comment_min: editDelayMin,
+        delay_before_comment_max: editDelayMax,
+        auto_responder_enabled: editAutoResponderEnabled,
+        auto_responder_prompt: editAutoResponderPrompt || null,
+      });
+      setShowEditModal(false);
+      setStatusMessage("Ферма обновлена.");
+      await loadFarms();
+      if (selectedFarm?.id === editFarmId) {
+        setSelectedFarm(updated);
+      }
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "update_farm_failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cloneFarm = (farm: FarmConfig) => {
+    setFarmName(farm.name + " (копия)");
+    setCommentPrompt(farm.comment_prompt ?? "");
+    setCommentTone(farm.comment_tone);
+    setCommentLanguage(farm.comment_language);
+    setAiProtectionMode(farm.ai_protection_mode);
+    setCommentPercentage(farm.comment_percentage);
+    setDelayMin(farm.delay_before_comment_min);
+    setDelayMax(farm.delay_before_comment_max);
+    setAutoResponderEnabled(farm.auto_responder_enabled);
+    setAutoResponderPrompt(farm.auto_responder_prompt ?? "");
+    setShowCreateModal(true);
+  };
+
   return (
     <div className="page-grid">
       <section className="two-column-grid">
@@ -349,6 +425,31 @@ export function FarmPage() {
                       onClick={() => void handleFarmAction("stop")}
                     >
                       Остановить
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={busy}
+                      title={farm.status === "running" ? "Ферма должна быть остановлена для редактирования" : "Редактировать настройки фермы"}
+                      style={farm.status === "running" ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+                      onClick={() => {
+                        if (farm.status === "running") {
+                          setStatusMessage("Ферма должна быть остановлена для редактирования.");
+                          return;
+                        }
+                        openEditModal(farm);
+                      }}
+                    >
+                      Редактировать
+                    </button>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      disabled={busy}
+                      title="Клонировать ферму с теми же настройками"
+                      onClick={() => cloneFarm(farm)}
+                    >
+                      Клонировать
                     </button>
                   </div>
                 ) : null}
@@ -509,6 +610,125 @@ export function FarmPage() {
             </div>
           ) : null}
         </section>
+      ) : null}
+
+      {/* Edit farm modal */}
+      {showEditModal && editFarmId !== null ? (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow">Редактирование фермы</div>
+                <h2>Изменить настройки</h2>
+              </div>
+            </div>
+            <div className="stack-form">
+              <label className="field">
+                <span>Название фермы</span>
+                <input
+                  value={editFarmName}
+                  onChange={(e) => setEditFarmName(e.target.value)}
+                  placeholder="Название фермы"
+                />
+              </label>
+              <label className="field">
+                <span>Промпт для комментариев</span>
+                <textarea
+                  className="assistant-textarea"
+                  value={editCommentPrompt}
+                  onChange={(e) => setEditCommentPrompt(e.target.value)}
+                  placeholder="Опишите стиль и тематику комментариев..."
+                />
+              </label>
+              <label className="field">
+                <span>Тональность</span>
+                <select value={editCommentTone} onChange={(e) => setEditCommentTone(e.target.value)}>
+                  {TONE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Язык комментариев</span>
+                <select value={editCommentLanguage} onChange={(e) => setEditCommentLanguage(e.target.value)}>
+                  {LANGUAGE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>AI-защита</span>
+                <select value={editAiProtectionMode} onChange={(e) => setEditAiProtectionMode(e.target.value)}>
+                  {PROTECTION_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Процент постов для комментирования: {editCommentPercentage}%</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={editCommentPercentage}
+                  onChange={(e) => setEditCommentPercentage(Number(e.target.value))}
+                />
+              </label>
+              <div className="two-column-grid" style={{ gap: 12 }}>
+                <label className="field">
+                  <span>Задержка перед комментарием, мин (сек)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editDelayMin}
+                    onChange={(e) => setEditDelayMin(Number(e.target.value))}
+                  />
+                </label>
+                <label className="field">
+                  <span>Задержка перед комментарием, макс (сек)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editDelayMax}
+                    onChange={(e) => setEditDelayMax(Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <label className="field" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={editAutoResponderEnabled}
+                  onChange={(e) => setEditAutoResponderEnabled(e.target.checked)}
+                />
+                <span>Включить авто-ответчик на упоминания</span>
+              </label>
+              {editAutoResponderEnabled ? (
+                <label className="field">
+                  <span>Промпт авто-ответчика</span>
+                  <textarea
+                    className="assistant-textarea"
+                    value={editAutoResponderPrompt}
+                    onChange={(e) => setEditAutoResponderPrompt(e.target.value)}
+                    placeholder="Промпт для авто-ответа на упоминания и реплаи..."
+                  />
+                </label>
+              ) : null}
+              <div className="actions-row">
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void handleEditFarm()}
+                >
+                  {busy ? "Сохраняем…" : "Сохранить изменения"}
+                </button>
+                <button className="ghost-button" type="button" onClick={() => setShowEditModal(false)}>
+                  Отмена
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {/* Create farm modal */}

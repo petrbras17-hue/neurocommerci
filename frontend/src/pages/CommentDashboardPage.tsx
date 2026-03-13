@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageSquare,
   TrendingUp,
@@ -10,6 +10,12 @@ import {
   Eye,
   BarChart2,
   Search,
+  Plus,
+  Edit3,
+  Trash2,
+  X,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { useAuth } from "../auth";
@@ -61,6 +67,34 @@ interface PreviewResult {
   decision_reason: string;
   tone: string;
 }
+
+interface CustomStyle {
+  id: number;
+  name: string;
+  description: string | null;
+  system_prompt: string | null;
+  examples: string[];
+  tone: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+interface StyleFormState {
+  name: string;
+  description: string;
+  system_prompt: string;
+  examples: string; // newline-separated in the textarea
+  tone: string;
+}
+
+const EMPTY_FORM: StyleFormState = {
+  name: "",
+  description: "",
+  system_prompt: "",
+  examples: "",
+  tone: "positive",
+};
 
 // ─── Style labels (Russian) ───────────────────────────────────────────────────
 
@@ -173,6 +207,21 @@ export function CommentDashboardPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Tab
+  const [activeTab, setActiveTab] = useState<"dashboard" | "custom-styles">("dashboard");
+
+  // Custom styles
+  const [customStyles, setCustomStyles] = useState<CustomStyle[]>([]);
+  const [customStylesLoading, setCustomStylesLoading] = useState(false);
+  const [customStylesError, setCustomStylesError] = useState("");
+
+  // Modal
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingStyle, setEditingStyle] = useState<CustomStyle | null>(null);
+  const [form, setForm] = useState<StyleFormState>(EMPTY_FORM);
+  const [formBusy, setFormBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+
   // ── Loaders ───────────────────────────────────────────────────────────────
 
   const loadStats = async () => {
@@ -180,6 +229,116 @@ export function CommentDashboardPage() {
     try {
       const data = await apiFetch<CommentStats>("/v1/comments/stats", { accessToken });
       setStats(data);
+    } catch {
+      // Non-blocking
+    }
+  };
+
+  const loadCustomStyles = async () => {
+    if (!accessToken) return;
+    setCustomStylesLoading(true);
+    setCustomStylesError("");
+    try {
+      const data = await apiFetch<{ items: CustomStyle[]; total: number }>(
+        "/v1/comments/custom-styles",
+        { accessToken }
+      );
+      setCustomStyles(data.items);
+    } catch (err) {
+      setCustomStylesError(err instanceof Error ? err.message : "load_failed");
+    } finally {
+      setCustomStylesLoading(false);
+    }
+  };
+
+  const openCreateModal = () => {
+    setEditingStyle(null);
+    setForm(EMPTY_FORM);
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const openEditModal = (style: CustomStyle) => {
+    setEditingStyle(style);
+    setForm({
+      name: style.name,
+      description: style.description ?? "",
+      system_prompt: style.system_prompt ?? "",
+      examples: (style.examples ?? []).join("\n"),
+      tone: style.tone ?? "positive",
+    });
+    setFormError("");
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingStyle(null);
+    setForm(EMPTY_FORM);
+    setFormError("");
+  };
+
+  const handleSaveStyle = async () => {
+    if (!accessToken || !form.name.trim()) return;
+    setFormBusy(true);
+    setFormError("");
+    try {
+      const examples = form.examples
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const body = {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        system_prompt: form.system_prompt.trim(),
+        examples,
+        tone: form.tone,
+      };
+      if (editingStyle) {
+        await apiFetch(`/v1/comments/custom-styles/${editingStyle.id}`, {
+          method: "PUT",
+          accessToken,
+          json: body,
+        });
+      } else {
+        await apiFetch("/v1/comments/custom-styles", {
+          method: "POST",
+          accessToken,
+          json: body,
+        });
+      }
+      closeModal();
+      await loadCustomStyles();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "save_failed");
+    } finally {
+      setFormBusy(false);
+    }
+  };
+
+  const handleToggleActive = async (style: CustomStyle) => {
+    if (!accessToken) return;
+    try {
+      await apiFetch(`/v1/comments/custom-styles/${style.id}`, {
+        method: "PUT",
+        accessToken,
+        json: { is_active: !style.is_active },
+      });
+      await loadCustomStyles();
+    } catch {
+      // Non-blocking
+    }
+  };
+
+  const handleDeleteStyle = async (style: CustomStyle) => {
+    if (!accessToken) return;
+    if (!confirm(`Удалить стиль "${style.name}"?`)) return;
+    try {
+      await apiFetch(`/v1/comments/custom-styles/${style.id}`, {
+        method: "DELETE",
+        accessToken,
+      });
+      await loadCustomStyles();
     } catch {
       // Non-blocking
     }
@@ -219,7 +378,7 @@ export function CommentDashboardPage() {
   };
 
   useEffect(() => {
-    void Promise.all([loadStats(), loadFeed(0), loadStyles()]).catch(() => {});
+    void Promise.all([loadStats(), loadFeed(0), loadStyles(), loadCustomStyles()]).catch(() => {});
   }, [accessToken]);
 
   // ── Preview ───────────────────────────────────────────────────────────────
@@ -267,7 +426,7 @@ export function CommentDashboardPage() {
       style={{ padding: "24px", maxWidth: 1200, margin: "0 auto" }}
     >
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <MessageSquare size={24} color="#00ff88" />
           <div>
@@ -280,7 +439,7 @@ export function CommentDashboardPage() {
           </div>
         </div>
         <button
-          onClick={() => void Promise.all([loadStats(), loadFeed(feedOffset), loadStyles()])}
+          onClick={() => void Promise.all([loadStats(), loadFeed(feedOffset), loadStyles(), loadCustomStyles()])}
           style={{
             background: "#111",
             border: "1px solid #1e1e1e",
@@ -298,6 +457,37 @@ export function CommentDashboardPage() {
           Обновить
         </button>
       </div>
+
+      {/* Tab navigation */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 24, borderBottom: "1px solid #1e1e1e", paddingBottom: 0 }}>
+        {[
+          { key: "dashboard", label: "Дашборд" },
+          { key: "custom-styles", label: `Кастомные стили${customStyles.length > 0 ? ` (${customStyles.length})` : ""}` },
+        ].map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key as "dashboard" | "custom-styles")}
+            style={{
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === key ? "2px solid #00ff88" : "2px solid transparent",
+              color: activeTab === key ? "#00ff88" : "#555",
+              padding: "10px 18px",
+              fontSize: 13,
+              fontWeight: activeTab === key ? 600 : 400,
+              cursor: "pointer",
+              fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+              transition: "color 0.15s",
+              marginBottom: -1,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Dashboard tab ─────────────────────────────────────────────────────── */}
+      {activeTab === "dashboard" && <>
 
       {/* Stat Cards */}
       {stats && (
@@ -676,6 +866,404 @@ export function CommentDashboardPage() {
           </>
         )}
       </div>
+
+      {/* close dashboard tab fragment */}
+      </>}
+
+      {/* ── Custom Styles tab ─────────────────────────────────────────────────── */}
+      {activeTab === "custom-styles" && (
+        <div>
+          {/* Toolbar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <div style={{ fontSize: 13, color: "#888" }}>
+              Создавайте собственные стили с системным промптом и примерами.
+            </div>
+            <button
+              onClick={openCreateModal}
+              style={{
+                background: "#00ff88",
+                color: "#000",
+                border: "none",
+                borderRadius: 8,
+                padding: "9px 18px",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Plus size={14} />
+              Создать стиль
+            </button>
+          </div>
+
+          {customStylesError && (
+            <div style={{ color: "#ef4444", fontSize: 13, marginBottom: 16 }}>{customStylesError}</div>
+          )}
+
+          {customStylesLoading ? (
+            <div style={{ color: "#555", fontSize: 13, padding: "32px 0", textAlign: "center" }}>Загрузка...</div>
+          ) : customStyles.length === 0 ? (
+            <div
+              style={{
+                background: "#111",
+                border: "1px dashed #2a2a2a",
+                borderRadius: 12,
+                padding: "48px 24px",
+                textAlign: "center",
+                color: "#555",
+                fontSize: 13,
+              }}
+            >
+              Нет кастомных стилей. Нажмите «Создать стиль» чтобы добавить первый.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {customStyles.map((style) => (
+                <div
+                  key={style.id}
+                  style={{
+                    background: "#111",
+                    border: `1px solid ${style.is_active ? "#1e3a1e" : "#1e1e1e"}`,
+                    borderRadius: 12,
+                    padding: "18px 20px",
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 16,
+                    opacity: style.is_active ? 1 : 0.55,
+                  }}
+                >
+                  {/* Name + meta */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: "#fff" }}>{style.name}</span>
+                      {style.tone && (
+                        <span
+                          style={{
+                            background: "#0d1f0d",
+                            color: "#00ff88",
+                            padding: "2px 8px",
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+                          }}
+                        >
+                          {style.tone}
+                        </span>
+                      )}
+                      {!style.is_active && (
+                        <span style={{ fontSize: 11, color: "#555", fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                          неактивен
+                        </span>
+                      )}
+                    </div>
+                    {style.description && (
+                      <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>{style.description}</div>
+                    )}
+                    {style.system_prompt && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#555",
+                          background: "#0a0a0b",
+                          border: "1px solid #1e1e1e",
+                          borderRadius: 6,
+                          padding: "6px 10px",
+                          fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+                          whiteSpace: "pre-wrap",
+                          maxHeight: 72,
+                          overflow: "hidden",
+                          marginBottom: 6,
+                        }}
+                      >
+                        {style.system_prompt.slice(0, 300)}{style.system_prompt.length > 300 ? "…" : ""}
+                      </div>
+                    )}
+                    {style.examples && style.examples.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                        Примеры: {style.examples.length} шт.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    <button
+                      onClick={() => void handleToggleActive(style)}
+                      title={style.is_active ? "Деактивировать" : "Активировать"}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        color: style.is_active ? "#00ff88" : "#555",
+                        padding: 4,
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      {style.is_active ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                    </button>
+                    <button
+                      onClick={() => openEditModal(style)}
+                      title="Редактировать"
+                      style={{
+                        background: "#1a1a1a",
+                        border: "1px solid #2a2a2a",
+                        borderRadius: 6,
+                        padding: "5px 8px",
+                        color: "#888",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Edit3 size={13} />
+                    </button>
+                    <button
+                      onClick={() => void handleDeleteStyle(style)}
+                      title="Удалить"
+                      style={{
+                        background: "#1a0a0a",
+                        border: "1px solid #3a1a1a",
+                        borderRadius: 6,
+                        padding: "5px 8px",
+                        color: "#ef4444",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Create/Edit Modal ─────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {modalOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(0,0,0,0.75)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+              padding: 16,
+            }}
+            onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              style={{
+                background: "#0f0f0f",
+                border: "1px solid #1e3a1e",
+                borderRadius: 14,
+                padding: 28,
+                width: "100%",
+                maxWidth: 560,
+                maxHeight: "90vh",
+                overflowY: "auto",
+              }}
+            >
+              {/* Modal header */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#fff" }}>
+                  {editingStyle ? "Редактировать стиль" : "Создать стиль"}
+                </h3>
+                <button
+                  onClick={closeModal}
+                  style={{ background: "transparent", border: "none", color: "#555", cursor: "pointer", padding: 4 }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form fields */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {/* Name */}
+                <div>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 6, fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                    Название *
+                  </label>
+                  <input
+                    value={form.name}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                    placeholder="Например: Продающий эксперт"
+                    maxLength={100}
+                    style={{
+                      width: "100%",
+                      background: "#0a0a0b",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      color: "#e0e0e0",
+                      padding: "9px 12px",
+                      fontSize: 13,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 6, fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                    Описание
+                  </label>
+                  <input
+                    value={form.description}
+                    onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                    placeholder="Краткое описание стиля"
+                    maxLength={500}
+                    style={{
+                      width: "100%",
+                      background: "#0a0a0b",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      color: "#e0e0e0",
+                      padding: "9px 12px",
+                      fontSize: 13,
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+
+                {/* Tone */}
+                <div>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 6, fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                    Тональность
+                  </label>
+                  <select
+                    value={form.tone}
+                    onChange={(e) => setForm((f) => ({ ...f, tone: e.target.value }))}
+                    style={{
+                      width: "100%",
+                      background: "#0a0a0b",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      color: "#e0e0e0",
+                      padding: "9px 12px",
+                      fontSize: 13,
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="positive">Позитивный</option>
+                    <option value="hater">Скептик</option>
+                    <option value="emotional">Эмоциональный</option>
+                    <option value="expert">Эксперт</option>
+                    <option value="witty">Остроумный</option>
+                  </select>
+                </div>
+
+                {/* System prompt */}
+                <div>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 6, fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                    Системный промпт (инструкции для AI)
+                  </label>
+                  <textarea
+                    value={form.system_prompt}
+                    onChange={(e) => setForm((f) => ({ ...f, system_prompt: e.target.value }))}
+                    placeholder="Пишите как эксперт в нише финтех. Используй деловой тон. Не более 20 слов..."
+                    rows={5}
+                    maxLength={8000}
+                    style={{
+                      width: "100%",
+                      background: "#0a0a0b",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      color: "#e0e0e0",
+                      padding: "9px 12px",
+                      fontSize: 12,
+                      resize: "vertical",
+                      fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                </div>
+
+                {/* Examples */}
+                <div>
+                  <label style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 6, fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)" }}>
+                    Примеры комментариев (каждый с новой строки)
+                  </label>
+                  <textarea
+                    value={form.examples}
+                    onChange={(e) => setForm((f) => ({ ...f, examples: e.target.value }))}
+                    placeholder={"Интересная статистика! Использую схожий подход уже 3 года.\nА как это влияет на конверсию в B2B?"}
+                    rows={4}
+                    style={{
+                      width: "100%",
+                      background: "#0a0a0b",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      color: "#e0e0e0",
+                      padding: "9px 12px",
+                      fontSize: 12,
+                      resize: "vertical",
+                      fontFamily: "inherit",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                  <div style={{ fontSize: 10, color: "#444", marginTop: 4 }}>
+                    {form.examples.split("\n").filter((s) => s.trim()).length} примеров
+                  </div>
+                </div>
+
+                {formError && (
+                  <div style={{ color: "#ef4444", fontSize: 12 }}>{formError}</div>
+                )}
+
+                {/* Actions */}
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                  <button
+                    onClick={closeModal}
+                    style={{
+                      background: "#1a1a1a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 8,
+                      padding: "9px 20px",
+                      color: "#888",
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    onClick={() => void handleSaveStyle()}
+                    disabled={formBusy || !form.name.trim()}
+                    style={{
+                      background: formBusy || !form.name.trim() ? "#1a2a1a" : "#00ff88",
+                      color: formBusy || !form.name.trim() ? "#00ff88" : "#000",
+                      border: "none",
+                      borderRadius: 8,
+                      padding: "9px 24px",
+                      fontWeight: 700,
+                      fontSize: 13,
+                      cursor: formBusy || !form.name.trim() ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {formBusy ? "Сохранение..." : editingStyle ? "Сохранить" : "Создать"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

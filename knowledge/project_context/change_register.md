@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `8e43b0a` |
+| Last committed HEAD | `b4343e6` |
 | VPS safe branch | `main` |
-| VPS safe commit | `8e43b0a` |
+| VPS safe commit | `66548bf` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -56,6 +56,14 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-13 | Accounts 100% | `main` | `66548bf` | Accounts subsystem 100% — 11 tasks across 4 micro-sprints | SessionPool (centralized TelegramClient pool), AccountLifecycle FSM (10 stages), ProxyRouter (3 strategies), SmartCommenter→FarmThread integration, SessionTopologyPage, approval gate, dedup check, CSV/JSON export. 147 new tests, 7 security fixes (tenant isolation, path traversal, bulk limits). Frontend rebuilt, all compile checks pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
 
 | 2026-03-13 | Mass Security Audit | `main` | `8e43b0a` | 100+ bugs found and fixed across 4 audit rounds | Round 1: ops_api.py 28 security fixes (RLS bypass, timing attacks, ZIP bombs, SSRF, memory exhaustion, host injection). Round 2: 2 Alembic migrations (FORCE RLS gaps, WITH CHECK, indexes, Float→Numeric). Frontend: Three.js lazy-load fix, AbortSignal, catch-all route. Round 3: 14 core module fixes (memory leaks in session_pool/warmup_engine/mass_reactions/neuro_chatting/neuro_dialogs, tenant isolation in profile_factory/channel_parser, FloodWait handling, Python 3.9 compat). All 66 core files compile, 39 tests pass. | Green | Green | Sprint 12: закупка аккаунтов + прокси, live testing. |
+
+| 2026-03-13 | Parser UX | `main` | `working-tree` | Real-time parser progress bar and job cancellation | Added `progress` column (0–100) to `parsing_jobs` (migration 20260313_29); channel_parser_service.py now updates progress + results_count after each keyword batch and checks for cancellation; `DELETE /v1/parser/jobs/{job_id}` endpoint added (sets status=cancelled, compatible with pending/running jobs); `_serialize_parsing_job` includes `progress`; ParserPage.tsx rewritten with 3s polling for running jobs, progress bar component, cancel button, visual status badges (pulse for running, yellow for cancelled), and batch keyword textarea import. 307 tests pass, tsc clean. | Green | Not deployed | Run `alembic upgrade head` on VPS then restart ops_api. |
+
+| 2026-03-13 | Batch Account Settings | `main` | `working-tree` | POST /v1/accounts/batch-settings + modal UI | Added 4 new columns to `accounts` (proxy_strategy, ai_protection, account_comment_language, warmup_mode), Alembic migration 20260313_30, `BatchSettingsPayload` + `/v1/accounts/batch-settings` endpoint (tenant-safe, partial update, 500-row cap), "Массовые настройки" button (visible when 2+ accounts selected) + modal with 4 dropdowns in AccountsPage.tsx. py_compile and tsc --noEmit both pass. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
+
+| 2026-03-13 | Health history + Proxy rotation | `main` | `working-tree` | Account health history graph + proxy rotation UI | Added AccountHealthHistory ORM model (daily snapshots per account), migration 20260313_29 (new table with FORCE RLS policy; rotation_strategy/auto_rotation columns on proxies), GET /v1/health/scores/{id}/history (tenant-scoped, ?days=30), PUT /v1/proxies/{id}/strategy (sticky/round_robin/geo_match, auto_rotation toggle), HealthMiniChart SVG component in HealthPage (color-coded polyline + dashed survivability line), rotation strategy select + auto-rotation checkbox per row in ProxiesPage. ops_api.py and models.py compile clean; tsc --noEmit passes. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
+
+| 2026-03-13 | Custom Comment Styles | `main` | `working-tree` | Custom comment style CRUD | Added `workspace_id`, `system_prompt`, `examples` columns to `CommentStyleTemplate`; Alembic migration `20260313_31`; 4 CRUD endpoints (`GET/POST /v1/comments/custom-styles`, `PUT/DELETE /v1/comments/custom-styles/{id}`) with tenant isolation and RLS; "Кастомные стили" tab in `CommentDashboardPage.tsx` with create/edit modal, is_active toggle, delete. 307 tests pass, tsc clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
 
 ## Update Rules
 

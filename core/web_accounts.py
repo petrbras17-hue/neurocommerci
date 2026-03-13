@@ -235,13 +235,23 @@ async def save_uploaded_account_pair(
     }
 
 
-async def list_web_accounts(session: AsyncSession, *, tenant_id: int, workspace_id: int) -> dict[str, Any]:
+async def list_web_accounts(
+    session: AsyncSession,
+    *,
+    tenant_id: int,
+    workspace_id: int,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
     result = await session.execute(
         select(Account)
         .options(selectinload(Account.proxy))
         .where(Account.tenant_id == tenant_id, Account.workspace_id == workspace_id)
         .order_by(Account.created_at.asc(), Account.id.asc())
-        .limit(5000)
+        .limit(limit)
+        .offset(offset)
     )
     accounts = list(result.scalars().all())
     audit_items = build_account_audit_records(
@@ -302,23 +312,55 @@ async def get_web_account_record(
     workspace_id: int,
     account_id: int,
 ) -> tuple[Account, dict[str, Any]]:
-    payload = await list_web_accounts(session, tenant_id=tenant_id, workspace_id=workspace_id)
-    for item in payload["items"]:
-        if int(item["id"]) == int(account_id):
-            result = await session.execute(
-                select(Account)
-                .options(selectinload(Account.proxy))
-                .where(
-                    Account.id == int(account_id),
-                    Account.tenant_id == tenant_id,
-                    Account.workspace_id == workspace_id,
-                )
-            )
-            account = result.scalar_one_or_none()
-            if account is None:
-                break
-            return account, item
-    raise WebOnboardingError("account_not_found")
+    result = await session.execute(
+        select(Account)
+        .options(selectinload(Account.proxy))
+        .where(
+            Account.id == int(account_id),
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise WebOnboardingError("account_not_found")
+
+    audit_items = build_account_audit_records(
+        [account],
+        sessions_dir=settings.sessions_path,
+        strict_proxy=bool(settings.STRICT_PROXY_PER_ACCOUNT),
+    )
+    if not audit_items:
+        raise WebOnboardingError("account_not_found")
+
+    row = audit_items[0]
+    recent_steps = await list_recent_onboarding_steps(
+        account.phone,
+        user_id=account.user_id,
+        limit=3,
+        session=session,
+    )
+    proxy = account.proxy
+    item: dict[str, Any] = {
+        "id": row["id"],
+        "phone": row["phone"],
+        "proxy": proxy.url if proxy is not None else None,
+        "proxy_id": account.proxy_id,
+        "session_status": row["audit_status"],
+        "last_active": account.last_active_at.isoformat() if account.last_active_at else None,
+        "ban_risk_level": getattr(account, "risk_level", "low"),
+        "status": row["status"],
+        "health_status": row["health_status"],
+        "lifecycle_stage": row["lifecycle_stage"],
+        "restriction_reason": row["restriction_reason"],
+        "readiness": row["readiness"],
+        "recommended_next_action": row["recommended_next_action"],
+        "session": row["session"],
+        "api_credentials": row["api_credentials"],
+        "manual_notes": account.manual_notes,
+        "recent_steps": recent_steps,
+    }
+    return account, item
 
 
 async def list_available_web_proxies(

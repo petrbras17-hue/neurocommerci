@@ -19,6 +19,7 @@ import {
   Archive,
   Users,
   Download,
+  Settings,
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { useAuth } from "../auth";
@@ -248,6 +249,14 @@ export function AccountsPage() {
   const [reviewBusy, setReviewBusy] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState<number | null>(null); // account_id
   const [rejectReason, setRejectReason] = useState("");
+
+  /* ── Batch settings modal state ── */
+  const [showBatchSettings, setShowBatchSettings] = useState(false);
+  const [batchProxyStrategy, setBatchProxyStrategy] = useState("");
+  const [batchAiProtection, setBatchAiProtection] = useState("");
+  const [batchCommentLanguage, setBatchCommentLanguage] = useState("");
+  const [batchWarmupMode, setBatchWarmupMode] = useState("");
+  const [batchSettingsBusy, setBatchSettingsBusy] = useState(false);
 
   /* ── Smart proxy routing state ── */
   const [autoAssignStrategy, setAutoAssignStrategy] = useState<"healthiest" | "round_robin" | "random">("healthiest");
@@ -713,6 +722,43 @@ export function AccountsPage() {
   };
 
 
+  /* ── Batch settings ── */
+
+  const handleBatchSettings = async () => {
+    if (!accessToken || checkedIds.size === 0) return;
+    const settings: Record<string, string> = {};
+    if (batchProxyStrategy) settings.proxy_strategy = batchProxyStrategy;
+    if (batchAiProtection) settings.ai_protection = batchAiProtection;
+    if (batchCommentLanguage) settings.comment_language = batchCommentLanguage;
+    if (batchWarmupMode) settings.warmup_mode = batchWarmupMode;
+    if (Object.keys(settings).length === 0) {
+      setStatusMessage("Выберите хотя бы одну настройку для применения.");
+      return;
+    }
+    setBatchSettingsBusy(true);
+    setStatusMessage("");
+    try {
+      const result = await apiFetch<{ updated: number }>("/v1/accounts/batch-settings", {
+        method: "POST",
+        accessToken,
+        json: {
+          account_ids: Array.from(checkedIds),
+          settings,
+        },
+      });
+      setStatusMessage(`Настройки применены к ${result.updated} аккаунтам.`);
+      setShowBatchSettings(false);
+      setBatchProxyStrategy("");
+      setBatchAiProtection("");
+      setBatchCommentLanguage("");
+      setBatchWarmupMode("");
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "batch_settings_failed");
+    } finally {
+      setBatchSettingsBusy(false);
+    }
+  };
+
   /* ── Approval gate actions ── */
 
   const loadPendingReview = async () => {
@@ -888,6 +934,18 @@ export function AccountsPage() {
             <Square size={14} />
             Остановить ферму
           </button>
+          {checkedIds.size >= 2 && (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || batchSettingsBusy}
+              onClick={() => setShowBatchSettings(true)}
+              style={{ display: "flex", alignItems: "center", gap: 8, borderColor: "rgba(0,255,136,0.4)" }}
+            >
+              <Settings size={14} />
+              Массовые настройки
+            </button>
+          )}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>Экспорт:</span>
             <button
@@ -2112,6 +2170,144 @@ export function AccountsPage() {
                 type="button"
                 className="ghost-button"
                 onClick={() => setShowRejectModal(null)}
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch settings modal ── */}
+      {showBatchSettings && (
+        <div className="modal-overlay" onClick={() => setShowBatchSettings(false)}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="panel-header">
+              <div>
+                <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Settings size={12} /> Массовые настройки
+                </div>
+                <h2 style={{ color: "var(--text)" }}>Применить к {checkedIds.size} аккаунтам</h2>
+              </div>
+            </div>
+            <p style={{ color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.5, margin: "0 0 16px" }}>
+              Заполните только те поля, которые хотите изменить. Пустые поля будут проигнорированы.
+            </p>
+            <div className="stack-form" style={{ gap: 12 }}>
+              <label className="field">
+                <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>
+                  Стратегия прокси
+                </span>
+                <select
+                  value={batchProxyStrategy}
+                  onChange={(e) => setBatchProxyStrategy(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: batchProxyStrategy ? "var(--text)" : "var(--muted)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="">— не менять —</option>
+                  <option value="round_robin">Round Robin</option>
+                  <option value="sticky">Sticky (фиксированный)</option>
+                  <option value="geo_match">Geo Match</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>
+                  AI-защита
+                </span>
+                <select
+                  value={batchAiProtection}
+                  onChange={(e) => setBatchAiProtection(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: batchAiProtection ? "var(--text)" : "var(--muted)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="">— не менять —</option>
+                  <option value="off">Выключена</option>
+                  <option value="conservative">Консервативная</option>
+                  <option value="aggressive">Агрессивная</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>
+                  Язык комментариев
+                </span>
+                <select
+                  value={batchCommentLanguage}
+                  onChange={(e) => setBatchCommentLanguage(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: batchCommentLanguage ? "var(--text)" : "var(--muted)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="">— не менять —</option>
+                  <option value="ru">Русский</option>
+                  <option value="en">English</option>
+                  <option value="auto">Авто</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <span style={{ color: "var(--text-secondary)", fontSize: 12, fontWeight: 500 }}>
+                  Режим прогрева
+                </span>
+                <select
+                  value={batchWarmupMode}
+                  onChange={(e) => setBatchWarmupMode(e.target.value)}
+                  style={{
+                    padding: "9px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--surface-2)",
+                    color: batchWarmupMode ? "var(--text)" : "var(--muted)",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="">— не менять —</option>
+                  <option value="conservative">Консервативный</option>
+                  <option value="moderate">Умеренный</option>
+                  <option value="aggressive">Агрессивный</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="actions-row" style={{ marginTop: 20 }}>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={
+                  batchSettingsBusy ||
+                  (!batchProxyStrategy && !batchAiProtection && !batchCommentLanguage && !batchWarmupMode)
+                }
+                onClick={() => void handleBatchSettings()}
+                style={{ display: "flex", alignItems: "center", gap: 8 }}
+              >
+                <Settings size={14} />
+                {batchSettingsBusy
+                  ? "Применяем..."
+                  : `Применить к ${checkedIds.size} аккаунтам`}
+              </button>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={batchSettingsBusy}
+                onClick={() => setShowBatchSettings(false)}
               >
                 Отмена
               </button>

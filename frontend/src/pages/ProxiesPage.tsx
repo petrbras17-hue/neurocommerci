@@ -20,6 +20,8 @@ import { useAuth } from "../auth";
 
 /* ── types ── */
 
+type RotationStrategy = "sticky" | "round_robin" | "geo_match";
+
 type ProxyRow = {
   id: number;
   host: string;
@@ -31,6 +33,8 @@ type ProxyRow = {
   last_checked_at: string | null;
   latency_ms: number | null;
   created_at: string | null;
+  rotation_strategy: RotationStrategy;
+  auto_rotation: boolean;
 };
 
 type ProxyListResponse = {
@@ -273,6 +277,22 @@ export function ProxiesPage() {
       setStatusMessage(err instanceof Error ? err.message : "delete_failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSetStrategy = async (proxyId: number, strategy: RotationStrategy, autoRotation?: boolean) => {
+    if (!accessToken) return;
+    try {
+      const body: Record<string, unknown> = { strategy };
+      if (autoRotation !== undefined) body["auto_rotation"] = autoRotation;
+      await apiFetch(`/v1/proxies/${proxyId}/strategy`, {
+        method: "PUT",
+        accessToken,
+        json: body,
+      });
+      await reload();
+    } catch (err) {
+      setStatusMessage(err instanceof Error ? err.message : "strategy_update_failed");
     }
   };
 
@@ -582,6 +602,7 @@ export function ProxiesPage() {
                 <th>Тип</th>
                 <th>Статус</th>
                 <th>Привязан к аккаунту</th>
+                <th>Стратегия ротации</th>
                 <th>Последняя проверка</th>
                 <th>Действия</th>
               </tr>
@@ -623,6 +644,38 @@ export function ProxiesPage() {
                       }}>
                         {p.bound_account_phone || "---"}
                       </td>
+                      <td>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <select
+                            value={p.rotation_strategy || "sticky"}
+                            onChange={(e) => void handleSetStrategy(p.id, e.target.value as RotationStrategy)}
+                            disabled={busy}
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              background: "var(--surface-2)",
+                              color: "var(--text)",
+                              fontSize: 11,
+                              cursor: "pointer",
+                            }}
+                          >
+                            <option value="sticky">Sticky</option>
+                            <option value="round_robin">Round Robin</option>
+                            <option value="geo_match">Geo Match</option>
+                          </select>
+                          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-secondary)", cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={p.auto_rotation || false}
+                              onChange={(e) => void handleSetStrategy(p.id, p.rotation_strategy || "sticky", e.target.checked)}
+                              disabled={busy}
+                              style={{ accentColor: "var(--accent)" }}
+                            />
+                            Авто-ротация
+                          </label>
+                        </div>
+                      </td>
                       <td style={{ fontFamily: monoFont, fontSize: 12, color: "var(--muted)" }}>
                         {p.last_checked_at || "---"}
                       </td>
@@ -655,7 +708,7 @@ export function ProxiesPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--muted)" }}>
+                  <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--muted)" }}>
                     <Server size={24} style={{ marginBottom: 8, opacity: 0.4 }} />
                     <p style={{ margin: 0 }}>Нет прокси. Импортируйте прокси выше.</p>
                   </td>

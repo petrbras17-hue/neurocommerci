@@ -1736,3 +1736,41 @@ h1, h2, h3, h4, h5, h6 {
     align-items: flex-start;
   }
 }
+
+/* ===== Badge colour utilities ===== */
+/* Used as modifier classes on .pill elements across pages. */
+
+.pill.badge-green,
+.badge-green {
+  background: rgba(0, 255, 136, 0.12);
+  color: #00ff88;
+}
+
+.pill.badge-red,
+.badge-red {
+  background: rgba(255, 68, 68, 0.12);
+  color: #ff4444;
+}
+
+.pill.badge-yellow,
+.badge-yellow {
+  background: rgba(255, 204, 0, 0.12);
+  color: #ffcc00;
+}
+
+.pill.badge-gray,
+.badge-gray {
+  background: rgba(160, 160, 160, 0.1);
+  color: #888;
+}
+
+.pill.badge-blue,
+.badge-blue {
+  background: rgba(68, 136, 255, 0.12);
+  color: #4488ff;
+}
+
+/* Running pulse animation on badge-pulse modifier */
+.badge-pulse {
+  animation: pulse 1.4s ease-in-out infinite;
+}
