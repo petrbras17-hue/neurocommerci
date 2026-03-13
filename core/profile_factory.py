@@ -83,8 +83,15 @@ class ProfileFactory:
         Calls route_ai_task with task_type='profile_generation'.
         Returns a dict with keys: first_name, last_name, bio, username_suggestion.
         """
-        template = await session.get(ProfileTemplate, template_id)
-        if template is None or template.tenant_id != tenant_id:
+        template = (
+            await session.execute(
+                select(ProfileTemplate).where(
+                    ProfileTemplate.id == template_id,
+                    ProfileTemplate.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if template is None:
             raise RuntimeError(
                 f"profile_template_not_found: template_id={template_id} tenant_id={tenant_id}"
             )
