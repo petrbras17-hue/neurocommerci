@@ -324,7 +324,9 @@ async def _enqueue_farm_job(
         async with async_session() as session:
             async with session.begin():
                 await apply_session_rls_context(session, tenant_id=tenant_id, user_id=user_id)
-                job_obj = await session.get(AppJob, job_id)
+                job_obj = (await session.execute(
+                    select(AppJob).where(AppJob.id == job_id)
+                )).scalar_one_or_none()
                 if job_obj is not None:
                     job_obj.status = "failed"
                     job_obj.error_code = "queue_unavailable"
@@ -2397,7 +2399,7 @@ async def proxy_delete(
 
     proxy = (
         await session.execute(
-            select(Proxy).where(Proxy.id == proxy_id, Proxy.tenant_id == tenant_id)
+            select(Proxy).where(Proxy.id == proxy_id, Proxy.tenant_id == tenant_id).with_for_update()
         )
     ).scalar_one_or_none()
     if proxy is None:
@@ -3365,7 +3367,7 @@ async def assistant_start_brief(
 ) -> dict[str, Any]:
     return await enqueue_app_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_START_BRIEF,
     )
@@ -3378,7 +3380,7 @@ async def assistant_message(
 ) -> dict[str, Any]:
     return await enqueue_app_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_ASSISTANT_MESSAGE,
         payload={"message": payload.message},
@@ -3425,7 +3427,7 @@ async def context_confirm(
 ) -> dict[str, Any]:
     return await enqueue_app_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_CONTEXT_CONFIRM,
     )
@@ -3456,7 +3458,7 @@ async def creative_generate(
 ) -> dict[str, Any]:
     return await enqueue_app_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_CREATIVE_GENERATE,
         payload={
@@ -3492,7 +3494,7 @@ async def app_job_status(
         return await get_job_status(
             session,
             tenant_id=tenant_context.tenant_id,
-            workspace_id=int(tenant_context.workspace_id or 0) or None,
+            workspace_id=tenant_context.workspace_id,
             job_id=job_id,
         )
     except AssistantJobError as exc:
@@ -3558,7 +3560,7 @@ async def ai_quality_summary(
     return await get_tenant_ai_quality_summary(
         session,
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
     )
 
 
@@ -3914,7 +3916,7 @@ async def farm_delete(
             select(FarmConfig).where(
                 FarmConfig.id == farm_id,
                 FarmConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if farm is None:
@@ -4034,7 +4036,7 @@ async def farm_start(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_FARM_START,
         payload={
@@ -4072,7 +4074,7 @@ async def farm_stop(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_FARM_STOP,
         payload={"farm_id": farm_id},
@@ -4104,7 +4106,7 @@ async def farm_pause(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_FARM_PAUSE,
         payload={"farm_id": farm_id},
@@ -4136,7 +4138,7 @@ async def farm_resume(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_FARM_RESUME,
         payload={"farm_id": farm_id},
@@ -4481,7 +4483,7 @@ async def parser_start_channels(
 
     farm_job = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_PARSER_CHANNELS,
         payload={
@@ -4581,7 +4583,7 @@ async def profiles_generate(
 
     return await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_PROFILE_GENERATE,
         payload={
@@ -4622,7 +4624,7 @@ async def profiles_mass_generate(
 
     return await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_PROFILE_MASS_GENERATE,
         payload={
@@ -4652,7 +4654,7 @@ async def profiles_apply(
 
     return await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_PROFILE_APPLY,
         payload={
@@ -4682,7 +4684,7 @@ async def profiles_create_channel(
 
     return await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_PROFILE_CREATE_CHANNEL,
         payload={
@@ -4920,7 +4922,7 @@ async def warmup_delete(
             select(WarmupConfig).where(
                 WarmupConfig.id == warmup_id,
                 WarmupConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -4963,7 +4965,7 @@ async def warmup_start(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_WARMUP_START,
         payload={"warmup_id": warmup_id},
@@ -4995,7 +4997,7 @@ async def warmup_stop(
 
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_WARMUP_STOP,
         payload={"warmup_id": warmup_id},
@@ -5117,7 +5119,7 @@ async def health_recalculate(
 ) -> dict[str, Any]:
     job_result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_HEALTH_RECALCULATE,
         payload={},
@@ -5471,7 +5473,7 @@ async def chatting_delete(
             select(ChattingConfig).where(
                 ChattingConfig.id == config_id,
                 ChattingConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -5597,7 +5599,7 @@ async def dialogs_delete(
             select(DialogConfig).where(
                 DialogConfig.id == config_id,
                 DialogConfig.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if cfg is None:
@@ -6507,7 +6509,7 @@ async def channel_map_batch_classify(
 
     result = await _enqueue_farm_job(
         tenant_id=tenant_context.tenant_id,
-        workspace_id=int(tenant_context.workspace_id or 0) or None,
+        workspace_id=tenant_context.workspace_id,
         user_id=tenant_context.user_id,
         job_type=JOB_TYPE_CHANNEL_CLASSIFY_BATCH,
         payload={"channel_ids": list(payload.channel_ids)},
@@ -6643,7 +6645,7 @@ async def campaigns_delete(
             select(Campaign).where(
                 Campaign.id == campaign_id,
                 Campaign.tenant_id == tenant_context.tenant_id,
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if campaign is None:
@@ -7907,7 +7909,7 @@ async def create_purchase_request(
         resource_type=payload.resource_type,
         quantity=payload.quantity,
         provider_name=payload.provider_name,
-        requested_by=int(tenant_context.user_id or 0) or None,
+        requested_by=tenant_context.user_id,
         estimated_cost_usd=payload.estimated_cost_usd,
         details=payload.details,
         session=session,
