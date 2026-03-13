@@ -114,6 +114,7 @@ class QuarantineManager:
             .join(Account, Account.id == FarmThread.account_id)
             .where(
                 FarmThread.tenant_id == tenant_id,
+                Account.tenant_id == tenant_id,
                 FarmThread.status == "quarantine",
                 FarmThread.quarantine_until > now,
             )

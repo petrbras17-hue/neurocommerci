@@ -149,11 +149,14 @@ class WarmupEngine:
         Returns the list of WarmupSession IDs that were created or restarted.
         """
         result = await db_session.execute(
-            select(WarmupConfig).where(WarmupConfig.id == config_id)
+            select(WarmupConfig).where(
+                WarmupConfig.id == config_id,
+                WarmupConfig.tenant_id == tenant_id,
+            )
         )
         config = result.scalar_one_or_none()
         if config is None:
-            raise ValueError(f"WarmupConfig {config_id} not found")
+            raise ValueError(f"WarmupConfig {config_id} not found for tenant {tenant_id}")
 
         if config_id not in self._tasks:
             self._tasks[config_id] = {}
@@ -308,9 +311,19 @@ class WarmupEngine:
         if ws is None:
             raise ValueError(f"WarmupSession {session_id} not found")
 
+        tenant_id = getattr(ws, "tenant_id", None)
+
         config = await db_session.get(WarmupConfig, ws.warmup_id)
         if config is None:
             raise ValueError(f"WarmupConfig {ws.warmup_id} not found")
+        # Defense-in-depth: verify config belongs to same tenant.
+        config_tenant = getattr(config, "tenant_id", None)
+        if (
+            isinstance(tenant_id, int)
+            and isinstance(config_tenant, int)
+            and tenant_id != config_tenant
+        ):
+            raise ValueError(f"WarmupConfig {ws.warmup_id} tenant mismatch")
 
         if not _within_active_hours(
             config.active_hours_start or settings.ACCOUNT_SLEEP_END_HOUR,
@@ -331,7 +344,12 @@ class WarmupEngine:
         actions_done = 0
 
         account = await db_session.get(Account, ws.account_id)
-        if account is None:
+        account_tenant = getattr(account, "tenant_id", None) if account else None
+        if account is None or (
+            isinstance(tenant_id, int)
+            and isinstance(account_tenant, int)
+            and tenant_id != account_tenant
+        ):
             ws.status = STATUS_FAILED
             ws.completed_at = utcnow()
             await db_session.flush()
@@ -365,8 +383,8 @@ class WarmupEngine:
                 try:
                     await lifecycle.on_session_dead(account_id)
                 except Exception as lc_exc:
-                    log.debug(
-                        f"WarmupEngine: lifecycle.on_session_dead skipped: {lc_exc}"
+                    log.warning(
+                        f"WarmupEngine: lifecycle.on_session_dead failed: {lc_exc}"
                     )
                 return {
                     "session_id": session_id,

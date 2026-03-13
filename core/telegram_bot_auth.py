@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 # In-memory store for pending auth codes. TTL = 5 minutes.
 AUTH_CODE_TTL_SEC = 300
+MAX_PENDING_AUTH_CODES = 10_000  # prevent unbounded dict growth under abuse
 
 
 @dataclass
@@ -45,6 +46,11 @@ router = Router()
 def generate_auth_code() -> str:
     """Generate a new auth code and store it as pending."""
     _cleanup_expired()
+    if len(_pending) >= MAX_PENDING_AUTH_CODES:
+        # Force-evict oldest entries to stay within cap.
+        sorted_codes = sorted(_pending, key=lambda k: _pending[k].created_at)
+        for old_code in sorted_codes[: len(_pending) - MAX_PENDING_AUTH_CODES + 1]:
+            _pending.pop(old_code, None)
     code = secrets.token_urlsafe(32)
     _pending[code] = PendingAuth(created_at=time.time())
     return code

@@ -154,7 +154,9 @@ class SessionPool:
     # Public API
     # ------------------------------------------------------------------
 
-    async def get_client(self, account_id: int, *, db_session=None) -> object:
+    async def get_client(
+        self, account_id: int, *, db_session=None, tenant_id: int | None = None
+    ) -> object:
         """
         Return a connected, authorized TelegramClient for *account_id*.
 
@@ -172,6 +174,8 @@ class SessionPool:
         db_session : AsyncSession, optional
             A live SQLAlchemy async session.  Required on a pool miss.
             Not needed (but harmless) on a pool hit.
+        tenant_id : int, optional
+            Defense-in-depth tenant filter applied to Account/Proxy queries.
 
         Raises
         ------
@@ -208,7 +212,9 @@ class SessionPool:
                 )
 
             phone = await self._resolve_phone(account_id, db_session)
-            client = await self._build_and_connect(account_id, phone, db_session=db_session)
+            client = await self._build_and_connect(
+                account_id, phone, db_session=db_session, tenant_id=tenant_id
+            )
 
             entry = _PoolEntry(
                 account_id=account_id,
@@ -376,9 +382,19 @@ class SessionPool:
     # Private helpers
     # ------------------------------------------------------------------
 
+    _MAX_ACCOUNT_LOCKS = 500  # prevent unbounded dict growth
+
     async def _get_account_lock(self, account_id: int) -> asyncio.Lock:
         async with self._pool_lock:
             if account_id not in self._account_locks:
+                # Prune stale locks for accounts no longer in pool.
+                if len(self._account_locks) >= self._MAX_ACCOUNT_LOCKS:
+                    stale = [
+                        aid for aid in self._account_locks
+                        if aid not in self._pool and not self._account_locks[aid].locked()
+                    ]
+                    for aid in stale:
+                        del self._account_locks[aid]
                 self._account_locks[account_id] = asyncio.Lock()
             return self._account_locks[account_id]
 
@@ -457,7 +473,7 @@ class SessionPool:
         return True
 
     async def _build_and_connect(
-        self, account_id: int, phone: str, *, db_session
+        self, account_id: int, phone: str, *, db_session, tenant_id: int | None = None
     ) -> object:
         """
         Load Account + Proxy rows from DB, build TelegramClient, connect, verify.
@@ -471,12 +487,11 @@ class SessionPool:
         from storage.models import Account, Proxy
 
         # Re-load Account to get proxy_id and session_file.
-        # NOTE: callers MUST pass an RLS-scoped db_session. The Account.id
-        # filter alone is safe when RLS is active, but we rely on callers
-        # setting RLS context before calling get_client().
-        result = await db_session.execute(
-            select(Account).where(Account.id == account_id)
-        )
+        # Defense-in-depth: add tenant_id filter alongside RLS.
+        query = select(Account).where(Account.id == account_id)
+        if tenant_id is not None:
+            query = query.where(Account.tenant_id == tenant_id)
+        result = await db_session.execute(query)
         account = result.scalar_one_or_none()
         if account is None:
             raise SessionDeadError(f"account_id={account_id} not found in DB")
@@ -506,12 +521,13 @@ class SessionPool:
                 f"account_id={account_id} phone={phone}: missing api_id/api_hash"
             )
 
-        # Load proxy from DB if bound.
+        # Load proxy from DB if bound. Defense-in-depth: scope to tenant.
         proxy_tuple = None
         if account.proxy_id:
-            proxy_result = await db_session.execute(
-                select(Proxy).where(Proxy.id == account.proxy_id)
-            )
+            proxy_query = select(Proxy).where(Proxy.id == account.proxy_id)
+            if tenant_id is not None:
+                proxy_query = proxy_query.where(Proxy.tenant_id == tenant_id)
+            proxy_result = await db_session.execute(proxy_query)
             proxy_row = proxy_result.scalar_one_or_none()
             if proxy_row:
                 proxy_tuple = self._proxy_to_telethon(proxy_row)
