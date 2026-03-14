@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `2dbbdc8` |
+| Last committed HEAD | `93026ad` |
 | VPS safe branch | `main` |
-| VPS safe commit | `2dbbdc8` |
+| VPS safe commit | `93026ad` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 14 (Stripe + YooKassa webhooks + Email service)` |
-| Next planned sprint | `Sprint 14 continued — live testing with real Stripe/YooKassa keys` |
+| Current completed sprint | `Sprint 14 (Backend Wiring + Webhooks + Admin + E2E)` |
+| Next planned sprint | `Sprint 15 — закупка аккаунтов, Stripe/YooKassa keys, live testing` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -77,7 +77,7 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | 2026-03-14 | Sprint 12 Farm Monitor | `main` | `2dbbdc8` | Farm monitoring + bulk ops + resource estimation | FarmMonitorPage (445 lines): real-time farm stats, comment quality analysis with style distribution, VPS resource estimation. 7 new endpoints: /v1/farm/stats/live, /v1/farm/comment-quality, /v1/system/resource-estimate, /v1/accounts/auto-bind-proxies, /v1/accounts/bulk-warmup, /v1/accounts/bulk-import-zip, /v1/accounts/import-status. Fixed accessToken auth context. | Green | Green | Sprint 14: закупка аккаунтов + прокси для live testing. |
 
-| 2026-03-14 | Sprint 14 | `main` | `working-tree` | Stripe + YooKassa webhooks + email service | Added `core/email_service.py` (6 Russian templates, smtplib thread executor, fire-and-forget via `schedule_email()`). Added SMTP env vars to `config.py` (SMTP_ENABLED, SMTP_HOST/PORT/USER/PASSWORD/FROM_EMAIL). Extended `core/billing_service.py`: `_payment_event_exists()` idempotency guard on both Stripe and YooKassa handlers, `_get_tenant_email()` tenant owner lookup, `create_stripe_checkout()` (Stripe Checkout Session with price ID map or inline price), `create_yookassa_payment()` (aiohttp + BasicAuth), `_handle_stripe_subscription_updated()`, `_handle_stripe_checkout_completed()`, email notifications on payment_success/payment_failed/subscription_cancelled. Added to `ops_api.py`: canonical `POST /v1/webhooks/stripe` and `POST /v1/webhooks/yookassa` (always 200, Stripe-Signature verified), `POST /v1/billing/checkout` (JWT-required, rate-limited 10/min/tenant), welcome email on `/auth/register`. Added `stripe>=8.0.0` and `aiosmtplib>=3.0.0` to `requirements.txt`. All 4 files compile clean; 21 billing tests pass. | Green | Not deployed | Run `pip install stripe aiosmtplib` on VPS, set SMTP_ENABLED/SMTP_* env vars, restart `ops_api`, configure Stripe webhook URL to `/v1/webhooks/stripe` and YooKassa to `/v1/webhooks/yookassa`. |
+| 2026-03-14 | Sprint 14 | `main` | `93026ad` | Backend Wiring + Webhooks + Admin + E2E | 15 new backend endpoints (quarantine, analytics, self-healing, auto-purchase, billing usage, onboarding, auth sessions, AB results, reactions, chatting). Stripe/YooKassa webhooks with signature verification + idempotency. Email service (6 Russian templates, fire-and-forget). Admin panel (8 endpoints, full AdminPage.tsx rewrite with tenant management). E2E smoke tests (test_e2e_smoke.py, test_tenant_isolation_e2e.py, smoke_test_vps.sh). VPS smoke: 63/65 passed. | Green | Green | Sprint 15: закупка аккаунтов, Stripe/YooKassa keys, live testing. |
 
 ## Update Rules
 
