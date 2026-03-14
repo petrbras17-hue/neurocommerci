@@ -95,13 +95,15 @@ async def import_proxies(
 def _test_proxy_http(host: str, port: int, user: str, password: str, timeout: int = 8) -> bool:
     """Quick HTTP connectivity test via curl."""
     auth = f"{user}:{password}@" if user and password else ""
-    cmd = (
-        f'curl -x "http://{auth}{host}:{port}" '
-        f'-s -o /dev/null -w "%{{http_code}}" '
-        f'--connect-timeout {timeout} https://api.ipify.org'
-    )
+    proxy_url = f"http://{auth}{host}:{port}"
+    cmd = [
+        "curl", "-x", proxy_url,
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--connect-timeout", str(timeout),
+        "https://api.ipify.org",
+    ]
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout + 5)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return result.stdout.strip() == "200"
     except Exception:
         return False
@@ -110,13 +112,15 @@ def _test_proxy_http(host: str, port: int, user: str, password: str, timeout: in
 def _test_proxy_socks5(host: str, port: int, user: str, password: str, timeout: int = 8) -> bool:
     """SOCKS5 connectivity test via curl."""
     auth = f"{user}:{password}@" if user and password else ""
-    cmd = (
-        f'curl -x "socks5://{auth}{host}:{port}" '
-        f'-s -o /dev/null -w "%{{http_code}}" '
-        f'--connect-timeout {timeout} https://api.ipify.org'
-    )
+    proxy_url = f"socks5://{auth}{host}:{port}"
+    cmd = [
+        "curl", "-x", proxy_url,
+        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--connect-timeout", str(timeout),
+        "https://api.ipify.org",
+    ]
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout + 5)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         return result.stdout.strip() == "200"
     except Exception:
         return False
@@ -143,12 +147,14 @@ def _get_proxy_ip(host: str, port: int, user: str, password: str, proxy_type: st
     """Get the external IP address through the proxy."""
     scheme = "socks5" if proxy_type == "socks5" else "http"
     auth = f"{user}:{password}@" if user and password else ""
-    cmd = (
-        f'curl -x "{scheme}://{auth}{host}:{port}" '
-        f'-s --connect-timeout {timeout} https://api.ipify.org'
-    )
+    proxy_url = f"{scheme}://{auth}{host}:{port}"
+    cmd = [
+        "curl", "-x", proxy_url,
+        "-s", "--connect-timeout", str(timeout),
+        "https://api.ipify.org",
+    ]
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout + 5)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
         ip = result.stdout.strip()
         # Basic IP validation
         parts = ip.split(".")
@@ -257,12 +263,13 @@ async def bind_proxy_to_account(
             f"1 IP = 1 account — NEVER share proxies."
         )
 
-    # Check account doesn't already have a different proxy
+    # Check account doesn't already have a different proxy (workspace-scoped)
     existing = await db.execute(
         select(AdminProxy).where(
             and_(
                 AdminProxy.bound_account_id == account.id,
                 AdminProxy.id != proxy.id,
+                AdminProxy.workspace_id == proxy.workspace_id,
             )
         )
     )
@@ -314,9 +321,12 @@ async def unbind_proxy(db: AsyncSession, proxy: AdminProxy) -> bool:
 # ── Queries ────────────────────────────────────────────────────────
 
 
-async def get_proxy(db: AsyncSession, proxy_id: int) -> Optional[AdminProxy]:
-    """Get single proxy by ID."""
-    result = await db.execute(select(AdminProxy).where(AdminProxy.id == proxy_id))
+async def get_proxy(db: AsyncSession, proxy_id: int, workspace_id: Optional[int] = None) -> Optional[AdminProxy]:
+    """Get single proxy by ID, optionally filtered by workspace for tenant safety."""
+    q = select(AdminProxy).where(AdminProxy.id == proxy_id)
+    if workspace_id is not None:
+        q = q.where(AdminProxy.workspace_id == workspace_id)
+    result = await db.execute(q)
     return result.scalar_one_or_none()
 
 

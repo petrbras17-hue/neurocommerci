@@ -17,8 +17,8 @@ def _rls(table: str) -> None:
     op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
     op.execute(
         f"CREATE POLICY {table}_workspace_isolation ON {table} "
-        f"USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        f"WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        f"USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        f"WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
 
@@ -30,10 +30,10 @@ def _rls_system_visible(table: str) -> None:
         f"CREATE POLICY {table}_workspace_isolation ON {table} "
         f"USING ("
         f"  workspace_id IS NULL "
-        f"  OR workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int"
+        f"  OR workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int"
         f") "
         f"WITH CHECK ("
-        f"  workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int"
+        f"  workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int"
         f")"
     )
 

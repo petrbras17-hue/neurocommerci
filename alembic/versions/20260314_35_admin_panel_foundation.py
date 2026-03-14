@@ -4,6 +4,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
+JSONType = sa.JSON().with_variant(JSONB, "postgresql")
+
 revision = "20260314_35"
 down_revision = "20260314_34"
 branch_labels = None
@@ -36,7 +38,7 @@ def upgrade():
         sa.Column("status", sa.String(32), server_default="uploaded"),
         sa.Column("lifecycle_phase", sa.String(32), server_default="day0"),
         sa.Column("source", sa.String(32)),
-        sa.Column("metadata", JSONB, server_default="{}"),
+        sa.Column("metadata", JSONType, server_default="{}"),
         sa.Column("security_hardened_at", sa.DateTime(timezone=True)),
         sa.Column("warmup_started_at", sa.DateTime(timezone=True)),
         sa.Column("profile_change_earliest", sa.DateTime(timezone=True)),
@@ -62,7 +64,7 @@ def upgrade():
         sa.Column("last_tested_at", sa.DateTime(timezone=True)),
         sa.Column("last_ip", sa.String(45)),
         sa.Column("supports_https_connect", sa.Boolean()),
-        sa.Column("metadata", JSONB, server_default="{}"),
+        sa.Column("metadata", JSONType, server_default="{}"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
     op.create_index("ix_admin_proxies_workspace", "admin_proxies", ["workspace_id"])
@@ -91,8 +93,8 @@ def upgrade():
         op.execute(
             f"CREATE POLICY {table}_tenant_isolation ON {table} "
             f"FOR ALL "
-            f"USING (workspace_id::text = current_setting('app.current_workspace_id', true)) "
-            f"WITH CHECK (workspace_id::text = current_setting('app.current_workspace_id', true))"
+            f"USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::integer) "
+            f"WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::integer)"
         )
 
 

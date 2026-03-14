@@ -12546,7 +12546,7 @@ async def admin_get_account(request: Request, account_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             return {
@@ -12572,12 +12572,12 @@ async def admin_verify_account(request: Request, account_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             proxy_tuple = None
             if account.proxy_id:
-                proxy = await get_proxy(db, account.proxy_id)
+                proxy = await get_proxy(db, account.proxy_id, workspace_id=ctx.workspace_id)
                 if proxy:
                     proxy_tuple = build_proxy_tuple(proxy)
             result = await verify_account(db, account, proxy_tuple)
@@ -12593,12 +12593,12 @@ async def admin_harden_account(request: Request, account_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             proxy_tuple = None
             if account.proxy_id:
-                proxy = await get_proxy(db, account.proxy_id)
+                proxy = await get_proxy(db, account.proxy_id, workspace_id=ctx.workspace_id)
                 if proxy:
                     proxy_tuple = build_proxy_tuple(proxy)
             result = await harden_account(db, account, proxy_tuple)
@@ -12613,7 +12613,7 @@ async def admin_delete_account(request: Request, account_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             await delete_account(db, account)
@@ -12687,7 +12687,7 @@ async def admin_test_proxy(request: Request, proxy_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            proxy = await get_proxy(db, proxy_id)
+            proxy = await get_proxy(db, proxy_id, workspace_id=ctx.workspace_id)
             if not proxy:
                 raise HTTPException(404, "Proxy not found")
             result = await test_proxy(db, proxy)
@@ -12716,10 +12716,10 @@ async def admin_bind_proxy(request: Request, proxy_id: int, account_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            proxy = await get_proxy(db, proxy_id)
+            proxy = await get_proxy(db, proxy_id, workspace_id=ctx.workspace_id)
             if not proxy:
                 raise HTTPException(404, "Proxy not found")
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             try:
@@ -12737,7 +12737,7 @@ async def admin_unbind_proxy(request: Request, proxy_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            proxy = await get_proxy(db, proxy_id)
+            proxy = await get_proxy(db, proxy_id, workspace_id=ctx.workspace_id)
             if not proxy:
                 raise HTTPException(404, "Proxy not found")
             await unbind_proxy(db, proxy)
@@ -12752,7 +12752,7 @@ async def admin_delete_proxy(request: Request, proxy_id: int):
     async with async_session() as db:
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
-            proxy = await get_proxy(db, proxy_id)
+            proxy = await get_proxy(db, proxy_id, workspace_id=ctx.workspace_id)
             if not proxy:
                 raise HTTPException(404, "Proxy not found")
             try:
@@ -12902,12 +12902,12 @@ async def admin_apply_profile(request: Request, account_id: int):
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
             from core.admin_onboarding import get_account
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             proxy = None
             if account.proxy_id:
-                proxy = await get_proxy(db, account.proxy_id)
+                proxy = await get_proxy(db, account.proxy_id, workspace_id=ctx.workspace_id)
             try:
                 result = await apply_profile(db, ctx.workspace_id, account_id, proxy=proxy)
             except (ValueError, FileNotFoundError) as e:
@@ -12967,12 +12967,12 @@ async def admin_apply_avatar(request: Request, account_id: int):
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
             from core.admin_onboarding import get_account
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             proxy = None
             if account.proxy_id:
-                proxy = await get_proxy(db, account.proxy_id)
+                proxy = await get_proxy(db, account.proxy_id, workspace_id=ctx.workspace_id)
             try:
                 result = await apply_avatar(db, ctx.workspace_id, account_id, proxy=proxy)
             except (ValueError, FileNotFoundError) as e:
@@ -12994,12 +12994,12 @@ async def admin_create_channel(request: Request, account_id: int):
         async with db.begin():
             await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
             from core.admin_onboarding import get_account
-            account = await get_account(db, account_id)
+            account = await get_account(db, account_id, workspace_id=ctx.workspace_id)
             if not account:
                 raise HTTPException(404, "Account not found")
             proxy = None
             if account.proxy_id:
-                proxy = await get_proxy(db, account.proxy_id)
+                proxy = await get_proxy(db, account.proxy_id, workspace_id=ctx.workspace_id)
             try:
                 result = await create_channel(
                     db, ctx.workspace_id, account_id,
@@ -13035,18 +13035,29 @@ async def admin_packaging_status(request: Request, account_id: int):
 async def ws_operation_logs(websocket):
     """WebSocket for real-time operation logs via Redis pub/sub.
 
-    Query params: ?workspace_id=N&module=warmup
+    Query params: ?token=JWT&module=warmup
     """
     from fastapi import WebSocket, WebSocketDisconnect
     import json as _json
     import redis.asyncio as aioredis
 
-    await websocket.accept()
-    workspace_id = websocket.query_params.get("workspace_id")
-    module_filter = websocket.query_params.get("module")
+    # Authenticate via JWT token in query params
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="token required")
+        return
+    try:
+        payload = _decode_jwt(token)
+        workspace_id = str(payload.workspace_id or "")
+    except Exception:
+        await websocket.close(code=4003, reason="invalid token")
+        return
     if not workspace_id:
         await websocket.close(code=4001, reason="workspace_id required")
         return
+
+    await websocket.accept()
+    module_filter = websocket.query_params.get("module")
     try:
         redis = aioredis.from_url(settings.REDIS_URL)
         pubsub = redis.pubsub()
@@ -14044,17 +14055,28 @@ async def admin_monitoring_dashboard(request: Request):
 async def ws_account_status(websocket):
     """WebSocket for real-time account status updates via Redis pub/sub.
 
-    Query params: ?workspace_id=N
+    Query params: ?token=JWT
     """
     from fastapi import WebSocket, WebSocketDisconnect
     import json as _json
     import redis.asyncio as aioredis
 
-    await websocket.accept()
-    workspace_id = websocket.query_params.get("workspace_id")
+    # Authenticate via JWT token in query params
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="token required")
+        return
+    try:
+        payload = _decode_jwt(token)
+        workspace_id = str(payload.workspace_id or "")
+    except Exception:
+        await websocket.close(code=4003, reason="invalid token")
+        return
     if not workspace_id:
         await websocket.close(code=4001, reason="workspace_id required")
         return
+
+    await websocket.accept()
     try:
         redis = aioredis.from_url(settings.REDIS_URL)
         pubsub = redis.pubsub()

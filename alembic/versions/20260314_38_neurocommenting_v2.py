@@ -30,8 +30,8 @@ def upgrade():
     op.execute("ALTER TABLE channel_blacklists FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY channel_blacklists_tenant_isolation ON channel_blacklists "
-        "USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        "WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        "USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        "WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
     # ── channel_whitelists ──
@@ -51,8 +51,8 @@ def upgrade():
     op.execute("ALTER TABLE channel_whitelists FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY channel_whitelists_tenant_isolation ON channel_whitelists "
-        "USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        "WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        "USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        "WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
     # ── farm_presets ──
@@ -75,8 +75,8 @@ def upgrade():
     op.execute("ALTER TABLE farm_presets FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY farm_presets_tenant_isolation ON farm_presets "
-        "USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        "WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        "USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        "WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
     # ── auto_dm_configs ──
@@ -98,8 +98,8 @@ def upgrade():
     op.execute("ALTER TABLE auto_dm_configs FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY auto_dm_configs_tenant_isolation ON auto_dm_configs "
-        "USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        "WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        "USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        "WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
     # ── Alter farm_configs: add v2 columns ──

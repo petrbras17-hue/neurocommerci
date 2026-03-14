@@ -35,8 +35,8 @@ def upgrade():
     op.execute("ALTER TABLE operation_logs FORCE ROW LEVEL SECURITY")
     op.execute(
         "CREATE POLICY operation_logs_tenant_isolation ON operation_logs "
-        "USING (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int) "
-        "WITH CHECK (workspace_id = NULLIF(current_setting('app.current_workspace_id', true), '')::int)"
+        "USING (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int) "
+        "WITH CHECK (workspace_id = NULLIF(current_setting('app.tenant_id', true), '')::int)"
     )
 
     # ── Alter warmup_configs: add schedule columns ──

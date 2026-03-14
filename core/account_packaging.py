@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import random
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 # ── Storage paths ──────────────────────────────────────────────────
 
 AVATAR_ROOT = Path("storage/avatars")
+
+
+def _sanitize_phone(phone: str) -> str:
+    """Strip all characters except digits, +, and - to prevent path traversal."""
+    return re.sub(r'[^0-9+\-]', '', phone) or 'unknown'
 
 
 def _avatar_dir(workspace_id: int) -> Path:
@@ -358,7 +364,7 @@ async def generate_avatar(
 
     avatar_dir = _avatar_dir(workspace_id)
     avatar_dir.mkdir(parents=True, exist_ok=True)
-    avatar_file = avatar_dir / f"{account.phone}.jpg"
+    avatar_file = avatar_dir / f"{_sanitize_phone(account.phone)}.jpg"
 
     # Placeholder: In production, call an image generation API here.
     # For now, log the request and mark path.
@@ -401,7 +407,7 @@ async def upload_avatar(
     avatar_dir.mkdir(parents=True, exist_ok=True)
 
     ext = Path(filename).suffix or ".jpg"
-    avatar_file = avatar_dir / f"{account.phone}{ext}"
+    avatar_file = avatar_dir / f"{_sanitize_phone(account.phone)}{ext}"
     avatar_file.write_bytes(file_bytes)
 
     account.avatar_path = str(avatar_file)

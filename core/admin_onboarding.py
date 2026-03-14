@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import random
+import re
 import secrets
 import shutil
 import zipfile
@@ -30,8 +31,13 @@ logger = logging.getLogger(__name__)
 STORAGE_ROOT = Path("storage/accounts")
 
 
+def _sanitize_phone(phone: str) -> str:
+    """Strip all characters except digits, +, and - to prevent path traversal."""
+    return re.sub(r'[^0-9+\-]', '', phone) or 'unknown'
+
+
 def _account_dir(workspace_id: int, phone: str) -> Path:
-    return STORAGE_ROOT / str(workspace_id) / phone
+    return STORAGE_ROOT / str(workspace_id) / _sanitize_phone(phone)
 
 
 def _backup_dir(workspace_id: int, phone: str) -> Path:
@@ -128,6 +134,15 @@ async def upload_tdata(
     extract_dir = tempfile.mkdtemp(prefix="tdata_")
     try:
         with zipfile.ZipFile(tdata_zip_path, "r") as zf:
+            # Validate: no path traversal
+            for member in zf.namelist():
+                member_path = (Path(extract_dir) / member).resolve()
+                if not str(member_path).startswith(str(Path(extract_dir).resolve())):
+                    raise ValueError(f"Unsafe path in ZIP: {member}")
+            # Validate: total uncompressed size <= 100MB
+            total_size = sum(info.file_size for info in zf.infolist())
+            if total_size > 100 * 1024 * 1024:
+                raise ValueError("ZIP too large (>100MB uncompressed)")
             zf.extractall(extract_dir)
 
         # Find tdata directory
@@ -221,6 +236,15 @@ async def upload_bulk_zip(
     accounts = []
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
+            # Validate: no path traversal
+            for member in zf.namelist():
+                member_path = (Path(extract_dir) / member).resolve()
+                if not str(member_path).startswith(str(Path(extract_dir).resolve())):
+                    raise ValueError(f"Unsafe path in ZIP: {member}")
+            # Validate: total uncompressed size <= 100MB
+            total_size = sum(info.file_size for info in zf.infolist())
+            if total_size > 100 * 1024 * 1024:
+                raise ValueError("ZIP too large (>100MB uncompressed)")
             zf.extractall(extract_dir)
 
         for entry in sorted(os.listdir(extract_dir)):
@@ -425,6 +449,7 @@ async def harden_account(
             hint = f"nc-{account.phone[-4:]}"
             try:
                 await client.edit_2fa(new_password=password, hint=hint)
+                # TODO: encrypt 2FA password at rest instead of storing plaintext
                 account.two_fa_password = password
                 result["two_fa_set"] = True
 
@@ -510,9 +535,12 @@ async def harden_account(
 # ── Account retrieval ──────────────────────────────────────────────
 
 
-async def get_account(db: AsyncSession, account_id: int) -> Optional[AdminAccount]:
-    """Get single admin account by ID."""
-    result = await db.execute(select(AdminAccount).where(AdminAccount.id == account_id))
+async def get_account(db: AsyncSession, account_id: int, workspace_id: Optional[int] = None) -> Optional[AdminAccount]:
+    """Get single admin account by ID, optionally filtered by workspace for tenant safety."""
+    q = select(AdminAccount).where(AdminAccount.id == account_id)
+    if workspace_id is not None:
+        q = q.where(AdminAccount.workspace_id == workspace_id)
+    result = await db.execute(q)
     return result.scalar_one_or_none()
 
 
