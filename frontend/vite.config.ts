@@ -84,6 +84,12 @@ export default defineConfig({
       "/api": "http://127.0.0.1:8081"
     }
   },
+  resolve: {
+    dedupe: ["three"],
+  },
+  optimizeDeps: {
+    include: ["three"],
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true
