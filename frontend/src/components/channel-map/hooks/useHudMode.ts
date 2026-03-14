@@ -1,15 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // NEURO COMMENTING — useHudMode
-// HUD mode state + telemetry data fetching for channel-map planet view.
+// Telemetry data fetching for channel-map planet view.
+// Accepts an external MapMode and fetches telemetry cards for that mode.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../../../api";
 import { useAuth } from "../../../auth";
+import type { MapMode } from "../constants";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-export type HudMode = "intel" | "farm" | "analytics";
 
 export type TelemetryCard = {
   title: string;
@@ -24,16 +24,14 @@ export type TelemetryData = {
 };
 
 export type UseHudModeReturn = {
-  hudMode: HudMode;
-  setHudMode: (mode: HudMode) => void;
   telemetry: TelemetryData | null;
   telemetryLoading: boolean;
 };
 
 // ── Fallback data per mode ────────────────────────────────────────────────────
 
-const FALLBACKS: Record<HudMode, TelemetryData> = {
-  intel: {
+const FALLBACKS: Record<MapMode, TelemetryData> = {
+  discovery: {
     cards: [
       { title: "Total Channels", value: "\u2014", accent: true },
       { title: "Top Category", value: "\u2014" },
@@ -49,7 +47,7 @@ const FALLBACKS: Record<HudMode, TelemetryData> = {
       { title: "Account Health", value: "\u2014" },
     ],
   },
-  analytics: {
+  intelligence: {
     cards: [
       { title: "ROI Score", value: "\u2014" },
       { title: "Cost per Sub", value: "\u2014" },
@@ -61,16 +59,11 @@ const FALLBACKS: Record<HudMode, TelemetryData> = {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useHudMode(): UseHudModeReturn {
+export function useHudMode(mode: MapMode): UseHudModeReturn {
   const { accessToken: token } = useAuth();
-  const [hudMode, setHudModeRaw] = useState<HudMode>("intel");
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
   const [telemetryLoading, setTelemetryLoading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-
-  const setHudMode = useCallback((mode: HudMode) => {
-    setHudModeRaw(mode);
-  }, []);
 
   useEffect(() => {
     abortRef.current?.abort();
@@ -78,20 +71,20 @@ export function useHudMode(): UseHudModeReturn {
     abortRef.current = controller;
 
     if (!token) {
-      setTelemetry(FALLBACKS[hudMode]);
+      setTelemetry(FALLBACKS[mode]);
       return;
     }
 
     setTelemetryLoading(true);
 
-    apiFetch<TelemetryData>(`/v1/channel-map/telemetry?mode=${hudMode}`, {
+    apiFetch<TelemetryData>(`/v1/channel-map/telemetry?mode=${mode}`, {
       accessToken: token,
     })
       .then((data) => {
         if (!controller.signal.aborted) setTelemetry(data);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setTelemetry(FALLBACKS[hudMode]);
+        if (!controller.signal.aborted) setTelemetry(FALLBACKS[mode]);
       })
       .finally(() => {
         if (!controller.signal.aborted) setTelemetryLoading(false);
@@ -100,7 +93,7 @@ export function useHudMode(): UseHudModeReturn {
     return () => {
       controller.abort();
     };
-  }, [hudMode, token]);
+  }, [mode, token]);
 
-  return { hudMode, setHudMode, telemetry, telemetryLoading };
+  return { telemetry, telemetryLoading };
 }

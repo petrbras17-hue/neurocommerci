@@ -145,6 +145,27 @@ export function ChannelDetailPanel(props: ChannelDetailPanelProps) {
         )}
       </div>
 
+      {/* Description */}
+      {!loading && channel.description && (
+        <>
+          <Div />
+          <div>
+            <div style={secHdr}>Описание</div>
+            <div style={{
+              color: T.TEXT_SECONDARY,
+              fontSize: 12,
+              lineHeight: 1.6,
+              maxHeight: 80,
+              overflowY: 'auto',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}>
+              {channel.description}
+            </div>
+          </div>
+        </>
+      )}
+
       <Div />
 
       {/* Similar Channels */}

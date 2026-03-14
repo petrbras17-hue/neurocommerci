@@ -65,19 +65,39 @@ export const REGION_COORDS: Record<string, [number, number]> = {
   id: [-6.21, 106.85],
 } as const;
 
+// ── Map modes ─────────────────────────────────────────────────────────────────
+
+export type MapMode = 'discovery' | 'farm' | 'intelligence';
+
+export const MAP_MODES: { key: MapMode; label: string; icon: string }[] = [
+  { key: 'discovery',    label: 'Discovery',     icon: '🔍' },
+  { key: 'farm',         label: 'Farm Control',  icon: '🌾' },
+  { key: 'intelligence', label: 'Intelligence',  icon: '📊' },
+];
+
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
 export const DESIGN_TOKENS = {
   BG:               '#0a0a0b',
-  SURFACE:          'rgba(10, 10, 11, 0.75)',
+  SURFACE:          '#111113',
+  SURFACE_ELEVATED: '#1a1a1d',
   BORDER:           'rgba(0, 255, 136, 0.15)',
+  BORDER_SUBTLE:    '#1a1a1d',
   ACCENT:           '#00ff88',
   ACCENT_SECONDARY: '#00d4ff',
+  ACCENT_DIM:       '#00ff8820',
   TEXT_PRIMARY:     '#ffffff',
-  TEXT_SECONDARY:   '#70777b',
+  TEXT_SECONDARY:   '#cccccc',
+  TEXT_MUTED:       '#555555',
+  TEXT_DISABLED:    '#333333',
   GLOBE_COLOR:      '#1a1a2e',
   GLOBE_EMISSIVE:   '#0a0a0b',
   ATMOSPHERE:       '#00ff88',
+  // Farm status colors
+  FARM_ACTIVE:      '#00ff88',
+  FARM_PAUSED:      '#ffaa00',
+  FARM_BANNED:      '#ff4444',
+  FARM_INACTIVE:    '#333333',
 } as const;
 
 // ── Globe configuration ───────────────────────────────────────────────────────

@@ -14,7 +14,9 @@ import ReactGlobe from "react-globe.gl";
 
 import type { GeoPoint } from "../../api";
 import type { DrillPathEntry } from "./hooks/useGlobeInteraction";
-import { getCategoryColor, formatNumber, formatER } from "./constants";
+import type { ClusterPoint } from "./hooks/useClusters";
+import { getCategoryColor, formatNumber, formatER, type MapMode } from "./constants";
+import { createClusterElement } from "./ClusterLayer";
 
 // ── Arc & Ring data types ────────────────────────────────────────────────────
 
@@ -48,10 +50,12 @@ export type GlobeViewProps = {
   onBackgroundClick: () => void;
   globeCenter: { lat: number; lng: number; altitude: number };
   displayMode: "hex" | "points" | "detailed";
-  hudMode: "intel" | "farm" | "analytics";
+  hudMode: MapMode;
   isMobile: boolean;
   arcsData?: ArcData[];
   ringsData?: RingData[];
+  clusterData?: ClusterPoint[];
+  onClusterClick?: (cluster: ClusterPoint) => void;
 };
 
 // ── Internal hex-bin data shape (react-globe.gl) ──────────────────────────────
@@ -102,11 +106,18 @@ function hexTooltip(hex: HexBin): string {
 }
 
 function pointTooltip(point: GeoPoint): string {
+  const catColor = getCategoryColor(point.cat);
   return (
-    `<div style="${TOOLTIP_STYLE}">` +
-    `<b>${esc(point.t)}</b><br/>` +
-    `@${esc(point.u)}<br/>` +
-    `${formatNumber(point.m)} подписчиков` +
+    `<div style="${TOOLTIP_STYLE}max-width:200px;">` +
+    `<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">` +
+    `<span style="width:6px;height:6px;border-radius:50%;background:${catColor};flex-shrink:0;"></span>` +
+    `<b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(point.t)}</b>` +
+    `</div>` +
+    `<div style="color:#aaa;font-size:11px;">@${esc(point.u)}</div>` +
+    `<div style="display:flex;gap:10px;margin-top:4px;font-size:11px;color:#ccc;">` +
+    `<span>${formatNumber(point.m)} подп.</span>` +
+    (point.c ? `<span>💬</span>` : '') +
+    `</div>` +
     `</div>`
   );
 }
@@ -146,6 +157,8 @@ export function GlobeView(props: GlobeViewProps) {
     isMobile,
     arcsData,
     ringsData,
+    clusterData,
+    onClusterClick,
   } = props;
 
   // Ref to access the react-globe.gl imperative API (pointOfView, etc.)
@@ -191,14 +204,23 @@ export function GlobeView(props: GlobeViewProps) {
     return geoPoints.filter((p) => p.cat === selectedCategory);
   }, [geoPoints, selectedCategory]);
 
-  // ── Top-N points for HTML labels (detailed mode) ──────────────────────────
+  // ── HTML elements layer: clusters (hex mode) or labels (detailed mode) ─────
 
-  const topPoints = useMemo<GeoPoint[]>(() => {
-    if (isMobile || displayMode !== "detailed") return [];
-    return [...filteredPoints]
-      .sort((a, b) => b.m - a.m)
-      .slice(0, 50);
-  }, [filteredPoints, displayMode, isMobile]);
+  const htmlData = useMemo(() => {
+    if (isMobile) return [];
+    // In hex/cluster mode, show numeric cluster bubbles
+    if (displayMode === "hex" && clusterData && clusterData.length > 0) {
+      return clusterData.map((c) => ({ ...c, _type: "cluster" as const }));
+    }
+    // In detailed mode, show top channel labels
+    if (displayMode === "detailed") {
+      return [...filteredPoints]
+        .sort((a, b) => b.m - a.m)
+        .slice(0, 50)
+        .map((p) => ({ ...p, _type: "label" as const }));
+    }
+    return [];
+  }, [isMobile, displayMode, clusterData, filteredPoints]);
 
   // ── Max hex weight for color interpolation ────────────────────────────────
 
@@ -255,8 +277,21 @@ export function GlobeView(props: GlobeViewProps) {
   );
 
   const getHtmlElement = useCallback(
-    (d: object): HTMLElement => channelLabel(d as GeoPoint),
-    [],
+    (d: object): HTMLElement => {
+      const item = d as { _type: string };
+      if (item._type === "cluster") {
+        const el = createClusterElement(d as ClusterPoint);
+        if (onClusterClick) {
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            onClusterClick(d as ClusterPoint);
+          });
+        }
+        return el;
+      }
+      return channelLabel(d as GeoPoint);
+    },
+    [onClusterClick],
   );
 
   // ── Stable accessors for geo fields (avoids re-triggering scene rebuilds) ──
@@ -349,7 +384,7 @@ export function GlobeView(props: GlobeViewProps) {
         pointLabel={getPointLabel}
         onPointClick={handlePointClick}
         // ── HTML labels (detailed only, desktop only) ──────────────────────────
-        htmlElementsData={topPoints}
+        htmlElementsData={htmlData}
         htmlLat={getLat}
         htmlLng={getLng}
         htmlAltitude={0.02}

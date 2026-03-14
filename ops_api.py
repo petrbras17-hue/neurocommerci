@@ -6340,7 +6340,7 @@ def _format_compact_number(n: int | float) -> str:
 
 @app.get("/v1/channel-map/telemetry")
 async def channel_map_telemetry(
-    mode: str = Query("intel", pattern="^(intel|farm|analytics)$"),
+    mode: str = Query("discovery", pattern="^(discovery|farm|intelligence)$"),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
@@ -6353,7 +6353,7 @@ async def channel_map_telemetry(
 
     fallback = lambda title, accent=False: {"title": title, "value": "\u2014", "accent": accent}  # noqa: E731
 
-    if mode == "intel":
+    if mode == "discovery":
         try:
             tf = _channel_map_tenant_filter(tenant_context.tenant_id)
             total = (
@@ -6458,7 +6458,7 @@ async def channel_map_telemetry(
                 fallback("Account Health"),
             ]
 
-    else:  # analytics
+    else:  # intelligence
         cards = [
             {"title": "ROI Score", "value": "\u2014"},
             {"title": "Cost per Sub", "value": "\u2014"},
@@ -7093,6 +7093,140 @@ async def channel_map_bulk_action(
     )
 
     return {"status": "ok", "action": payload.action, "count": len(payload.channel_ids)}
+
+
+# ---------------------------------------------------------------------------
+# Channel Map v3 — viewport + cluster endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/channel-map/viewport")
+async def channel_map_viewport(
+    sw_lat: float = Query(..., ge=-90, le=90),
+    sw_lng: float = Query(..., ge=-180, le=180),
+    ne_lat: float = Query(..., ge=-90, le=90),
+    ne_lng: float = Query(..., ge=-180, le=180),
+    category: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    min_members: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return top channels within a bounding box (for viewport list)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id))
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = (
+        select(ChannelMapEntry)
+        .where(
+            tf,
+            ChannelMapEntry.lat.isnot(None),
+            ChannelMapEntry.lng.isnot(None),
+            ChannelMapEntry.lat >= sw_lat,
+            ChannelMapEntry.lat <= ne_lat,
+            ChannelMapEntry.lng >= sw_lng,
+            ChannelMapEntry.lng <= ne_lng,
+            ChannelMapEntry.member_count >= min_members,
+        )
+        .order_by(ChannelMapEntry.member_count.desc())
+        .limit(limit)
+    )
+    if category:
+        q = q.where(ChannelMapEntry.category == category)
+    if language:
+        q = q.where(ChannelMapEntry.language == language)
+    rows = (await session.execute(q)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "title": r.title,
+                "username": r.username,
+                "category": r.category,
+                "member_count": r.member_count,
+                "engagement_rate": r.engagement_rate,
+                "language": r.language,
+                "lat": r.lat,
+                "lng": r.lng,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/v1/channel-map/clusters")
+async def channel_map_clusters(
+    zoom: int = Query(0, ge=0, le=6),
+    category: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Server-side cluster aggregation for the globe at a given zoom level.
+
+    Grid-based: divides lat/lng into cells whose size depends on zoom.
+    Returns at most 100 clusters (zoom 0-2) or 300 (zoom 3+).
+    """
+    import math
+
+    _check_rate_limit("api", str(tenant_context.tenant_id))
+
+    # Cell size in degrees: zoom 0 → 30°, zoom 1 → 20°, zoom 2 → 10°, zoom 3 → 5°, zoom 4 → 2°
+    cell_sizes = {0: 30, 1: 20, 2: 10, 3: 5, 4: 2, 5: 1, 6: 0.5}
+    cell_size = cell_sizes.get(zoom, 0.5)
+    max_clusters = 100 if zoom <= 2 else 300
+
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(
+        ChannelMapEntry.lat,
+        ChannelMapEntry.lng,
+        ChannelMapEntry.category,
+        ChannelMapEntry.member_count,
+    ).where(tf, ChannelMapEntry.lat.isnot(None), ChannelMapEntry.lng.isnot(None))
+
+    if category:
+        q = q.where(ChannelMapEntry.category == category)
+    if language:
+        q = q.where(ChannelMapEntry.language == language)
+
+    rows = (await session.execute(q)).all()
+
+    # Grid-based clustering
+    clusters: dict[tuple[int, int], dict] = {}
+    for lat, lng, cat, members in rows:
+        cell_lat = int(math.floor(lat / cell_size))
+        cell_lng = int(math.floor(lng / cell_size))
+        key = (cell_lat, cell_lng)
+        if key not in clusters:
+            clusters[key] = {
+                "lat_sum": 0.0,
+                "lng_sum": 0.0,
+                "count": 0,
+                "members_sum": 0,
+                "categories": {},
+            }
+        c = clusters[key]
+        c["lat_sum"] += lat
+        c["lng_sum"] += lng
+        c["count"] += 1
+        c["members_sum"] += members or 0
+        if cat:
+            c["categories"][cat] = c["categories"].get(cat, 0) + 1
+
+    # Build response, sorted by count descending, limited
+    result = []
+    for _key, c in sorted(clusters.items(), key=lambda x: x[1]["count"], reverse=True)[:max_clusters]:
+        n = c["count"]
+        dominant = max(c["categories"], key=c["categories"].get) if c["categories"] else None
+        result.append({
+            "lat": round(c["lat_sum"] / n, 4),
+            "lng": round(c["lng_sum"] / n, 4),
+            "count": n,
+            "dominant_category": dominant,
+            "avg_members": int(c["members_sum"] / n) if n > 0 else 0,
+        })
+
+    return {"clusters": result, "zoom": zoom, "total_channels": len(rows)}
 
 
 # ---------------------------------------------------------------------------
