@@ -9,7 +9,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy import (
     Column, Integer, BigInteger, String, Float, Boolean, DateTime, Date, Text, ForeignKey,
-    UniqueConstraint, JSON, Index, Numeric,
+    UniqueConstraint, JSON, Index, Numeric, func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.dialects.postgresql import JSONB
@@ -36,6 +36,7 @@ class AuthUser(Base):
     email = Column(String(255), unique=True, nullable=True)
     company = Column(String(255), nullable=True)
     password_hash = Column(String(255), nullable=True)  # bcrypt hash, null for Telegram-only users
+    is_platform_admin = Column(Boolean, server_default="false", nullable=False)
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
@@ -1831,3 +1832,82 @@ class AgencyInvite(Base):
     created_at = Column(DateTime, default=utcnow)
 
     agency = relationship("Agency", back_populates="invites")
+
+
+# ── Sprint 17: Admin Panel Foundation ──────────────────────────────
+
+
+class AdminAccount(Base):
+    """Аккаунт под управлением админа (PostgreSQL-индекс для filesystem sessions)."""
+    __tablename__ = "admin_accounts"
+    __table_args__ = (
+        Index("ix_admin_accounts_workspace", "workspace_id"),
+        Index("ix_admin_accounts_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, nullable=False)
+    phone = Column(String(20), nullable=False, unique=True)
+    country = Column(String(5))
+    display_name = Column(String(255))
+    username = Column(String(255))
+    bio = Column(Text)
+    api_id = Column(Integer)
+    api_hash = Column(String(64))
+    dc_id = Column(Integer)
+    session_path = Column(String(512))
+    proxy_id = Column(Integer)
+    two_fa_password = Column(String(128))
+    status = Column(String(32), server_default="uploaded")
+    lifecycle_phase = Column(String(32), server_default="day0")
+    source = Column(String(32))
+    metadata_ = Column("metadata", JSONType, server_default="{}")
+    security_hardened_at = Column(DateTime(timezone=True))
+    warmup_started_at = Column(DateTime(timezone=True))
+    profile_change_earliest = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminProxy(Base):
+    """Прокси под управлением админа."""
+    __tablename__ = "admin_proxies"
+    __table_args__ = (
+        Index("ix_admin_proxies_workspace", "workspace_id"),
+        Index("ix_admin_proxies_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, nullable=False)
+    host = Column(String(255), nullable=False)
+    port = Column(Integer, nullable=False)
+    username = Column(String(255))
+    password = Column(String(255))
+    proxy_type = Column(String(10), server_default="socks5")
+    country = Column(String(5))
+    status = Column(String(16), server_default="untested")
+    bound_account_id = Column(Integer)
+    last_tested_at = Column(DateTime(timezone=True))
+    last_ip = Column(String(45))
+    supports_https_connect = Column(Boolean)
+    metadata_ = Column("metadata", JSONType, server_default="{}")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminOperationLog(Base):
+    """Лог операций админ-панели."""
+    __tablename__ = "admin_operations_log"
+    __table_args__ = (
+        Index("ix_admin_ops_log_workspace", "workspace_id"),
+        Index("ix_admin_ops_log_created", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer)
+    proxy_id = Column(Integer)
+    module = Column(String(32), nullable=False)
+    action = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False)
+    detail = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
