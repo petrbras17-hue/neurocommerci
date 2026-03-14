@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `613a37d` |
+| Last committed HEAD | `2dbbdc8` |
 | VPS safe branch | `main` |
-| VPS safe commit | `613a37d` |
+| VPS safe commit | `2dbbdc8` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 11 (Self-Healing & Auto-Purchase)` |
-| Next planned sprint | `Sprint 12 (Live Testing & Scale) — requires account purchase` |
+| Current completed sprint | `Sprint 13 (Billing & Subscriptions)` |
+| Next planned sprint | `Sprint 14 — requires account purchase for live testing` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -70,6 +70,12 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-14 | Channel Map Live Data + Interactivity | `main` | `71759e1` | Real channels + clickable globe | Purged 1M fake channels, seeded 188 real RU/CIS/global channels (5K+ subscribers), fixed 5 critical bugs: hexBinMerge=false (restores click/hover), ResizeObserver width/height (fixes raycaster coordinates), log-scale hex altitude (no more nuclear rods), removed unused R3F deps, imperative globe material (avoids Three.js duplicate). TGStat import script ready (needs paid S plan). 7 commits deployed to VPS. | Green | Green | Get more channels: TGStat paid plan ($29/mo) or Telethon parsing. |
 
 | 2026-03-14 | Channel Map v3 Sprint 1 | `main` | `613a37d` | 3-panel layout + Discovery mode | Rewrote ChannelMapPageV2 with 3-panel layout (left 320px + globe + right 380px slide-in), ModeTabBar (Discovery/Farm/Intelligence), DiscoveryPanel with FilterControls + CategoryAccordion + ViewportChannelList, server-side grid clusters via /v1/channel-map/clusters, viewport query, spatial index, refactored useHudMode to accept MapMode, enhanced hover tooltip. 17 files, 1977 insertions. 307 tests pass, tsc clean. | Green | Green | Sprint 12 (Live Testing) + Sprint 13 (Billing) executing in parallel. |
+
+| 2026-03-14 | Code Audit Fixes | `main` | `de8ee33` | SQL clustering + XSS + memory leak | Rewrote /v1/channel-map/clusters to SQL-side GROUP BY (eliminated OOM risk), replaced JS hover handlers with CSS :hover injection (fixed GC memory leak on cluster DOM), added single-quote XSS escaping, added useMemo to CategoryAccordion + ViewportChannelList. | Green | Green | Sprints 12+13 in parallel. |
+
+| 2026-03-14 | Sprint 13 Billing | `main` | `e2255d9` | Plans, trial, Stripe + YooKassa, UI | Added billing_service.py (866 lines): get_plans, create_trial, create_subscription, cancel_subscription, check_limits, get_usage. Migration 20260314_33 (plans seed, payments table, FORCE RLS). 8 billing API endpoints. BillingPage rewritten with usage bars, trial countdown, plan grid, payment history. 21 billing tests pass. | Green | Green | Sprint 12 merge. |
+
+| 2026-03-14 | Sprint 12 Farm Monitor | `main` | `2dbbdc8` | Farm monitoring + bulk ops + resource estimation | FarmMonitorPage (445 lines): real-time farm stats, comment quality analysis with style distribution, VPS resource estimation. 7 new endpoints: /v1/farm/stats/live, /v1/farm/comment-quality, /v1/system/resource-estimate, /v1/accounts/auto-bind-proxies, /v1/accounts/bulk-warmup, /v1/accounts/bulk-import-zip, /v1/accounts/import-status. Fixed accessToken auth context. | Green | Green | Sprint 14: закупка аккаунтов + прокси для live testing. |
 
 ## Update Rules
 
