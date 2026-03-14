@@ -325,7 +325,7 @@ export function GlobeView(props: GlobeViewProps) {
         hexBinPointLng={getLng}
         hexBinPointWeight={getWeight}
         hexBinResolution={hexBinResolution}
-        hexBinMerge={true}
+        hexBinMerge={false}
         hexAltitude={getHexAltitude}
         hexTopColor={getHexColor}
         hexSideColor={getHexColor}
@@ -338,7 +338,7 @@ export function GlobeView(props: GlobeViewProps) {
         pointAltitude={0.01}
         pointRadius={getPointRadius}
         pointColor={getPointColor}
-        pointsMerge={displayMode === "points"}
+        pointsMerge={false}
         pointLabel={getPointLabel}
         onPointClick={handlePointClick}
         // ── HTML labels (detailed only, desktop only) ──────────────────────────
