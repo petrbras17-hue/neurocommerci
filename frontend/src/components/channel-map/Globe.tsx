@@ -5,7 +5,7 @@
 // based on the current displayMode.  Camera flies to globeCenter on change.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-import { useRef, useEffect, useMemo, useCallback } from "react";
+import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import ReactGlobe from "react-globe.gl";
 import * as THREE from "three";
 
@@ -157,6 +157,22 @@ export function GlobeView(props: GlobeViewProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const globeEl = useRef<any>(null);
 
+  // Container ref + measured dimensions — react-globe.gl defaults to
+  // window.innerWidth which breaks raycasting when the globe is in a sidebar layout.
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dims, setDims] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      setDims({ w: Math.round(width), h: Math.round(height) });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Stable globe material — never recreated across renders.
   const globeMaterial = useMemo(() => makeGlobeMaterial(), []);
 
@@ -291,9 +307,11 @@ export function GlobeView(props: GlobeViewProps) {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ width: "100%", height: "100%" }} onClick={onBackgroundClick}>
-      <ReactGlobe
+    <div ref={containerRef} style={{ width: "100%", height: "100%" }} onClick={onBackgroundClick}>
+      {dims.w > 0 && <ReactGlobe
         ref={globeEl}
+        width={dims.w}
+        height={dims.h}
         // Globe appearance
         globeImageUrl=""
         globeMaterial={globeMaterial}
@@ -351,7 +369,7 @@ export function GlobeView(props: GlobeViewProps) {
         ringRepeatPeriod={getRingRepeat}
         // ── Mobile perf ────────────────────────────────────────────────────────
         {...(isMobile ? { pointResolution: 8 } : {})}
-      />
+      />}
     </div>
   );
 }
