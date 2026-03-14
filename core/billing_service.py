@@ -209,6 +209,21 @@ async def create_trial(
     )
 
     log.info("Trial created for tenant=%d plan=%s ends=%s", tenant_id, plan.slug, trial_end.date())
+
+    # Send trial_started email (fire-and-forget).
+    try:
+        tenant_email = await _get_tenant_email(tenant_id, session)
+        if tenant_email:
+            from core.email_service import schedule_email
+            schedule_email(
+                "trial_started",
+                to=tenant_email,
+                plan_name=plan.name,
+                trial_days=trial_days,
+            )
+    except Exception as _email_exc:  # noqa: BLE001
+        log.debug("Trial email scheduling failed for tenant=%d: %s", tenant_id, _email_exc)
+
     return _serialize_subscription(sub)
 
 
@@ -922,7 +937,7 @@ async def handle_yookassa_webhook(
     event_type = event.get("event", "")
     obj = event.get("object", {})
 
-    log.info("YooKassa webhook received: %s", event_type)
+    log.info("YooKassa webhook received: event=%s ip=%s", event_type, client_ip)
 
     if event_type == "payment.succeeded":
         await _handle_yookassa_payment_succeeded(obj, session)
@@ -1002,6 +1017,7 @@ async def _handle_yookassa_payment_succeeded(obj: dict, session: AsyncSession) -
 
 
 async def _handle_yookassa_payment_failed(obj: dict, session: AsyncSession) -> None:
+    external_payment_id = obj.get("id")
     metadata = obj.get("metadata", {})
     tenant_id_str = metadata.get("tenant_id") if metadata else None
     if not tenant_id_str:
@@ -1011,12 +1027,51 @@ async def _handle_yookassa_payment_failed(obj: dict, session: AsyncSession) -> N
     except ValueError:
         return
 
+    # Idempotency: skip duplicate webhook delivery.
+    if external_payment_id and await _payment_event_exists(external_payment_id + "_canceled", session):
+        log.info("YooKassa canceled payment %s already processed — skipping", external_payment_id)
+        return
+
     sub = await get_subscription(tenant_id, session)
     if sub and sub.status not in ("active",):
         sub.status = "past_due"
         if hasattr(sub, "updated_at"):
             sub.updated_at = utcnow()
         await session.flush()
+
+    # Mark the payment record as failed.
+    if external_payment_id:
+        amount_obj = obj.get("amount", {})
+        amount_str = str(amount_obj.get("value", "0")).replace(".", "")
+        try:
+            amount = int(amount_str)
+        except ValueError:
+            amount = 0
+        currency = amount_obj.get("currency", "RUB")
+        sub_id = sub.id if sub else None
+        try:
+            await record_payment(
+                tenant_id=tenant_id,
+                subscription_id=sub_id,
+                amount=amount,
+                currency=currency,
+                provider="yookassa",
+                external_payment_id=external_payment_id + "_canceled",
+                status="failed",
+                session=session,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not record failed YooKassa payment: %s", exc)
+
+    # Send email notification (fire-and-forget).
+    tenant_email = await _get_tenant_email(tenant_id, session)
+    if tenant_email:
+        from core.email_service import schedule_email
+        schedule_email("payment_failed", to=tenant_email)
+
+    await _notify_admin(
+        f"YooKassa payment canceled: tenant={tenant_id} payment_id={external_payment_id}"
+    )
 
 
 async def _handle_yookassa_refund(obj: dict, session: AsyncSession) -> None:
@@ -1156,6 +1211,7 @@ async def create_yookassa_payment(
     tenant_id: int,
     return_url: str,
     session: AsyncSession,
+    email: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a YooKassa payment for the given plan and tenant.
@@ -1163,72 +1219,163 @@ async def create_yookassa_payment(
     Requires YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY to be set.
     Raises BillingError on configuration error or provider error.
 
-    Returns {"checkout_url": str, "payment_id": str}.
+    Tries the official ``yookassa`` Python SDK first; falls back to a
+    direct ``aiohttp`` call if the SDK is not installed.
+
+    Returns {"payment_url": str, "payment_id": str, "provider": "yookassa"}.
     """
     if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
-        raise BillingError("YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY not configured")
+        raise BillingError("YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY не настроен")
 
     from storage.models import Plan
     import uuid
-    import aiohttp
 
     plan = (
         await session.execute(select(Plan).where(Plan.id == plan_id).limit(1))
     ).scalar_one_or_none()
     if plan is None:
-        raise BillingError(f"Plan id={plan_id} not found")
+        raise BillingError(f"Тариф id={plan_id} не найден")
 
     price_rub = plan.price_monthly_rub or 0
+    price_str = f"{price_rub:.2f}"
     idempotence_key = str(uuid.uuid4())
 
-    payload = {
-        "amount": {
-            "value": f"{price_rub}.00",
-            "currency": "RUB",
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": return_url,
-        },
-        "capture": True,
-        "description": f"Подписка {plan.name} — NEURO COMMENTING",
-        "metadata": {
-            "tenant_id": str(tenant_id),
-            "plan_id": str(plan_id),
-            "plan_slug": plan.slug,
-        },
+    # Use configured return URL override if set; else use the caller-provided value.
+    effective_return_url = settings.YOOKASSA_RETURN_URL or return_url
+
+    description = f"NEURO COMMENTING — тариф {plan.name}"
+    metadata: dict[str, str] = {
+        "tenant_id": str(tenant_id),
+        "plan_slug": plan.slug,
     }
 
-    url = "https://api.yookassa.ru/v3/payments"
-    auth = aiohttp.BasicAuth(
-        login=settings.YOOKASSA_SHOP_ID,
-        password=settings.YOOKASSA_SECRET_KEY,
-    )
-    headers = {
-        "Idempotence-Key": idempotence_key,
-        "Content-Type": "application/json",
-    }
+    # Resolve or create pending subscription so we can attach subscription_id to the payment record.
+    sub = await get_subscription(tenant_id, session)
+    subscription_id = sub.id if sub else None
 
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
-            async with http.post(url, json=payload, auth=auth, headers=headers) as resp:
-                resp_data = await resp.json()
-                if resp.status not in (200, 201):
-                    raise BillingError(
-                        f"YooKassa API error {resp.status}: {resp_data.get('description', resp_data)}"
-                    )
-        confirmation = resp_data.get("confirmation", {})
-        checkout_url = confirmation.get("confirmation_url", "")
-        payment_id = resp_data.get("id", "")
-        return {
-            "checkout_url": checkout_url,
-            "payment_id": payment_id,
-            "provider": "yookassa",
+    # Build receipt block required by Russian law (54-ФЗ) — included only when email is known.
+    receipt: dict[str, Any] | None = None
+    if email:
+        receipt = {
+            "customer": {"email": email},
+            "items": [
+                {
+                    "description": plan.name,
+                    "quantity": "1.00",
+                    "amount": {"value": price_str, "currency": "RUB"},
+                    "vat_code": 1,
+                }
+            ],
         }
-    except BillingError:
-        raise
+
+    payment_id = ""
+    checkout_url = ""
+
+    # ------------------------------------------------------------------
+    # Attempt 1: official yookassa SDK (sync, runs in thread executor).
+    # ------------------------------------------------------------------
+    try:
+        import yookassa as _yk  # type: ignore[import]
+        from yookassa import Configuration as _YkConfig, Payment as _YkPayment  # type: ignore[import]
+
+        _YkConfig.account_id = settings.YOOKASSA_SHOP_ID
+        _YkConfig.secret_key = settings.YOOKASSA_SECRET_KEY
+
+        payment_params: dict[str, Any] = {
+            "amount": {"value": price_str, "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": effective_return_url},
+            "capture": True,
+            "description": description,
+            "metadata": metadata,
+        }
+        if receipt:
+            payment_params["receipt"] = receipt
+        if subscription_id:
+            metadata["subscription_id"] = str(subscription_id)
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        yk_payment = await loop.run_in_executor(
+            None,
+            lambda: _YkPayment.create(payment_params, idempotence_key),
+        )
+        payment_id = yk_payment.id
+        checkout_url = yk_payment.confirmation.confirmation_url or ""
+        log.info("YooKassa payment created via SDK: id=%s tenant=%d", payment_id, tenant_id)
+
+    except ImportError:
+        # ------------------------------------------------------------------
+        # Attempt 2: fallback to direct aiohttp HTTP call.
+        # ------------------------------------------------------------------
+        import aiohttp
+
+        payload: dict[str, Any] = {
+            "amount": {"value": price_str, "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": effective_return_url},
+            "capture": True,
+            "description": description,
+            "metadata": metadata,
+        }
+        if receipt:
+            payload["receipt"] = receipt
+
+        api_url = "https://api.yookassa.ru/v3/payments"
+        auth = aiohttp.BasicAuth(
+            login=settings.YOOKASSA_SHOP_ID,
+            password=settings.YOOKASSA_SECRET_KEY,
+        )
+        headers = {
+            "Idempotence-Key": idempotence_key,
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+                async with http.post(api_url, json=payload, auth=auth, headers=headers) as resp:
+                    resp_data = await resp.json()
+                    if resp.status not in (200, 201):
+                        raise BillingError(
+                            f"YooKassa API error {resp.status}: "
+                            f"{resp_data.get('description', resp_data)}"
+                        )
+            confirmation = resp_data.get("confirmation", {})
+            checkout_url = confirmation.get("confirmation_url", "")
+            payment_id = resp_data.get("id", "")
+            log.info("YooKassa payment created via aiohttp: id=%s tenant=%d", payment_id, tenant_id)
+        except BillingError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise BillingError(f"YooKassa payment creation failed: {exc}") from exc
+
     except Exception as exc:  # noqa: BLE001
-        raise BillingError(f"YooKassa payment creation failed: {exc}") from exc
+        raise BillingError(f"YooKassa SDK payment creation failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Persist a pending Payment record so the webhook handler can match it.
+    # ------------------------------------------------------------------
+    if payment_id:
+        try:
+            await record_payment(
+                tenant_id=tenant_id,
+                subscription_id=subscription_id,
+                amount=price_rub,
+                currency="RUB",
+                provider="yookassa",
+                external_payment_id=payment_id,
+                status="pending",
+                session=session,
+                metadata={"plan_slug": plan.slug, "idempotence_key": idempotence_key},
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Non-fatal: log and continue; the webhook will record the final state.
+            log.warning("Could not persist pending YooKassa payment record: %s", exc)
+
+    return {
+        "payment_url": checkout_url,
+        "payment_id": payment_id,
+        "provider": "yookassa",
+    }
 
 
 # ---------------------------------------------------------------------------

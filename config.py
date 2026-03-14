@@ -234,6 +234,7 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID_MAP: str = Field(default="")  # JSON: {"starter": "price_xxx", ...}
     YOOKASSA_SHOP_ID: str = Field(default="")
     YOOKASSA_SECRET_KEY: str = Field(default="")
+    YOOKASSA_RETURN_URL: str = Field(default="")  # Override for YooKassa redirect URL after payment
     BILLING_TRIAL_DAYS: int = Field(default=3)
 
     # --- Email / SMTP (Sprint 14) ---
@@ -243,6 +244,10 @@ class Settings(BaseSettings):
     SMTP_USER: str = Field(default="")
     SMTP_PASSWORD: str = Field(default="")
     SMTP_FROM_EMAIL: str = Field(default="")  # Defaults to SMTP_USER if empty
+
+    # --- Observability ---
+    SENTRY_DSN: str = Field(default="")
+    REQUEST_ID_HEADER: str = Field(default="X-Request-Id")
 
     model_config = {
         "env_file": str(BASE_DIR / ".env"),

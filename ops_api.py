@@ -11,7 +11,9 @@ import logging
 import os
 from pathlib import Path
 import time
+import traceback
 from typing import Any, AsyncIterator, List, Literal, Optional
+import uuid
 
 import jwt
 import uvicorn
@@ -1376,6 +1378,17 @@ async def tenant_session(
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     validate_critical_secrets(settings)
+    if settings.SENTRY_DSN:
+        try:
+            import sentry_sdk
+            sentry_sdk.init(
+                dsn=settings.SENTRY_DSN,
+                traces_sample_rate=0.1,
+                environment=settings.APP_ENV,
+            )
+            log.info("Sentry initialized (env=%s)", settings.APP_ENV)
+        except ImportError:
+            log.warning("SENTRY_DSN set but sentry-sdk not installed — Sentry disabled")
     await init_db()
     stop_event = asyncio.Event()
     worker_tasks: list[asyncio.Task[Any]] = []
@@ -1411,18 +1424,28 @@ async def lifespan(_: FastAPI):
         await dispose_engine()
 
 
+def _build_cors_origins() -> list[str]:
+    """Return allowed CORS origins based on environment."""
+    if settings.APP_ENV in ("development", "test"):
+        return [settings.WEBAPP_DEV_ORIGIN, "http://127.0.0.1:5173"]
+    if settings.PUBLIC_DOMAIN:
+        origins = [f"https://{settings.PUBLIC_DOMAIN}"]
+        # also allow www subdomain if PUBLIC_DOMAIN is a bare apex domain
+        if not settings.PUBLIC_DOMAIN.startswith("www."):
+            origins.append(f"https://www.{settings.PUBLIC_DOMAIN}")
+        return origins
+    # production with no PUBLIC_DOMAIN — deny all cross-origin requests
+    return []
+
+
 app = FastAPI(title="NEURO COMMENTING Ops API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=(
-        [settings.WEBAPP_DEV_ORIGIN, "http://127.0.0.1:5173"]
-        if settings.APP_ENV in ("development", "test")
-        else [f"https://{settings.PUBLIC_DOMAIN}"] if hasattr(settings, "PUBLIC_DOMAIN") and settings.PUBLIC_DOMAIN
-        else []
-    ),
+    allow_origins=_build_cors_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Request-Id"],
 )
 
 
@@ -1437,6 +1460,38 @@ async def security_headers_middleware(request: Request, call_next):
     if settings.APP_ENV == "production" and settings.PUBLIC_DOMAIN:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a unique request ID to every request and propagate it in the response header."""
+    request_id = str(uuid.uuid4())
+    # Store on request state so downstream code can reference it
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers[settings.REQUEST_ID_HEADER] = request_id
+    return response
+
+
+# FastAPI @app.middleware decorators run in reverse registration order on the
+# request path (last registered = first executed).  The HTTPS redirect must
+# fire before security headers and request-ID middleware, so it is registered
+# last here.
+_HEALTH_PATHS = frozenset({"/health", "/healthz"})
+
+
+@app.middleware("http")
+async def https_redirect_middleware(request: Request, call_next):
+    """Redirect plain HTTP to HTTPS in production, skipping load-balancer health checks."""
+    if settings.APP_ENV == "production" and request.url.path not in _HEALTH_PATHS:
+        proto = request.headers.get("x-forwarded-proto", "").strip().lower()
+        if proto and proto != "https":
+            https_url = request.url.replace(scheme="https")
+            return Response(
+                status_code=301,
+                headers={"Location": str(https_url)},
+            )
+    return await call_next(request)
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -8262,6 +8317,14 @@ async def billing_checkout(
     cancel_url = payload.cancel_url or f"{base_url}/app/billing?checkout=cancelled"
     return_url = payload.return_url or f"{base_url}/app/billing?checkout=success"
 
+    # Resolve user email for YooKassa receipt (Russian law 54-ФЗ).
+    from core.billing_service import _get_tenant_email
+    user_email: str | None = None
+    try:
+        user_email = await _get_tenant_email(tenant_context.tenant_id, session)
+    except Exception:  # noqa: BLE001
+        pass  # Non-critical — receipt is omitted if email is unavailable.
+
     try:
         if provider == "stripe":
             result = await create_stripe_checkout(
@@ -8277,7 +8340,11 @@ async def billing_checkout(
                 tenant_id=tenant_context.tenant_id,
                 return_url=return_url,
                 session=session,
+                email=user_email,
             )
+            # Normalise response: always expose payment_url at the top level.
+            if "payment_url" not in result and "checkout_url" in result:
+                result["payment_url"] = result["checkout_url"]
     except BillingError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -12361,9 +12428,26 @@ async def assistant_service_exception_handler(_: Request, exc: AssistantServiceE
 
 
 @app.exception_handler(Exception)
-async def unexpected_exception_handler(_: Request, exc: Exception) -> JSONResponse:
-    log.exception("unexpected ops_api exception: %s", exc)
-    return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"detail": "internal_error"})
+async def unexpected_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", "n/a")
+    log.error(
+        "Unhandled exception | request_id=%s method=%s path=%s\n%s",
+        request_id,
+        request.method,
+        request.url.path,
+        traceback.format_exc(),
+    )
+    if settings.SENTRY_DSN:
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except Exception:
+            pass
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "internal_error"},
+        headers={settings.REQUEST_ID_HEADER: request_id},
+    )
 
 
 if __name__ == "__main__":

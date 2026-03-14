@@ -114,6 +114,7 @@ _CLIENT_CALLBACK_EXACT = {
     "policy_status",
     "back_main",
     "back_accounts",
+    "help_support",
 }
 _CLIENT_CALLBACK_PREFIXES = (
     "wizard_",
@@ -1362,22 +1363,38 @@ async def cmd_start(message: Message, db_user: User = None):
             message.from_user.first_name,
         )
 
+    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+
+    # Build platform inline keyboard (shown in both branches)
+    platform_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Открыть платформу", url=f"https://{domain}/app")],
+        [
+            InlineKeyboardButton(text="📊 Мой дашборд", url=f"https://{domain}/app/dashboard"),
+            InlineKeyboardButton(text="🌍 Карта каналов", url=f"https://{domain}/app/channel-map"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 Тарифы", url=f"https://{domain}/pricing"),
+            InlineKeyboardButton(text="📞 Поддержка", callback_data="help_support"),
+        ],
+    ])
+
     # Check if new user needs onboarding (no product configured)
     if not db_user.product_name and not db_user.is_admin:
         await message.answer(
-            "🚀 <b>NEURO COMMENTING</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "Добро пожаловать! Здесь вы подготовите аккаунты,\n"
-            "подберёте каналы и включите автоматический режим.\n\n"
-            "Быстрый путь:\n\n"
-            "1. Настройте продукт\n"
-            "2. Загрузите прокси\n"
-            "3. Добавьте аккаунты\n"
-            "4. Подготовьте аккаунты к работе\n"
-            "5. Добавьте каналы и включите автопилот\n\n"
-            "Начнём с карточки продукта 👇",
+            "👋 <b>Добро пожаловать в NEURO COMMENTING!</b>\n\n"
+            "Telegram Growth OS для бизнеса — автоматический умный комментинг, "
+            "аналитика каналов и управление аккаунтами.\n\n"
+            f"🔗 Платформа: https://{domain}/app\n"
+            f"📖 Тарифы: https://{domain}/pricing\n\n"
+            "⚡ У вас нет активной подписки. Начните с бесплатного пробного периода!\n\n"
+            "Используйте кнопки ниже для быстрого доступа:",
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🚀 Открыть платформу", url=f"https://{domain}/app")],
+                [
+                    InlineKeyboardButton(text="💰 Тарифы", url=f"https://{domain}/pricing"),
+                    InlineKeyboardButton(text="📞 Поддержка", callback_data="help_support"),
+                ],
                 [InlineKeyboardButton(text="🎯 Настроить продукт", callback_data="onboard_product")],
                 [InlineKeyboardButton(text="⏭ Пропустить (настрою позже)", callback_data="onboard_skip")],
             ]),
@@ -1387,23 +1404,102 @@ async def cmd_start(message: Message, db_user: User = None):
     product_name = db_user.product_name or settings.PRODUCT_NAME
     product_link = db_user.product_bot_link or settings.PRODUCT_BOT_LINK
 
+    welcome_text = (
+        "👋 <b>Добро пожаловать в NEURO COMMENTING!</b>\n\n"
+        "Telegram Growth OS для бизнеса — автоматический умный комментинг, "
+        "аналитика каналов и управление аккаунтами.\n\n"
+        f"🔗 Платформа: https://{domain}/app\n"
+        f"📖 Тарифы: https://{domain}/pricing\n\n"
+        f"🎯 Ваш продукт: <b>{escape(product_name)}</b>\n"
+        f"🔗 Ссылка: {escape(product_link)}\n\n"
+        "⚡ У вас нет активной подписки. Начните с бесплатного пробного периода!\n\n"
+        "Используйте кнопки ниже для быстрого доступа:"
+    )
+
     await message.answer(
-        "🚀 <b>NEURO COMMENTING</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"Помогает вести продвижение в Telegram\n"
-        f"для <b>{escape(product_name)}</b>\n\n"
-        f"🔗 Продукт: {escape(product_link)}\n\n"
-        "<b>С чего начать:</b>\n"
-        "1. 🎯 Продукт → проверьте название и ссылку\n"
-        "2. 🌐 Прокси → Загрузить\n"
-        "3. 👤 Аккаунты → Загрузить аккаунт\n"
-        "4. 👤 Аккаунты → Проверить доступ\n"
-        "5. 👤 Аккаунты → Черновики и применение\n"
-        "6. 📢 Каналы и 🔍 Поиск каналов → выберите, где работать\n"
-        "7. 💬 Автоматический режим → включите автопилот\n\n"
-        "Выберите раздел в меню ниже 👇",
+        welcome_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=main_menu_kb(),
+        reply_markup=platform_kb,
+    )
+
+
+# ============================================================
+# Команды платформы (/platform, /billing) и callback help_support
+# ============================================================
+
+@router.message(Command("platform"))
+async def cmd_platform(message: Message, db_user: User = None):
+    """Показать статус платформы и быстрые ссылки."""
+    if not db_user:
+        db_user = await get_or_create_user(
+            message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name,
+        )
+
+    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+
+    # Gather account count for this user
+    accounts = await account_mgr.load_accounts(user_id=_tenant_read_scope_user_id(db_user))
+    account_count = len(accounts) if accounts else 0
+
+    last_seen = db_user.last_active_at
+    last_seen_str = last_seen.strftime("%d.%m.%Y") if last_seen else "нет данных"
+
+    status_text = (
+        "🖥 <b>Статус платформы NEURO COMMENTING</b>\n\n"
+        f"👤 Пользователь: <b>{escape(db_user.first_name or db_user.username or 'Гость')}</b>\n"
+        f"📅 Последняя активность: {last_seen_str}\n"
+        f"📱 Аккаунтов: <b>{account_count}</b>\n\n"
+        "⚡ У вас нет активной подписки. Начните с бесплатного пробного периода!\n\n"
+        "Используйте кнопки ниже для быстрого доступа:"
+    )
+
+    platform_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Открыть платформу", url=f"https://{domain}/app")],
+        [
+            InlineKeyboardButton(text="📊 Мой дашборд", url=f"https://{domain}/app/dashboard"),
+            InlineKeyboardButton(text="🌍 Карта каналов", url=f"https://{domain}/app/channel-map"),
+        ],
+        [
+            InlineKeyboardButton(text="💰 Тарифы", url=f"https://{domain}/pricing"),
+            InlineKeyboardButton(text="📞 Поддержка", callback_data="help_support"),
+        ],
+    ])
+
+    await message.answer(status_text, parse_mode=ParseMode.HTML, reply_markup=platform_kb)
+
+
+@router.message(Command("billing"))
+async def cmd_billing(message: Message, db_user: User = None):
+    """Быстрый доступ к оплате и тарифам."""
+    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+
+    billing_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Перейти к оплате", url=f"https://{domain}/app/billing")],
+        [InlineKeyboardButton(text="📋 Тарифы", url=f"https://{domain}/pricing")],
+    ])
+
+    await message.answer(
+        "💳 <b>Управление подпиской и оплата</b>\n\n"
+        "Выберите действие:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=billing_kb,
+    )
+
+
+@router.callback_query(F.data == "help_support")
+async def cb_help_support(callback: CallbackQuery, db_user: User = None):
+    """Показать контактную информацию поддержки."""
+    await callback.answer()
+    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+    await callback.message.answer(
+        "📞 <b>Поддержка NEURO COMMENTING</b>\n\n"
+        "Если у вас возникли вопросы или проблемы:\n\n"
+        f"🌐 Платформа: https://{domain}/app\n"
+        "💬 Напишите нам напрямую в этом чате.\n\n"
+        "Мы ответим в ближайшее время!",
+        parse_mode=ParseMode.HTML,
     )
 
 
