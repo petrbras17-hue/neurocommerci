@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { getCategoryMeta, DESIGN_TOKENS as T } from '../constants';
 
 interface Props {
@@ -23,9 +23,10 @@ export default function CategoryAccordion({
     [selectedCategory, onCategorySelect],
   );
 
-  // Sort by count descending
-  const sorted = [...categories].sort(
-    (a, b) => (categoryCounts[b] ?? 0) - (categoryCounts[a] ?? 0),
+  // Sort by count descending (memoized)
+  const sorted = useMemo(
+    () => [...categories].sort((a, b) => (categoryCounts[b] ?? 0) - (categoryCounts[a] ?? 0)),
+    [categories, categoryCounts],
   );
 
   return (

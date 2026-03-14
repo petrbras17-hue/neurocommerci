@@ -7177,56 +7177,69 @@ async def channel_map_clusters(
     max_clusters = 100 if zoom <= 2 else 300
 
     tf = _channel_map_tenant_filter(tenant_context.tenant_id)
-    q = select(
-        ChannelMapEntry.lat,
-        ChannelMapEntry.lng,
-        ChannelMapEntry.category,
-        ChannelMapEntry.member_count,
-    ).where(tf, ChannelMapEntry.lat.isnot(None), ChannelMapEntry.lng.isnot(None))
 
+    # SQL-side grid aggregation — no full table scan into Python memory
+    cell_lat_expr = func.floor(ChannelMapEntry.lat / cell_size)
+    cell_lng_expr = func.floor(ChannelMapEntry.lng / cell_size)
+
+    base_where = [tf, ChannelMapEntry.lat.isnot(None), ChannelMapEntry.lng.isnot(None)]
     if category:
-        q = q.where(ChannelMapEntry.category == category)
+        base_where.append(ChannelMapEntry.category == category)
     if language:
-        q = q.where(ChannelMapEntry.language == language)
+        base_where.append(ChannelMapEntry.language == language)
 
+    q = (
+        select(
+            func.avg(ChannelMapEntry.lat).label("avg_lat"),
+            func.avg(ChannelMapEntry.lng).label("avg_lng"),
+            func.count().label("cnt"),
+            func.avg(ChannelMapEntry.member_count).label("avg_members"),
+            cell_lat_expr.label("cell_lat"),
+            cell_lng_expr.label("cell_lng"),
+        )
+        .where(*base_where)
+        .group_by(cell_lat_expr, cell_lng_expr)
+        .order_by(func.count().desc())
+        .limit(max_clusters)
+    )
     rows = (await session.execute(q)).all()
 
-    # Grid-based clustering
-    clusters: dict[tuple[int, int], dict] = {}
-    for lat, lng, cat, members in rows:
-        cell_lat = int(math.floor(lat / cell_size))
-        cell_lng = int(math.floor(lng / cell_size))
-        key = (cell_lat, cell_lng)
-        if key not in clusters:
-            clusters[key] = {
-                "lat_sum": 0.0,
-                "lng_sum": 0.0,
-                "count": 0,
-                "members_sum": 0,
-                "categories": {},
-            }
-        c = clusters[key]
-        c["lat_sum"] += lat
-        c["lng_sum"] += lng
-        c["count"] += 1
-        c["members_sum"] += members or 0
-        if cat:
-            c["categories"][cat] = c["categories"].get(cat, 0) + 1
+    # Dominant category per cell — separate grouped query
+    dom_q = (
+        select(
+            func.floor(ChannelMapEntry.lat / cell_size).label("cell_lat"),
+            func.floor(ChannelMapEntry.lng / cell_size).label("cell_lng"),
+            ChannelMapEntry.category,
+            func.count().label("cat_cnt"),
+        )
+        .where(*base_where, ChannelMapEntry.category.isnot(None))
+        .group_by(text("1"), text("2"), ChannelMapEntry.category)
+    )
+    dom_rows = (await session.execute(dom_q)).all()
 
-    # Build response, sorted by count descending, limited
+    cat_best: dict[tuple[int, int], str] = {}
+    cat_max: dict[tuple[int, int], int] = {}
+    for r in dom_rows:
+        key = (int(r.cell_lat), int(r.cell_lng))
+        if r.cat_cnt > cat_max.get(key, 0):
+            cat_max[key] = r.cat_cnt
+            cat_best[key] = r.category
+
+    total_q = select(func.count()).where(*base_where)
+    total_channels = (await session.execute(total_q)).scalar() or 0
+
     result = []
-    for _key, c in sorted(clusters.items(), key=lambda x: x[1]["count"], reverse=True)[:max_clusters]:
-        n = c["count"]
-        dominant = max(c["categories"], key=c["categories"].get) if c["categories"] else None
+    for r in rows:
+        key = (int(r.cell_lat), int(r.cell_lng))
         result.append({
-            "lat": round(c["lat_sum"] / n, 4),
-            "lng": round(c["lng_sum"] / n, 4),
-            "count": n,
-            "dominant_category": dominant,
-            "avg_members": int(c["members_sum"] / n) if n > 0 else 0,
+            "lat": round(float(r.avg_lat), 4),
+            "lng": round(float(r.avg_lng), 4),
+            "count": r.cnt,
+            "dominant_category": cat_best.get(key),
+            "avg_members": int(r.avg_members) if r.avg_members else 0,
         })
 
-    return {"clusters": result, "zoom": zoom, "total_channels": len(rows)}
+    return {"clusters": result, "zoom": zoom, "total_channels": total_channels}
 
 
 # ---------------------------------------------------------------------------

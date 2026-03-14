@@ -91,7 +91,7 @@ const TOOLTIP_STYLE =
   "pointer-events:none;white-space:nowrap;";
 
 function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function hexTooltip(hex: HexBin): string {

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { getCategoryMeta, formatNumber, DESIGN_TOKENS as T } from '../constants';
 import type { GeoPoint } from '../../../api';
 
@@ -9,10 +10,11 @@ interface Props {
 const MAX_VISIBLE = 10;
 
 export default function ViewportChannelList({ geoPoints, onChannelSelect }: Props) {
-  // Show top channels sorted by member count
-  const topChannels = [...geoPoints]
-    .sort((a, b) => b.m - a.m)
-    .slice(0, MAX_VISIBLE);
+  // Show top channels sorted by member count (memoized to avoid re-sorting on every render)
+  const topChannels = useMemo(
+    () => [...geoPoints].sort((a, b) => b.m - a.m).slice(0, MAX_VISIBLE),
+    [geoPoints],
+  );
 
   if (topChannels.length === 0) {
     return (

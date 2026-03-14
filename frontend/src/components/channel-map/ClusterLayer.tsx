@@ -1,10 +1,16 @@
-import { useMemo } from 'react';
 import type { ClusterPoint } from './hooks/useClusters';
-import { getCategoryMeta, DESIGN_TOKENS as T } from './constants';
+import { getCategoryMeta } from './constants';
 
-interface Props {
-  clusters: ClusterPoint[];
+// Inject cluster hover CSS once (avoids JS event handler memory leaks)
+let _cssInjected = false;
+function injectClusterCSS() {
+  if (_cssInjected) return;
+  const style = document.createElement('style');
+  style.textContent = '.nc-cluster:hover{transform:translate(-50%,-50%) scale(1.15)!important}';
+  document.head.appendChild(style);
+  _cssInjected = true;
 }
+injectClusterCSS();
 
 /**
  * Creates an HTML element for a numeric cluster bubble to be rendered
@@ -26,9 +32,7 @@ export function createClusterElement(cluster: ClusterPoint): HTMLElement {
     `transform:translate(-50%,-50%);`;
 
   el.textContent = formatClusterCount(cluster.count);
-
-  el.onmouseenter = () => { el.style.transform = 'translate(-50%,-50%) scale(1.15)'; };
-  el.onmouseleave = () => { el.style.transform = 'translate(-50%,-50%)'; };
+  el.classList.add('nc-cluster');
 
   return el;
 }
@@ -44,21 +48,4 @@ function clusterSize(count: number): number {
 function formatClusterCount(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(0)}K`;
   return String(n);
-}
-
-/**
- * Stable cluster data for react-globe.gl htmlElementsData.
- * Converts ClusterPoint[] to objects with lat/lng/el accessors.
- */
-export function useClusterElements(clusters: ClusterPoint[]) {
-  return useMemo(
-    () => clusters.map((c) => ({
-      lat: c.lat,
-      lng: c.lng,
-      count: c.count,
-      dominant_category: c.dominant_category,
-      avg_members: c.avg_members,
-    })),
-    [clusters],
-  );
 }
