@@ -120,6 +120,9 @@ from storage.models import (
     AccountHealthHistory,
     AccountHealthScore,
     AccountStageEvent,
+    AdminAccount,
+    AdminOperationLog,
+    AdminProxy,
     Agency,
     AgencyClient,
     AgencyInvite,
@@ -129,6 +132,7 @@ from storage.models import (
     AnalyticsDailyCache,
     AnalyticsEvent,
     AppJob,
+    AuthUser,
     Campaign,
     CampaignAccount,
     CampaignChannel,
@@ -8157,12 +8161,29 @@ async def billing_subscribe(
     except BillingError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
-    # Payment URL would be generated here for live providers.
+    # Generate real payment URL for live providers.
     payment_url: str | None = None
-    if payload.provider == "stripe" and settings.STRIPE_SECRET_KEY:
+    if payload.provider == "yookassa" and settings.YOOKASSA_SECRET_KEY:
+        try:
+            from core.billing_service import _get_tenant_email
+            user_email: str | None = None
+            try:
+                user_email = await _get_tenant_email(tenant_context.tenant_id, session)
+            except Exception:
+                pass
+            result = await create_yookassa_payment(
+                plan_id=plan.id,
+                tenant_id=tenant_context.tenant_id,
+                return_url=settings.YOOKASSA_RETURN_URL or f"https://{settings.PUBLIC_DOMAIN}/app/billing?payment=success",
+                session=session,
+                email=user_email,
+            )
+            payment_url = result.get("payment_url")
+        except Exception as exc:
+            log.warning("YooKassa payment creation failed: %s", exc)
+            payment_url = None
+    elif payload.provider == "stripe" and settings.STRIPE_SECRET_KEY:
         payment_url = f"/billing/stripe/checkout?plan={payload.plan_slug}"
-    elif payload.provider == "yookassa" and settings.YOOKASSA_SECRET_KEY:
-        payment_url = f"/billing/yookassa/checkout?plan={payload.plan_slug}"
 
     return {"subscription": sub_data, "payment_url": payment_url}
 
@@ -12367,6 +12388,454 @@ async def agency_revenue_export(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Sprint 17: Admin Onboarding + Proxy Management
+# ---------------------------------------------------------------------------
+
+
+async def require_platform_admin(request: Request) -> TenantContext:
+    """Require is_platform_admin=True on auth_users."""
+    ctx = await get_tenant_context(request)
+    async with async_session() as session:
+        async with session.begin():
+            user = (await session.execute(
+                select(AuthUser).where(AuthUser.id == ctx.user_id)
+            )).scalar_one_or_none()
+            if not user or not user.is_platform_admin:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="platform_admin_required",
+                )
+    return ctx
+
+
+# -- Onboarding endpoints --
+
+
+@app.post("/v1/admin/onboarding/upload-session")
+async def admin_upload_session(request: Request):
+    """Upload .session + metadata.json pair."""
+    ctx = await require_platform_admin(request)
+    form = await request.form()
+    session_file = form.get("session")
+    metadata_file = form.get("metadata")
+    if not session_file or not metadata_file:
+        raise HTTPException(400, "Both 'session' and 'metadata' files required")
+
+    session_bytes = await session_file.read()
+    metadata_bytes = await metadata_file.read()
+    import json as _json
+    metadata_dict = _json.loads(metadata_bytes)
+
+    from core.admin_onboarding import upload_session_json
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            account = await upload_session_json(db, ctx.workspace_id, session_bytes, metadata_dict)
+            return {
+                "id": account.id, "phone": account.phone,
+                "status": account.status, "source": account.source,
+            }
+
+
+@app.post("/v1/admin/onboarding/upload-tdata")
+async def admin_upload_tdata(request: Request):
+    """Upload tdata ZIP for conversion to Telethon session."""
+    ctx = await require_platform_admin(request)
+    form = await request.form()
+    tdata_file = form.get("tdata")
+    if not tdata_file:
+        raise HTTPException(400, "'tdata' ZIP file required")
+
+    import tempfile, shutil
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    try:
+        content = await tdata_file.read()
+        tmp.write(content)
+        tmp.close()
+
+        from core.admin_onboarding import upload_tdata
+        async with async_session() as db:
+            async with db.begin():
+                await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+                account = await upload_tdata(db, ctx.workspace_id, tmp.name)
+                return {
+                    "id": account.id, "phone": account.phone,
+                    "status": account.status, "source": account.source,
+                }
+    finally:
+        import os
+        os.unlink(tmp.name)
+
+
+@app.post("/v1/admin/onboarding/upload-zip")
+async def admin_upload_bulk_zip(request: Request):
+    """Upload bulk ZIP with multiple account folders."""
+    ctx = await require_platform_admin(request)
+    form = await request.form()
+    zip_file = form.get("zip")
+    if not zip_file:
+        raise HTTPException(400, "'zip' file required")
+
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    try:
+        content = await zip_file.read()
+        tmp.write(content)
+        tmp.close()
+
+        from core.admin_onboarding import upload_bulk_zip
+        async with async_session() as db:
+            async with db.begin():
+                await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+                accounts = await upload_bulk_zip(db, ctx.workspace_id, tmp.name)
+                return {
+                    "uploaded": len(accounts),
+                    "accounts": [{"id": a.id, "phone": a.phone} for a in accounts],
+                }
+    finally:
+        import os
+        os.unlink(tmp.name)
+
+
+@app.get("/v1/admin/onboarding/accounts")
+async def admin_list_accounts(
+    request: Request,
+    account_status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List admin-managed accounts with optional status filter."""
+    ctx = await require_platform_admin(request)
+    from core.admin_onboarding import list_accounts
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            accounts = await list_accounts(db, ctx.workspace_id, status=account_status, limit=limit, offset=offset)
+            return {
+                "items": [
+                    {
+                        "id": a.id, "phone": a.phone, "country": a.country,
+                        "display_name": a.display_name, "username": a.username,
+                        "status": a.status, "lifecycle_phase": a.lifecycle_phase,
+                        "source": a.source, "proxy_id": a.proxy_id,
+                        "security_hardened_at": a.security_hardened_at.isoformat() if a.security_hardened_at else None,
+                        "warmup_started_at": a.warmup_started_at.isoformat() if a.warmup_started_at else None,
+                        "created_at": a.created_at.isoformat() if a.created_at else None,
+                    }
+                    for a in accounts
+                ],
+                "total": len(accounts),
+            }
+
+
+@app.get("/v1/admin/onboarding/accounts/{account_id}")
+async def admin_get_account(request: Request, account_id: int):
+    """Get single admin account detail."""
+    ctx = await require_platform_admin(request)
+    from core.admin_onboarding import get_account
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            return {
+                "id": account.id, "phone": account.phone, "country": account.country,
+                "display_name": account.display_name, "username": account.username,
+                "bio": account.bio, "api_id": account.api_id,
+                "dc_id": account.dc_id, "status": account.status,
+                "lifecycle_phase": account.lifecycle_phase, "source": account.source,
+                "proxy_id": account.proxy_id,
+                "security_hardened_at": account.security_hardened_at.isoformat() if account.security_hardened_at else None,
+                "warmup_started_at": account.warmup_started_at.isoformat() if account.warmup_started_at else None,
+                "profile_change_earliest": account.profile_change_earliest.isoformat() if account.profile_change_earliest else None,
+                "created_at": account.created_at.isoformat() if account.created_at else None,
+            }
+
+
+@app.post("/v1/admin/onboarding/accounts/{account_id}/verify")
+async def admin_verify_account(request: Request, account_id: int):
+    """Connect to Telegram and verify account authorization."""
+    ctx = await require_platform_admin(request)
+    from core.admin_onboarding import get_account, verify_account
+    from core.admin_proxy_service import get_proxy, build_proxy_tuple
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            proxy_tuple = None
+            if account.proxy_id:
+                proxy = await get_proxy(db, account.proxy_id)
+                if proxy:
+                    proxy_tuple = build_proxy_tuple(proxy)
+            result = await verify_account(db, account, proxy_tuple)
+            return result
+
+
+@app.post("/v1/admin/onboarding/accounts/{account_id}/harden")
+async def admin_harden_account(request: Request, account_id: int):
+    """Security hardening: kill sessions, set 2FA, configure privacy."""
+    ctx = await require_platform_admin(request)
+    from core.admin_onboarding import get_account, harden_account
+    from core.admin_proxy_service import get_proxy, build_proxy_tuple
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            proxy_tuple = None
+            if account.proxy_id:
+                proxy = await get_proxy(db, account.proxy_id)
+                if proxy:
+                    proxy_tuple = build_proxy_tuple(proxy)
+            result = await harden_account(db, account, proxy_tuple)
+            return result
+
+
+@app.delete("/v1/admin/onboarding/accounts/{account_id}")
+async def admin_delete_account(request: Request, account_id: int):
+    """Remove account record."""
+    ctx = await require_platform_admin(request)
+    from core.admin_onboarding import get_account, delete_account
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            await delete_account(db, account)
+            return {"deleted": True}
+
+
+# -- Proxy endpoints --
+
+
+@app.post("/v1/admin/proxies/import")
+async def admin_import_proxies(request: Request):
+    """Bulk import proxies from text (host:port:user:pass per line)."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    lines = body.get("lines", [])
+    proxy_type = body.get("proxy_type", "socks5")
+    country = body.get("country")
+    if not lines:
+        raise HTTPException(400, "'lines' array required")
+
+    from core.admin_proxy_service import import_proxies
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxies = await import_proxies(db, ctx.workspace_id, lines, proxy_type, country)
+            return {
+                "imported": len(proxies),
+                "proxies": [
+                    {"id": p.id, "host": p.host, "port": p.port, "status": p.status}
+                    for p in proxies
+                ],
+            }
+
+
+@app.get("/v1/admin/proxies")
+async def admin_list_proxies(
+    request: Request,
+    proxy_status: str = None,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List admin proxies with optional status filter."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import list_proxies
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxies = await list_proxies(db, ctx.workspace_id, status=proxy_status, limit=limit, offset=offset)
+            return {
+                "items": [
+                    {
+                        "id": p.id, "host": p.host, "port": p.port,
+                        "proxy_type": p.proxy_type, "country": p.country,
+                        "status": p.status, "bound_account_id": p.bound_account_id,
+                        "last_tested_at": p.last_tested_at.isoformat() if p.last_tested_at else None,
+                        "last_ip": p.last_ip,
+                        "supports_https_connect": p.supports_https_connect,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                    }
+                    for p in proxies
+                ],
+                "total": len(proxies),
+            }
+
+
+@app.post("/v1/admin/proxies/{proxy_id}/test")
+async def admin_test_proxy(request: Request, proxy_id: int):
+    """Test single proxy (HTTP + SOCKS5 + HTTPS CONNECT)."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import get_proxy, test_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxy = await get_proxy(db, proxy_id)
+            if not proxy:
+                raise HTTPException(404, "Proxy not found")
+            result = await test_proxy(db, proxy)
+            return result
+
+
+@app.post("/v1/admin/proxies/test-all")
+async def admin_test_all_proxies(request: Request):
+    """Test all proxies in workspace."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import test_all_proxies
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            results = await test_all_proxies(db, ctx.workspace_id)
+            alive = sum(1 for r in results if r["status"] == "alive")
+            return {"tested": len(results), "alive": alive, "dead": len(results) - alive, "results": results}
+
+
+@app.post("/v1/admin/proxies/{proxy_id}/bind/{account_id}")
+async def admin_bind_proxy(request: Request, proxy_id: int, account_id: int):
+    """Bind proxy to account (1:1 strict)."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import get_proxy, bind_proxy_to_account
+    from core.admin_onboarding import get_account
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxy = await get_proxy(db, proxy_id)
+            if not proxy:
+                raise HTTPException(404, "Proxy not found")
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            try:
+                await bind_proxy_to_account(db, proxy, account)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return {"bound": True, "proxy_id": proxy_id, "account_id": account_id}
+
+
+@app.post("/v1/admin/proxies/{proxy_id}/unbind")
+async def admin_unbind_proxy(request: Request, proxy_id: int):
+    """Unbind proxy from account."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import get_proxy, unbind_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxy = await get_proxy(db, proxy_id)
+            if not proxy:
+                raise HTTPException(404, "Proxy not found")
+            await unbind_proxy(db, proxy)
+            return {"unbound": True}
+
+
+@app.delete("/v1/admin/proxies/{proxy_id}")
+async def admin_delete_proxy(request: Request, proxy_id: int):
+    """Delete proxy (must not be bound)."""
+    ctx = await require_platform_admin(request)
+    from core.admin_proxy_service import get_proxy, delete_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            proxy = await get_proxy(db, proxy_id)
+            if not proxy:
+                raise HTTPException(404, "Proxy not found")
+            try:
+                await delete_proxy(db, proxy)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return {"deleted": True}
+
+
+# -- Admin stats + operations log --
+
+
+@app.get("/v1/admin/onboarding/stats")
+async def admin_onboarding_stats(request: Request):
+    """Account/proxy stats for admin dashboard."""
+    ctx = await require_platform_admin(request)
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+
+            # Account counts by status
+            accounts = (await db.execute(
+                select(AdminAccount).where(AdminAccount.workspace_id == ctx.workspace_id)
+            )).scalars().all()
+            account_stats = {}
+            for a in accounts:
+                account_stats[a.status] = account_stats.get(a.status, 0) + 1
+
+            # Proxy counts
+            proxies = (await db.execute(
+                select(AdminProxy).where(AdminProxy.workspace_id == ctx.workspace_id)
+            )).scalars().all()
+            proxy_alive = sum(1 for p in proxies if p.status == "alive")
+            proxy_dead = sum(1 for p in proxies if p.status == "dead")
+            proxy_bound = sum(1 for p in proxies if p.bound_account_id)
+            proxy_free = sum(1 for p in proxies if p.status == "alive" and not p.bound_account_id)
+
+            return {
+                "accounts": {
+                    "total": len(accounts),
+                    "by_status": account_stats,
+                },
+                "proxies": {
+                    "total": len(proxies),
+                    "alive": proxy_alive,
+                    "dead": proxy_dead,
+                    "bound": proxy_bound,
+                    "free": proxy_free,
+                },
+            }
+
+
+@app.get("/v1/admin/operations-log")
+async def admin_operations_log(
+    request: Request,
+    module: str = None,
+    action_status: str = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """Paginated operations log with optional filters."""
+    ctx = await require_platform_admin(request)
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            q = select(AdminOperationLog).where(
+                AdminOperationLog.workspace_id == ctx.workspace_id
+            )
+            if module:
+                q = q.where(AdminOperationLog.module == module)
+            if action_status:
+                q = q.where(AdminOperationLog.status == action_status)
+            q = q.order_by(AdminOperationLog.created_at.desc()).limit(limit).offset(offset)
+            logs = (await db.execute(q)).scalars().all()
+            return {
+                "items": [
+                    {
+                        "id": log_entry.id,
+                        "account_id": log_entry.account_id,
+                        "proxy_id": log_entry.proxy_id,
+                        "module": log_entry.module,
+                        "action": log_entry.action,
+                        "status": log_entry.status,
+                        "detail": log_entry.detail,
+                        "created_at": log_entry.created_at.isoformat() if log_entry.created_at else None,
+                    }
+                    for log_entry in logs
+                ],
+                "total": len(logs),
+            }
+
+
 # Exception handlers
 # ---------------------------------------------------------------------------
 

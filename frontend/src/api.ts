@@ -944,7 +944,7 @@ export const billingApi = {
     apiFetch<BillingSubscriptionResponse>("/v1/billing/subscription", {accessToken: token}),
   activateTrial: (token: string) =>
     apiFetch<SubscriptionInfo>("/v1/billing/trial", {method: "POST", accessToken: token}),
-  subscribe: (token: string, plan_slug: string, provider = "manual") =>
+  subscribe: (token: string, plan_slug: string, provider = "yookassa") =>
     apiFetch<{subscription: SubscriptionInfo; payment_url: string | null}>("/v1/billing/subscribe", {
       method: "POST", accessToken: token, json: {plan_slug, provider}
     }),
