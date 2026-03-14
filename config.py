@@ -228,6 +228,13 @@ class Settings(BaseSettings):
     AUTO_SPAMBOT_APPEAL_EMAIL: str = Field(default="")
     AUTO_SPAMBOT_APPEAL_REG_YEAR: str = Field(default="2024")
 
+    # --- Billing / Payments (Sprint 13) ---
+    STRIPE_SECRET_KEY: str = Field(default="")
+    STRIPE_WEBHOOK_SECRET: str = Field(default="")
+    YOOKASSA_SHOP_ID: str = Field(default="")
+    YOOKASSA_SECRET_KEY: str = Field(default="")
+    BILLING_TRIAL_DAYS: int = Field(default=3)
+
     model_config = {
         "env_file": str(BASE_DIR / ".env"),
         "env_file_encoding": "utf-8",

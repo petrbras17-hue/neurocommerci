@@ -26,6 +26,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings, validate_critical_secrets
 from core.ai_audit import get_tenant_ai_quality_summary, list_internal_ai_audit
+from core.billing_service import (
+    BillingError,
+    LimitExceeded,
+    NoActiveSubscription,
+    RESOURCE_ACCOUNTS,
+    RESOURCE_CHANNELS,
+    RESOURCE_COMMENTS,
+    RESOURCE_FARMS,
+    cancel_subscription,
+    check_limits,
+    create_subscription,
+    create_trial,
+    get_plan_for_tenant,
+    get_plans,
+    get_subscription,
+    get_usage,
+    handle_stripe_webhook,
+    handle_yookassa_webhook,
+    is_subscription_active,
+    is_trial_expired,
+    list_payments,
+    record_payment,
+    _serialize_plan,
+    _serialize_subscription,
+)
 from core.assistant_jobs import (
     ASSISTANT_QUEUE_NAMES,
     JOB_TYPE_ASSISTANT_MESSAGE,
@@ -7177,69 +7202,56 @@ async def channel_map_clusters(
     max_clusters = 100 if zoom <= 2 else 300
 
     tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    q = select(
+        ChannelMapEntry.lat,
+        ChannelMapEntry.lng,
+        ChannelMapEntry.category,
+        ChannelMapEntry.member_count,
+    ).where(tf, ChannelMapEntry.lat.isnot(None), ChannelMapEntry.lng.isnot(None))
 
-    # SQL-side grid aggregation — no full table scan into Python memory
-    cell_lat_expr = func.floor(ChannelMapEntry.lat / cell_size)
-    cell_lng_expr = func.floor(ChannelMapEntry.lng / cell_size)
-
-    base_where = [tf, ChannelMapEntry.lat.isnot(None), ChannelMapEntry.lng.isnot(None)]
     if category:
-        base_where.append(ChannelMapEntry.category == category)
+        q = q.where(ChannelMapEntry.category == category)
     if language:
-        base_where.append(ChannelMapEntry.language == language)
+        q = q.where(ChannelMapEntry.language == language)
 
-    q = (
-        select(
-            func.avg(ChannelMapEntry.lat).label("avg_lat"),
-            func.avg(ChannelMapEntry.lng).label("avg_lng"),
-            func.count().label("cnt"),
-            func.avg(ChannelMapEntry.member_count).label("avg_members"),
-            cell_lat_expr.label("cell_lat"),
-            cell_lng_expr.label("cell_lng"),
-        )
-        .where(*base_where)
-        .group_by(cell_lat_expr, cell_lng_expr)
-        .order_by(func.count().desc())
-        .limit(max_clusters)
-    )
     rows = (await session.execute(q)).all()
 
-    # Dominant category per cell — separate grouped query
-    dom_q = (
-        select(
-            func.floor(ChannelMapEntry.lat / cell_size).label("cell_lat"),
-            func.floor(ChannelMapEntry.lng / cell_size).label("cell_lng"),
-            ChannelMapEntry.category,
-            func.count().label("cat_cnt"),
-        )
-        .where(*base_where, ChannelMapEntry.category.isnot(None))
-        .group_by(text("1"), text("2"), ChannelMapEntry.category)
-    )
-    dom_rows = (await session.execute(dom_q)).all()
+    # Grid-based clustering
+    clusters: dict[tuple[int, int], dict] = {}
+    for lat, lng, cat, members in rows:
+        cell_lat = int(math.floor(lat / cell_size))
+        cell_lng = int(math.floor(lng / cell_size))
+        key = (cell_lat, cell_lng)
+        if key not in clusters:
+            clusters[key] = {
+                "lat_sum": 0.0,
+                "lng_sum": 0.0,
+                "count": 0,
+                "members_sum": 0,
+                "categories": {},
+            }
+        c = clusters[key]
+        c["lat_sum"] += lat
+        c["lng_sum"] += lng
+        c["count"] += 1
+        c["members_sum"] += members or 0
+        if cat:
+            c["categories"][cat] = c["categories"].get(cat, 0) + 1
 
-    cat_best: dict[tuple[int, int], str] = {}
-    cat_max: dict[tuple[int, int], int] = {}
-    for r in dom_rows:
-        key = (int(r.cell_lat), int(r.cell_lng))
-        if r.cat_cnt > cat_max.get(key, 0):
-            cat_max[key] = r.cat_cnt
-            cat_best[key] = r.category
-
-    total_q = select(func.count()).where(*base_where)
-    total_channels = (await session.execute(total_q)).scalar() or 0
-
+    # Build response, sorted by count descending, limited
     result = []
-    for r in rows:
-        key = (int(r.cell_lat), int(r.cell_lng))
+    for _key, c in sorted(clusters.items(), key=lambda x: x[1]["count"], reverse=True)[:max_clusters]:
+        n = c["count"]
+        dominant = max(c["categories"], key=c["categories"].get) if c["categories"] else None
         result.append({
-            "lat": round(float(r.avg_lat), 4),
-            "lng": round(float(r.avg_lng), 4),
-            "count": r.cnt,
-            "dominant_category": cat_best.get(key),
-            "avg_members": int(r.avg_members) if r.avg_members else 0,
+            "lat": round(c["lat_sum"] / n, 4),
+            "lng": round(c["lng_sum"] / n, 4),
+            "count": n,
+            "dominant_category": dominant,
+            "avg_members": int(c["members_sum"] / n) if n > 0 else 0,
         })
 
-    return {"clusters": result, "zoom": zoom, "total_channels": total_channels}
+    return {"clusters": result, "zoom": zoom, "total_channels": len(rows)}
 
 
 # ---------------------------------------------------------------------------
@@ -7774,39 +7786,185 @@ async def plans_list(request: Request) -> dict[str, Any]:
         ]}
 
 
+
+# ---------------------------------------------------------------------------
+# Sprint 13 — Extended Billing API endpoints
+# ---------------------------------------------------------------------------
+
+
+class SubscribePayload(BaseModel):
+    plan_slug: str
+    provider: str = "manual"  # stripe | yookassa | manual
+
+
+class CancelSubscriptionPayload(BaseModel):
+    reason: str | None = None
+
+
+@app.get("/v1/billing/plans")
+async def billing_plans_list(request: Request) -> dict[str, Any]:
+    """Public endpoint — list all active plans with Sprint 13 fields."""
+    _check_rate_limit("public", _client_ip(request), max_calls=60, window_seconds=60)
+    async with async_session() as session:
+        plans = await get_plans(session)
+    return {"items": plans}
+
+
 @app.get("/v1/billing/subscription")
-async def billing_subscription(
+async def billing_subscription_v2(
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    """Get current tenant subscription."""
-    from storage.models import Plan, Subscription
-    row = (await session.execute(
-        select(Subscription)
-        .where(Subscription.tenant_id == tenant_context.tenant_id)
-        .order_by(Subscription.created_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
-    if not row:
-        return {"subscription": None, "plan": None}
-    plan = (await session.execute(
-        select(Plan).where(Plan.id == row.plan_id)
-    )).scalar_one_or_none()
+    """Get current tenant subscription with usage data."""
+    from storage.models import Plan
+    sub = await get_subscription(tenant_context.tenant_id, session)
+    plan = None
+    if sub:
+        plan = (await session.execute(
+            select(Plan).where(Plan.id == sub.plan_id)
+        )).scalar_one_or_none()
+
+    usage = await get_usage(tenant_context.tenant_id, session)
+    plan_limits: dict[str, Any] = {}
+    if plan:
+        plan_limits = {
+            "max_accounts": plan.max_accounts,
+            "max_channels": plan.max_channels,
+            "comments_per_day": getattr(plan, "comments_per_day", None) or plan.max_comments_per_day,
+            "max_farms": getattr(plan, "max_farms", 5),
+            "max_campaigns": plan.max_campaigns,
+        }
+
     return {
-        "subscription": {
-            "id": row.id, "status": row.status,
-            "trial_ends_at": row.trial_ends_at.isoformat() if row.trial_ends_at else None,
-            "current_period_start": row.current_period_start.isoformat() if row.current_period_start else None,
-            "current_period_end": row.current_period_end.isoformat() if row.current_period_end else None,
-            "cancelled_at": row.cancelled_at.isoformat() if row.cancelled_at else None,
-            "payment_provider": row.payment_provider,
-        },
-        "plan": {
-            "id": plan.id, "slug": plan.slug, "name": plan.name,
-            "price_monthly_rub": plan.price_monthly_rub,
-            "features": plan.features or {},
-        } if plan else None,
+        "subscription": _serialize_subscription(sub) if sub else None,
+        "plan": _serialize_plan(plan) if plan else None,
+        "usage": usage,
+        "limits": plan_limits,
+        "is_active": is_subscription_active(sub),
+        "trial_expired": is_trial_expired(sub),
     }
+
+
+@app.post("/v1/billing/trial", status_code=201)
+async def billing_activate_trial(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Activate a 3-day trial. Fails if a subscription already exists."""
+    try:
+        async with session.begin():
+            result = await create_trial(tenant_context.tenant_id, session)
+    except BillingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return result
+
+
+@app.post("/v1/billing/subscribe")
+async def billing_subscribe(
+    payload: SubscribePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Initiate a subscription (manual/admin path or pre-webhook state creation).
+
+    For Stripe/YooKassa live flows, the real activation happens via webhook.
+    This endpoint creates the DB subscription record and returns a payment_url
+    placeholder until payment providers are configured.
+    """
+    from storage.models import Plan
+    plan = (await session.execute(
+        select(Plan).where(Plan.slug == payload.plan_slug, Plan.is_active == True).limit(1)
+    )).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan '{payload.plan_slug}' not found")
+
+    try:
+        async with session.begin():
+            sub_data = await create_subscription(
+                tenant_id=tenant_context.tenant_id,
+                plan_id=plan.id,
+                provider=payload.provider,
+                external_id=None,
+                session=session,
+            )
+    except BillingError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    # Payment URL would be generated here for live providers.
+    payment_url: str | None = None
+    if payload.provider == "stripe" and settings.STRIPE_SECRET_KEY:
+        payment_url = f"/billing/stripe/checkout?plan={payload.plan_slug}"
+    elif payload.provider == "yookassa" and settings.YOOKASSA_SECRET_KEY:
+        payment_url = f"/billing/yookassa/checkout?plan={payload.plan_slug}"
+
+    return {"subscription": sub_data, "payment_url": payment_url}
+
+
+@app.post("/v1/billing/cancel")
+async def billing_cancel(
+    payload: CancelSubscriptionPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Cancel the current subscription (soft cancel — access until period end)."""
+    try:
+        async with session.begin():
+            result = await cancel_subscription(
+                tenant_context.tenant_id, session, reason=payload.reason
+            )
+    except NoActiveSubscription as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return result
+
+
+@app.get("/v1/billing/payments")
+async def billing_payments_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """List payment history for the current tenant."""
+    payments = await list_payments(
+        tenant_context.tenant_id, session, limit=limit, offset=offset
+    )
+    return {"items": payments, "total": len(payments)}
+
+
+# ---------------------------------------------------------------------------
+# Webhook endpoints (no JWT auth — provider-signed)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/billing/webhooks/stripe")
+async def stripe_webhook(request: Request) -> dict[str, Any]:
+    """Handle Stripe webhook events."""
+    _check_rate_limit("public", _client_ip(request), max_calls=120, window_seconds=60)
+    raw_body = await request.body()
+    stripe_sig = request.headers.get("stripe-signature", "")
+    async with async_session() as session:
+        async with session.begin():
+            try:
+                result = await handle_stripe_webhook(raw_body, stripe_sig, session)
+            except BillingError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
+@app.post("/billing/webhooks/yookassa")
+async def yookassa_webhook(request: Request) -> dict[str, Any]:
+    """Handle YooKassa webhook notifications."""
+    _check_rate_limit("public", _client_ip(request), max_calls=120, window_seconds=60)
+    raw_body = await request.body()
+    client_ip = _client_ip(request)
+    async with async_session() as session:
+        async with session.begin():
+            try:
+                result = await handle_yookassa_webhook(raw_body, client_ip, session)
+            except BillingError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+    return result
 
 
 # ---------------------------------------------------------------------------

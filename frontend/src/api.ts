@@ -770,28 +770,95 @@ export const weeklyReportApi = {
 
 // --- Billing API ---
 export type PlanInfo = {
-  id: number; slug: string; name: string;
+  id: number;
+  slug: string;
+  name: string;
+  display_name: string | null;
+  price_rub: number | null;
+  price_usd: number | null;
   price_monthly_rub: number | null;
   price_yearly_rub: number | null;
-  max_accounts: number | null; max_channels: number | null;
-  max_comments_per_day: number | null; max_campaigns: number | null;
+  comments_per_day: number | null;
+  max_accounts: number | null;
+  max_channels: number | null;
+  max_comments_per_day: number | null;
+  max_campaigns: number | null;
+  max_farms: number | null;
+  ai_tier: string | null;
   features: Record<string, unknown>;
+  sort_order: number;
 };
 
 export type SubscriptionInfo = {
-  id: number; status: string;
+  id: number;
+  status: string;
   trial_ends_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   cancelled_at: string | null;
+  cancel_reason: string | null;
   payment_provider: string | null;
+  external_subscription_id: string | null;
+};
+
+export type BillingUsage = {
+  comments_per_day: number;
+  max_accounts: number;
+  max_channels: number;
+  max_farms: number;
+  max_campaigns: number;
+};
+
+export type BillingLimits = {
+  max_accounts: number;
+  max_channels: number;
+  comments_per_day: number;
+  max_farms: number;
+  max_campaigns: number;
+};
+
+export type BillingSubscriptionResponse = {
+  subscription: SubscriptionInfo | null;
+  plan: PlanInfo | null;
+  usage: BillingUsage;
+  limits: BillingLimits;
+  is_active: boolean;
+  trial_expired: boolean;
+};
+
+export type PaymentRecord = {
+  id: number;
+  tenant_id: number;
+  subscription_id: number | null;
+  amount: number;
+  currency: string;
+  payment_provider: string;
+  external_payment_id: string | null;
+  status: string;
+  metadata: Record<string, unknown>;
+  created_at: string | null;
 };
 
 export const billingApi = {
   plans: () =>
-    apiFetch<{items: PlanInfo[]}>("/v1/plans"),
+    apiFetch<{items: PlanInfo[]}>("/v1/billing/plans"),
   subscription: (token: string) =>
-    apiFetch<{subscription: SubscriptionInfo | null; plan: PlanInfo | null}>("/v1/billing/subscription", {accessToken: token}),
+    apiFetch<BillingSubscriptionResponse>("/v1/billing/subscription", {accessToken: token}),
+  activateTrial: (token: string) =>
+    apiFetch<SubscriptionInfo>("/v1/billing/trial", {method: "POST", accessToken: token}),
+  subscribe: (token: string, plan_slug: string, provider = "manual") =>
+    apiFetch<{subscription: SubscriptionInfo; payment_url: string | null}>("/v1/billing/subscribe", {
+      method: "POST", accessToken: token, json: {plan_slug, provider}
+    }),
+  cancel: (token: string, reason?: string) =>
+    apiFetch<SubscriptionInfo>("/v1/billing/cancel", {
+      method: "POST", accessToken: token, json: {reason: reason ?? null}
+    }),
+  payments: (token: string, limit = 50, offset = 0) =>
+    apiFetch<{items: PaymentRecord[]; total: number}>(
+      `/v1/billing/payments?limit=${limit}&offset=${offset}`,
+      {accessToken: token}
+    ),
 };
 
 // ─── Sprint 9 — Product Briefs & Auto Campaign API ────────────────────────────
