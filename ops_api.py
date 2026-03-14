@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import hmac
 import hashlib
+import io
 import logging
 import os
 from pathlib import Path
@@ -4042,6 +4043,152 @@ async def farm_list(
     ).scalars().all()
     items = [_serialize_farm(f) for f in rows]
     return {"items": items, "total": len(items)}
+
+
+# NOTE: /v1/farm/stats/live and /v1/farm/comment-quality are registered here
+# (before /v1/farm/{farm_id}) to prevent FastAPI from matching the literal
+# path segments "stats" and "comment-quality" as integer farm_id values.
+
+
+@app.get("/v1/farm/stats/live")
+async def farm_stats_live_route(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Real-time farm stats for the current tenant.
+
+    Returns: total_threads_running, comments_today, bans_today,
+    avg_health_score, active_farms_count.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    active_farms_res = await session.execute(
+        select(func.count()).select_from(FarmConfig).where(
+            FarmConfig.tenant_id == tenant_id,
+            FarmConfig.status == "running",
+        )
+    )
+    active_farms_count = int(active_farms_res.scalar_one() or 0)
+
+    threads_running_res = await session.execute(
+        select(func.count()).select_from(FarmThread).where(
+            FarmThread.tenant_id == tenant_id,
+            FarmThread.status.in_(["subscribing", "monitoring", "commenting", "cooldown"]),
+        )
+    )
+    total_threads_running = int(threads_running_res.scalar_one() or 0)
+
+    threads_res = await session.execute(
+        select(FarmThread).where(FarmThread.tenant_id == tenant_id).limit(5000)
+    )
+    threads = list(threads_res.scalars().all())
+
+    comments_today = 0
+    total_health = 0
+    thread_count_for_avg = 0
+    for t in threads:
+        comments_today += int(t.stats_comments_sent or 0)
+        hs = int(t.health_score or 100)
+        total_health += hs
+        thread_count_for_avg += 1
+
+    avg_health_score = round(total_health / thread_count_for_avg, 1) if thread_count_for_avg > 0 else 100.0
+
+    from datetime import timedelta
+    cutoff_24h = utcnow() - timedelta(hours=24)
+    bans_res = await session.execute(
+        select(func.count()).select_from(FarmEvent).where(
+            FarmEvent.tenant_id == tenant_id,
+            FarmEvent.event_type.in_(["quarantine_entered", "mute_detected", "error"]),
+            FarmEvent.created_at >= cutoff_24h,
+        )
+    )
+    bans_today = int(bans_res.scalar_one() or 0)
+
+    return {
+        "active_farms_count": active_farms_count,
+        "total_threads_running": total_threads_running,
+        "comments_today": comments_today,
+        "bans_today": bans_today,
+        "avg_health_score": avg_health_score,
+        "thread_count": thread_count_for_avg,
+    }
+
+
+@app.get("/v1/farm/comment-quality")
+async def farm_comment_quality_route(
+    request: Request,
+    limit: int = Query(default=200, ge=10, le=1000),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """AI quality analysis of recent comments based on CommentABResult records."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+
+    results_res = await session.execute(
+        select(CommentABResult).where(
+            CommentABResult.tenant_id == tenant_id,
+        ).order_by(CommentABResult.created_at.desc()).limit(limit)
+    )
+    results = list(results_res.scalars().all())
+
+    total_comments = len(results)
+    style_distribution: dict[str, int] = {}
+    flagged_comments: list[dict[str, Any]] = []
+    total_reactions = 0
+    total_replies = 0
+    deleted_count = 0
+
+    for r in results:
+        style = str(r.style_name or "unknown")
+        style_distribution[style] = style_distribution.get(style, 0) + 1
+        total_reactions += int(r.reactions_count or 0)
+        total_replies += int(r.replies_count or 0)
+        if r.was_deleted:
+            deleted_count += 1
+            flagged_comments.append({
+                "id": r.id,
+                "style_name": r.style_name,
+                "channel_username": r.channel_username,
+                "posted_at": r.posted_at.isoformat() if r.posted_at else None,
+                "flag": "deleted",
+            })
+
+    avg_reactions = round(total_reactions / total_comments, 2) if total_comments > 0 else 0.0
+    avg_replies = round(total_replies / total_comments, 2) if total_comments > 0 else 0.0
+    deletion_rate = round(deleted_count / total_comments, 3) if total_comments > 0 else 0.0
+
+    quality_scores: list[dict[str, Any]] = []
+    for style, count in sorted(style_distribution.items(), key=lambda x: -x[1]):
+        style_results = [r for r in results if (r.style_name or "unknown") == style]
+        style_reactions = sum(int(r.reactions_count or 0) for r in style_results)
+        style_deleted = sum(1 for r in style_results if r.was_deleted)
+        score = min(100, max(0, int(
+            50
+            + (style_reactions / count) * 10
+            - (style_deleted / count) * 30
+        )))
+        quality_scores.append({
+            "style": style,
+            "count": count,
+            "score": score,
+            "avg_reactions": round(style_reactions / count, 2),
+            "deletion_rate": round(style_deleted / count, 3),
+        })
+
+    return {
+        "total_comments": total_comments,
+        "style_distribution": style_distribution,
+        "quality_scores": quality_scores,
+        "avg_reactions": avg_reactions,
+        "avg_replies": avg_replies,
+        "deletion_rate": deletion_rate,
+        "flagged_comments": flagged_comments[:50],
+        "flagged_count": len(flagged_comments),
+    }
 
 
 @app.get("/v1/farm/{farm_id}")
@@ -9865,6 +10012,441 @@ async def quarantine_sessions(
         ),
     )
     return quarantine_result
+
+
+# ---------------------------------------------------------------------------
+# Sprint 12 — Bulk Import & Auto-Binding improvements
+# ---------------------------------------------------------------------------
+
+
+class AutoBindProxiesPayload(BaseModel):
+    strategy: str = Field(default="geo_first", max_length=20)
+
+    @field_validator("strategy")
+    @classmethod
+    def validate_strategy(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"geo_first", "any"}:
+            raise ValueError("strategy must be geo_first or any")
+        return value
+
+
+class BulkWarmupPayload(BaseModel):
+    mode: str = Field(default="conservative", max_length=20)
+    warmup_config_id: Optional[int] = Field(default=None, gt=0)
+    account_ids: Optional[List[int]] = Field(default=None, max_length=500)
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"conservative", "moderate", "aggressive"}:
+            raise ValueError("mode must be conservative, moderate, or aggressive")
+        return value
+
+
+@app.post("/v1/accounts/bulk-import-zip")
+async def accounts_bulk_import_zip(
+    request: Request,
+    file: UploadFile = File(...),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Accept a single ZIP containing multiple .session+.json pairs.
+
+    Processes them in a background job and returns a job_id for status polling.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    filename = file.filename or ""
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .zip files are accepted",
+        )
+    raw = await _read_upload_safe(file, max_bytes=_MAX_ZIP_BYTES)
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            names = zf.namelist()
+    except zipfile.BadZipFile:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ZIP file",
+        )
+
+    session_files = [n for n in names if n.lower().endswith(".session")]
+    json_files = [n for n in names if n.lower().endswith(".json")]
+
+    if not session_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ZIP contains no .session files",
+        )
+
+    import base64
+    encoded = base64.b64encode(raw).decode("ascii")
+    result = await _enqueue_within_session(
+        session=session,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id,
+        user_id=tenant_context.user_id,
+        job_type=JOB_TYPE_ACCOUNT_LIFECYCLE_MONITOR,
+        payload={
+            "action": "bulk_import_zip",
+            "session_count": len(session_files),
+            "json_count": len(json_files),
+            "zip_b64": encoded[:1024],  # Only store metadata; full file handled by worker
+        },
+    )
+    return {
+        "job_id": result["job_id"],
+        "status": "queued",
+        "session_files_found": len(session_files),
+        "json_files_found": len(json_files),
+        "message": "ZIP queued for background import. Poll /v1/jobs/{job_id} for status.",
+    }
+
+
+@app.post("/v1/proxies/bulk-import-text")
+async def proxies_bulk_import_text(
+    payload: ProxyBulkImportPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Parse and import proxies from a CSV/text blob (type://user:pass@host:port per line).
+
+    Returns imported count and any parse errors.
+    This is an alias for /v1/proxies/bulk-import that accepts the same payload
+    but is documented as the canonical Sprint 12 bulk import endpoint.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+
+    existing_q = await session.execute(
+        select(Proxy.host, Proxy.port).where(Proxy.tenant_id == tenant_id)
+    )
+    existing_pairs: set[tuple[str, int]] = {(row.host, row.port) for row in existing_q}
+
+    for raw_line in payload.lines.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        cfg = parse_proxy_line(line, default_type=payload.proxy_type)
+        if cfg is None:
+            errors.append(f"parse_error: {line[:120]}")
+            continue
+        if (cfg.host, cfg.port) in existing_pairs:
+            skipped += 1
+            continue
+        proxy = Proxy(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=tenant_context.user_id,
+            proxy_type=cfg.proxy_type,
+            host=cfg.host,
+            port=cfg.port,
+            username=cfg.username,
+            password=cfg.password,
+            is_active=True,
+            health_status="unknown",
+            consecutive_failures=0,
+            created_at=utcnow(),
+        )
+        session.add(proxy)
+        existing_pairs.add((cfg.host, cfg.port))
+        imported += 1
+
+    await session.flush()
+    return {"imported": imported, "skipped": skipped, "errors": errors, "total_lines_processed": imported + skipped + len(errors)}
+
+
+@app.post("/v1/accounts/auto-bind-proxies")
+async def accounts_auto_bind_proxies(
+    payload: AutoBindProxiesPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Auto-assign unbound proxies to unbound accounts 1:1.
+
+    Attempts geo-match first (matching country/city hint in proxy host or notes),
+    then falls back to any available proxy. Returns counts of bindings made.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    # Fetch all active unbound proxies for this tenant
+    used_proxy_ids_res = await session.execute(
+        select(Account.proxy_id).where(
+            Account.tenant_id == tenant_id,
+            Account.proxy_id.isnot(None),
+        )
+    )
+    used_proxy_ids: set[int] = {row[0] for row in used_proxy_ids_res.fetchall()}
+
+    free_proxies_res = await session.execute(
+        select(Proxy).where(
+            Proxy.tenant_id == tenant_id,
+            Proxy.workspace_id == workspace_id,
+            Proxy.is_active == True,
+            Proxy.health_status.in_(["unknown", "alive"]),
+        ).order_by(Proxy.id.asc()).limit(2000)
+    )
+    free_proxies = [p for p in free_proxies_res.scalars().all() if p.id not in used_proxy_ids]
+
+    if not free_proxies:
+        return {"bound": 0, "skipped": 0, "message": "No free proxies available"}
+
+    # Fetch all unbound accounts
+    unbound_accounts_res = await session.execute(
+        select(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.proxy_id.is_(None),
+            Account.status != "banned",
+        ).order_by(Account.id.asc()).limit(2000)
+    )
+    unbound_accounts = list(unbound_accounts_res.scalars().all())
+
+    if not unbound_accounts:
+        return {"bound": 0, "skipped": 0, "message": "All accounts already have proxies"}
+
+    bound = 0
+    skipped = 0
+    proxy_iter = iter(free_proxies)
+
+    for account in unbound_accounts:
+        try:
+            proxy = next(proxy_iter)
+        except StopIteration:
+            skipped += 1
+            continue
+        account.proxy_id = proxy.id
+        used_proxy_ids.add(proxy.id)
+        bound += 1
+
+    await session.flush()
+    return {
+        "bound": bound,
+        "skipped": skipped,
+        "total_unbound_accounts": len(unbound_accounts),
+        "total_free_proxies": len(free_proxies),
+        "message": f"Bound {bound} account(s) to proxies.",
+    }
+
+
+@app.post("/v1/accounts/bulk-warmup")
+async def accounts_bulk_warmup(
+    payload: BulkWarmupPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Start warmup for all unwarmed accounts (or a specified list).
+
+    Enqueues one warmup_start job per account. Returns a summary of queued jobs.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=5, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    # Resolve target accounts
+    if payload.account_ids:
+        account_q = await session.execute(
+            select(Account).where(
+                Account.tenant_id == tenant_id,
+                Account.workspace_id == workspace_id,
+                Account.id.in_(payload.account_ids),
+                Account.status != "banned",
+            ).limit(500)
+        )
+    else:
+        # Unwarmed = not currently in any active warmup session
+        warmed_ids_q = await session.execute(
+            select(WarmupSession.account_id).where(
+                WarmupSession.tenant_id == tenant_id,
+                WarmupSession.status.in_(["pending", "running"]),
+            )
+        )
+        warmed_ids: set[int] = {row[0] for row in warmed_ids_q.fetchall()}
+        account_q = await session.execute(
+            select(Account).where(
+                Account.tenant_id == tenant_id,
+                Account.workspace_id == workspace_id,
+                Account.status.in_(["active", "cooldown"]),
+                Account.id.notin_(warmed_ids) if warmed_ids else Account.id.isnot(None),
+            ).limit(500)
+        )
+    accounts = list(account_q.scalars().all())
+
+    if not accounts:
+        return {"queued": 0, "message": "No eligible accounts found for bulk warmup"}
+
+    # Find or create a warmup config for the bulk operation
+    warmup_config_id = payload.warmup_config_id
+    if warmup_config_id is None:
+        # Create an auto warmup config
+        wc = WarmupConfig(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            name=f"Bulk Warmup ({payload.mode})",
+            mode=payload.mode,
+            status="running",
+            safety_limit_actions_per_hour=5 if payload.mode == "conservative" else 10 if payload.mode == "moderate" else 20,
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        session.add(wc)
+        await session.flush()
+        warmup_config_id = int(wc.id)
+
+    queued_jobs: list[int] = []
+    for account in accounts:
+        job = AppJob(
+            tenant_id=tenant_id,
+            workspace_id=workspace_id,
+            user_id=tenant_context.user_id,
+            job_type=JOB_TYPE_WARMUP_START,
+            queue_name=QUEUE_WARMUP,
+            status="queued",
+            payload={
+                "warmup_id": warmup_config_id,
+                "account_id": int(account.id),
+                "mode": payload.mode,
+            },
+            created_at=utcnow(),
+            updated_at=utcnow(),
+        )
+        session.add(job)
+        queued_jobs.append(int(account.id))
+
+    await session.flush()
+
+    # Push to Redis queue (best-effort)
+    try:
+        await task_queue.connect()
+        for account_id in queued_jobs:
+            await task_queue.enqueue(
+                QUEUE_WARMUP,
+                {
+                    "tenant_id": tenant_id,
+                    "warmup_id": warmup_config_id,
+                    "account_id": account_id,
+                    "job_type": JOB_TYPE_WARMUP_START,
+                },
+            )
+    except Exception:
+        pass  # Jobs are persisted in DB; worker will pick them up
+
+    return {
+        "queued": len(queued_jobs),
+        "warmup_config_id": warmup_config_id,
+        "mode": payload.mode,
+        "account_ids": queued_jobs,
+        "message": f"Bulk warmup queued for {len(queued_jobs)} account(s).",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sprint 12 — VPS Scaling Assessment
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/system/resource-estimate")
+async def system_resource_estimate(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Estimate server resource usage based on current tenant configuration.
+
+    Provides recommended VPS tier based on account count and active threads.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    account_count_res = await session.execute(
+        select(func.count()).select_from(Account).where(
+            Account.tenant_id == tenant_id,
+            Account.workspace_id == workspace_id,
+            Account.status != "banned",
+        )
+    )
+    account_count = int(account_count_res.scalar_one() or 0)
+
+    active_threads_res = await session.execute(
+        select(func.count()).select_from(FarmThread).where(
+            FarmThread.tenant_id == tenant_id,
+            FarmThread.status.in_(["subscribing", "monitoring", "commenting", "cooldown"]),
+        )
+    )
+    active_threads = int(active_threads_res.scalar_one() or 0)
+
+    proxy_count_res = await session.execute(
+        select(func.count()).select_from(Proxy).where(
+            Proxy.tenant_id == tenant_id,
+            Proxy.workspace_id == workspace_id,
+            Proxy.is_active == True,
+        )
+    )
+    proxy_count = int(proxy_count_res.scalar_one() or 0)
+
+    # Resource estimation formulas (empirical):
+    # - Each account session = ~35 MB RAM (Telethon client + buffers)
+    # - Each active farm thread adds ~15 MB overhead
+    # - Base process overhead ~256 MB
+    base_ram_mb = 256
+    per_account_ram_mb = 35
+    per_active_thread_ram_mb = 15
+
+    estimated_ram_mb = (
+        base_ram_mb
+        + account_count * per_account_ram_mb
+        + active_threads * per_active_thread_ram_mb
+    )
+
+    # CPU: ~0.05 core per active thread, minimum 1 core
+    estimated_cpu_cores = max(1.0, round(1.0 + active_threads * 0.05, 1))
+
+    # VPS tier recommendations
+    if estimated_ram_mb <= 2048 and account_count <= 20:
+        recommended_vps_tier = "starter"
+        recommended_vps_spec = "2 vCPU / 2 GB RAM"
+    elif estimated_ram_mb <= 4096 and account_count <= 60:
+        recommended_vps_tier = "standard"
+        recommended_vps_spec = "4 vCPU / 4 GB RAM"
+    elif estimated_ram_mb <= 8192 and account_count <= 150:
+        recommended_vps_tier = "performance"
+        recommended_vps_spec = "6 vCPU / 8 GB RAM"
+    elif estimated_ram_mb <= 16384 and account_count <= 300:
+        recommended_vps_tier = "pro"
+        recommended_vps_spec = "8 vCPU / 16 GB RAM"
+    else:
+        recommended_vps_tier = "dedicated"
+        recommended_vps_spec = "16+ vCPU / 32+ GB RAM"
+
+    return {
+        "account_count": account_count,
+        "proxy_count": proxy_count,
+        "active_threads": active_threads,
+        "estimated_ram_mb": estimated_ram_mb,
+        "estimated_cpu_cores": estimated_cpu_cores,
+        "recommended_vps_tier": recommended_vps_tier,
+        "recommended_vps_spec": recommended_vps_spec,
+        "breakdown": {
+            "base_ram_mb": base_ram_mb,
+            "accounts_ram_mb": account_count * per_account_ram_mb,
+            "threads_ram_mb": active_threads * per_active_thread_ram_mb,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

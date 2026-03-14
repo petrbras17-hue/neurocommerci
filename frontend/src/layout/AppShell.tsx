@@ -30,6 +30,7 @@ import {
   Menu,
   X,
   LogOut,
+  MonitorCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -57,6 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/accounts", label: "Аккаунты", icon: Users },
       { to: "/proxies", label: "Прокси", icon: Server },
       { to: "/farm", label: "Фермы", icon: Bot },
+      { to: "/farm-monitor", label: "Мониторинг", icon: MonitorCheck },
       { to: "/warmup", label: "Прогрев", icon: Flame },
       { to: "/health", label: "Здоровье", icon: HeartPulse },
     ],

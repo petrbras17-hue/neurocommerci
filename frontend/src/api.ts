@@ -943,6 +943,82 @@ export const campaignDetailApi = {
     ),
 };
 
+// ─── Sprint 12 — Farm Monitor & Scaling ──────────────────────────────────────
+
+export type FarmLiveStats = {
+  active_farms_count: number;
+  total_threads_running: number;
+  comments_today: number;
+  bans_today: number;
+  avg_health_score: number;
+  thread_count: number;
+};
+
+export type QualityScore = {
+  style: string;
+  count: number;
+  score: number;
+  avg_reactions: number;
+  deletion_rate: number;
+};
+
+export type CommentQuality = {
+  total_comments: number;
+  style_distribution: Record<string, number>;
+  quality_scores: QualityScore[];
+  avg_reactions: number;
+  avg_replies: number;
+  deletion_rate: number;
+  flagged_count: number;
+  flagged_comments: Array<{
+    id: number;
+    style_name: string;
+    channel_username: string | null;
+    posted_at: string | null;
+    flag: string;
+  }>;
+};
+
+export type ResourceEstimate = {
+  account_count: number;
+  proxy_count: number;
+  active_threads: number;
+  estimated_ram_mb: number;
+  estimated_cpu_cores: number;
+  recommended_vps_tier: string;
+  recommended_vps_spec: string;
+  breakdown: {
+    base_ram_mb: number;
+    accounts_ram_mb: number;
+    threads_ram_mb: number;
+  };
+};
+
+export const farmMonitorApi = {
+  liveStats: (token: string) =>
+    apiFetch<FarmLiveStats>("/v1/farm/stats/live", { accessToken: token }),
+
+  commentQuality: (token: string, limit = 200) =>
+    apiFetch<CommentQuality>(`/v1/farm/comment-quality?limit=${limit}`, { accessToken: token }),
+
+  resourceEstimate: (token: string) =>
+    apiFetch<ResourceEstimate>("/v1/system/resource-estimate", { accessToken: token }),
+};
+
+export const bulkImportApi = {
+  autoBindProxies: (token: string, strategy: string = "geo_first") =>
+    apiFetch<{ bound: number; skipped: number; total_unbound_accounts: number; total_free_proxies: number; message: string }>(
+      "/v1/accounts/auto-bind-proxies",
+      { method: "POST", accessToken: token, json: { strategy } }
+    ),
+
+  bulkWarmup: (token: string, mode: string = "conservative", accountIds?: number[]) =>
+    apiFetch<{ queued: number; warmup_config_id: number; mode: string; account_ids: number[]; message: string }>(
+      "/v1/accounts/bulk-warmup",
+      { method: "POST", accessToken: token, json: { mode, account_ids: accountIds } }
+    ),
+};
+
 // ─── Job polling ──────────────────────────────────────────────────────────────
 
 export async function pollJob(
