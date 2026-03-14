@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `3a0e3b1` |
+| Last committed HEAD | `bdd258e` |
 | VPS safe branch | `main` |
-| VPS safe commit | `3a0e3b1` |
+| VPS safe commit | `bdd258e` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 15 (Agency Package & White Label)` |
-| Next planned sprint | `Sprint 16 (Stripe Integration & Launch)` |
+| Current completed sprint | `Sprint 16 (Launch Readiness)` |
+| Next planned sprint | `Sprint 17 (Stripe + Final Launch)` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -80,6 +80,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-14 | Sprint 14 | `main` | `93026ad` | Backend Wiring + Webhooks + Admin + E2E | 15 new backend endpoints (quarantine, analytics, self-healing, auto-purchase, billing usage, onboarding, auth sessions, AB results, reactions, chatting). Stripe/YooKassa webhooks with signature verification + idempotency. Email service (6 Russian templates, fire-and-forget). Admin panel (8 endpoints, full AdminPage.tsx rewrite with tenant management). E2E smoke tests (test_e2e_smoke.py, test_tenant_isolation_e2e.py, smoke_test_vps.sh). VPS smoke: 63/65 passed. | Green | Green | Sprint 15: закупка аккаунтов, Stripe/YooKassa keys, live testing. |
 
 | 2026-03-14 | Sprint 15 | `main` | `3a0e3b1` | Agency Package + White Label + Legal Pages | 3 ORM models (Agency, AgencyClient, AgencyInvite) + migration 20260314_34 with FORCE RLS. 16 agency API endpoints (/v1/agency/*, clients, invites, branding, revenue). AgencyDashboardPage.tsx (1096 lines: clients, invites, white label branding). 4 Jinja2 legal pages (/pricing, /terms, /privacy, /refund) for YooKassa moderation. Landing footer updated. VPS smoke: 9/9 Sprint 15 endpoints pass. | Green | Green | Sprint 16: Stripe integration + launch readiness. |
+
+| 2026-03-14 | Sprint 16 | `main` | `bdd258e` | Launch Readiness | YooKassa SDK + 54-ФЗ receipt + aiohttp fallback. Production hardening: HTTPS redirect, CORS fix, X-Request-Id, Sentry-ready. Email service: 6 HTML templates, retry, validation, trial_started trigger. Bot sync: /start rich welcome + inline keyboard, /platform, /billing commands. 4/4 services healthy on VPS. | Green | Green | Sprint 17: Stripe + final launch. |
 
 ## Update Rules
 
