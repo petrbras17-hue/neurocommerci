@@ -7,9 +7,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `bdfd404` |
+| Last committed HEAD | `71759e1` |
 | VPS safe branch | `main` |
-| VPS safe commit | `bdfd404` |
+| VPS safe commit | `71759e1` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
@@ -66,6 +66,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-13 | Custom Comment Styles | `main` | `working-tree` | Custom comment style CRUD | Added `workspace_id`, `system_prompt`, `examples` columns to `CommentStyleTemplate`; Alembic migration `20260313_31`; 4 CRUD endpoints (`GET/POST /v1/comments/custom-styles`, `PUT/DELETE /v1/comments/custom-styles/{id}`) with tenant isolation and RLS; "Кастомные стили" tab in `CommentDashboardPage.tsx` with create/edit modal, is_active toggle, delete. 307 tests pass, tsc clean. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`. |
 
 | 2026-03-14 | Channel Map Planet | `main` | `bdfd404` | Channel Map redesign | Replaced 2104-line monolithic R3F globe with modular react-globe.gl: 14 files, H3 hex clustering, 3 HUD modes, drill-down zoom, detail panel with similar channels, mobile bottom sheet, WebGL fallback, Cmd+K search, 4 new backend endpoints. Deployed to VPS, health OK. | Green | Green | Test globe interactively at /app/channel-map. |
+
+| 2026-03-14 | Channel Map Live Data + Interactivity | `main` | `71759e1` | Real channels + clickable globe | Purged 1M fake channels, seeded 188 real RU/CIS/global channels (5K+ subscribers), fixed 5 critical bugs: hexBinMerge=false (restores click/hover), ResizeObserver width/height (fixes raycaster coordinates), log-scale hex altitude (no more nuclear rods), removed unused R3F deps, imperative globe material (avoids Three.js duplicate). TGStat import script ready (needs paid S plan). 7 commits deployed to VPS. | Green | Green | Get more channels: TGStat paid plan ($29/mo) or Telethon parsing. |
 
 ## Update Rules
 
