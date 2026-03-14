@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тарифы — NEURO COMMENTING</title>
+  <meta name="description" content="Выберите подходящий тариф для автоматизации роста в Telegram. От бесплатного пробного до корпоративного решения.">
+  <meta property="og:title" content="Тарифы — NEURO COMMENTING">
+  <meta property="og:description" content="6 тарифов для брендов и агентств: от 0 до безлимита.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:url" content="{{ base_url }}/pricing">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static_css_url }}">
+  <style>
+    /* Pricing-specific styles */
+    .pricing-page-hero {
+      padding: 80px 0 48px;
+      text-align: center;
+    }
+    .pricing-page-hero h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      margin-bottom: 16px;
+    }
+    .pricing-page-hero p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      max-width: 560px;
+      margin: 0 auto 32px;
+    }
+    .plans-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 64px;
+    }
+    .plan-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      padding: 32px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      position: relative;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .plan-card:hover {
+      border-color: var(--border-bright);
+      box-shadow: var(--shadow);
+    }
+    .plan-card.recommended {
+      border-color: var(--accent);
+      box-shadow: 0 0 32px var(--accent-glow-strong);
+    }
+    .plan-badge {
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--accent);
+      color: #000;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 4px 14px;
+      border-radius: 20px;
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .plan-header h2 {
+      font-size: 1.25rem;
+      margin-bottom: 6px;
+    }
+    .plan-price {
+      font-family: var(--mono);
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
+    }
+    .plan-price .per {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+    .plan-price.enterprise {
+      font-size: 1.4rem;
+    }
+    .plan-tagline {
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      margin-top: 4px;
+    }
+    .plan-features {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+    .plan-features li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .plan-features li::before {
+      content: "✓";
+      color: var(--accent);
+      font-family: var(--mono);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .plan-cta-btn {
+      display: block;
+      text-align: center;
+      padding: 13px 20px;
+      border-radius: var(--radius-md);
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.18s;
+      background: var(--surface-3);
+      border: 1px solid var(--border-bright);
+      color: var(--text);
+    }
+    .plan-cta-btn:hover {
+      background: var(--surface-2);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .plan-card.recommended .plan-cta-btn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #000;
+    }
+    .plan-card.recommended .plan-cta-btn:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent-dim);
+    }
+    .divider-line {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+    .pricing-faq {
+      padding: 48px 0 80px;
+    }
+    .pricing-faq h2 {
+      font-size: 1.8rem;
+      margin-bottom: 32px;
+      text-align: center;
+    }
+    .pricing-faq-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .pricing-faq-item {
+      border-bottom: 1px solid var(--border);
+      padding: 20px 0;
+    }
+    .pricing-faq-item summary {
+      font-weight: 600;
+      font-size: 0.98rem;
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    .pricing-faq-item summary::after {
+      content: "+";
+      font-family: var(--mono);
+      font-size: 1.2rem;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+    .pricing-faq-item[open] summary::after {
+      content: "−";
+    }
+    .pricing-faq-item p {
+      margin: 12px 0 0;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      line-height: 1.65;
+    }
+    .legal-note {
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.82rem;
+      padding: 0 0 48px;
+    }
+    .legal-note a {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+    @media (max-width: 640px) {
+      .plans-grid {
+        grid-template-columns: 1fr;
+      }
+      .pricing-page-hero {
+        padding: 48px 0 32px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="site-backdrop"></div>
+
+<!-- NAV -->
+<header>
+  <div class="page-shell">
+    <nav class="top-nav">
+      <a href="/" class="brand">
+        <span class="brand-mark">NC</span>
+        <span>NEURO COMMENTING</span>
+      </a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/ecom">Ecom</a>
+        <a href="/edtech">EdTech</a>
+        <a href="/saas">SaaS</a>
+        <a href="/pricing" style="color:var(--accent)">Тарифы</a>
+      </div>
+      <a href="/#lead-form" class="nav-cta">Получить демо</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </nav>
+    <nav class="mobile-nav" id="mobile-nav">
+      <a href="/">Главная</a>
+      <a href="/ecom">Ecom</a>
+      <a href="/edtech">EdTech</a>
+      <a href="/saas">SaaS</a>
+      <a href="/pricing">Тарифы</a>
+      <a href="/#lead-form" class="nav-cta">Получить демо</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <!-- HERO -->
+  <section class="page-shell">
+    <div class="pricing-page-hero">
+      <p class="eyebrow">Тарифы</p>
+      <h1>Прозрачные цены для каждого этапа роста</h1>
+      <p>Начните с бесплатного пробного периода. Подберите план под размер команды и объём кампаний. Все тарифы включают AI-роутер, аналитику и поддержку.</p>
+    </div>
+  </section>
+
+  <!-- PLANS GRID -->
+  <section class="page-shell">
+    <div class="plans-grid">
+
+      <!-- Пробный -->
+      <article class="plan-card">
+        <div class="plan-header">
+          <h2>Пробный</h2>
+          <div class="plan-price">0 ₽<span class="per"> / 3 дня</span></div>
+          <p class="plan-tagline">Без карты. Без обязательств.</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>1 аккаунт Telegram</li>
+          <li>25 комментариев в день</li>
+          <li>10 каналов для парсинга</li>
+          <li>AI-черновики (worker-уровень)</li>
+          <li>Базовая аналитика</li>
+        </ul>
+        <a href="/app" class="plan-cta-btn">Начать бесплатно</a>
+      </article>
+
+      <!-- Стартовый -->
+      <article class="plan-card">
+        <div class="plan-header">
+          <h2>Стартовый</h2>
+          <div class="plan-price">5 990 ₽<span class="per"> / мес</span></div>
+          <p class="plan-tagline">Для первых growth-экспериментов</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>5 аккаунтов Telegram</li>
+          <li>100 комментариев в день</li>
+          <li>20 каналов</li>
+          <li>AI-черновики и стили комментариев</li>
+          <li>Парсер каналов</li>
+          <li>Email-поддержка</li>
+        </ul>
+        <a href="/app" class="plan-cta-btn">Подключить</a>
+      </article>
+
+      <!-- Продвинутый -->
+      <article class="plan-card recommended">
+        <span class="plan-badge">Популярный выбор</span>
+        <div class="plan-header">
+          <h2>Продвинутый</h2>
+          <div class="plan-price">14 990 ₽<span class="per"> / мес</span></div>
+          <p class="plan-tagline">Для активных команд роста</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>15 аккаунтов Telegram</li>
+          <li>500 комментариев в день</li>
+          <li>100 каналов</li>
+          <li>AI-черновики (manager-уровень)</li>
+          <li>Парсер + фарм-оркестратор</li>
+          <li>Прокси-ротация</li>
+          <li>Приоритетная поддержка</li>
+        </ul>
+        <a href="/app" class="plan-cta-btn">Подключить</a>
+      </article>
+
+      <!-- Профессиональный -->
+      <article class="plan-card">
+        <div class="plan-header">
+          <h2>Профессиональный</h2>
+          <div class="plan-price">29 990 ₽<span class="per"> / мес</span></div>
+          <p class="plan-tagline">Для зрелых growth-операций</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>50 аккаунтов Telegram</li>
+          <li>2 000 комментариев в день</li>
+          <li>500 каналов</li>
+          <li>AI-профили аккаунтов</li>
+          <li>Расширенная аналитика и отчёты</li>
+          <li>Управление кампаниями</li>
+          <li>API-доступ</li>
+        </ul>
+        <a href="/app" class="plan-cta-btn">Подключить</a>
+      </article>
+
+      <!-- Бизнес -->
+      <article class="plan-card">
+        <div class="plan-header">
+          <h2>Бизнес</h2>
+          <div class="plan-price">59 990 ₽<span class="per"> / мес</span></div>
+          <p class="plan-tagline">Для агентств и крупных команд</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>150 аккаунтов Telegram</li>
+          <li>5 000 комментариев в день</li>
+          <li>2 000 каналов</li>
+          <li>Все AI-функции включены</li>
+          <li>Multi-workspace</li>
+          <li>Выделенный менеджер</li>
+          <li>Онбординг и обучение команды</li>
+        </ul>
+        <a href="/app" class="plan-cta-btn">Подключить</a>
+      </article>
+
+      <!-- Энтерпрайз -->
+      <article class="plan-card">
+        <div class="plan-header">
+          <h2>Энтерпрайз</h2>
+          <div class="plan-price enterprise">По запросу</div>
+          <p class="plan-tagline">SLA, безлимит, выделенная инфраструктура</p>
+        </div>
+        <hr class="divider-line">
+        <ul class="plan-features">
+          <li>Неограниченное количество аккаунтов</li>
+          <li>Неограниченные комментарии и каналы</li>
+          <li>SLA и гарантии доступности</li>
+          <li>Выделенный менеджер и поддержка 24/7</li>
+          <li>Кастомные интеграции</li>
+          <li>Корпоративный договор и закрывающие документы</li>
+        </ul>
+        <a href="/#lead-form" class="plan-cta-btn">Связаться с нами</a>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- LEGAL NOTE -->
+  <p class="legal-note page-shell">
+    Все цены указаны в рублях, включая НДС. Оплата через ЮKassa.
+    Используя сервис, вы принимаете <a href="/terms">Пользовательское соглашение</a>,
+    <a href="/privacy">Политику конфиденциальности</a> и <a href="/refund">Политику возврата</a>.
+  </p>
+
+  <!-- FAQ -->
+  <section class="pricing-faq page-shell">
+    <h2>Частые вопросы о тарифах</h2>
+    <div class="pricing-faq-list">
+      <details class="pricing-faq-item">
+        <summary>Как начать? Нужна ли банковская карта для пробного периода?</summary>
+        <p>Нет. Пробный период (3 дня) активируется без привязки карты. Просто зарегистрируйтесь и получите доступ к платформе.</p>
+      </details>
+      <details class="pricing-faq-item">
+        <summary>Можно ли поменять тариф после оплаты?</summary>
+        <p>Да. Вы можете перейти на более высокий тариф в любой момент. Сумма будет пересчитана пропорционально оставшимся дням.</p>
+      </details>
+      <details class="pricing-faq-item">
+        <summary>Как осуществляется возврат?</summary>
+        <p>При ежемесячной подписке возврат возможен в течение 14 дней. При годовой — в течение 30 дней. Подробнее: <a href="/refund">Политика возврата</a>.</p>
+      </details>
+      <details class="pricing-faq-item">
+        <summary>Что происходит после окончания подписки?</summary>
+        <p>Доступ к функциям приостанавливается. Ваши данные сохраняются в течение 30 дней, после чего вы можете возобновить подписку.</p>
+      </details>
+      <details class="pricing-faq-item">
+        <summary>Есть ли скидки при оплате за год?</summary>
+        <p>Да. При оплате годовой подписки действует скидка 20%. Свяжитесь с нами через форму на главной странице для расчёта.</p>
+      </details>
+    </div>
+  </section>
+
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="page-shell">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
+        NEURO COMMENTING &copy; 2026
+      </div>
+      <div class="footer-links">
+        <a href="/">Главная</a>
+        <a href="/pricing">Тарифы</a>
+        <a href="/terms">Оферта</a>
+        <a href="/privacy">Конфиденциальность</a>
+        <a href="/refund">Возврат</a>
+      </div>
+    </div>
+    <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary); flex-wrap:wrap; gap:8px;">
+      <span>[ИП/ООО название], ИНН: [указать], ОГРН: [указать]</span>
+      <span>support@neurocommenting.ru</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", () => {
+    mobileNav.classList.toggle("open");
+  });
+  mobileNav.querySelectorAll("a").forEach(function(link) {
+    link.addEventListener("click", function() {
+      mobileNav.classList.remove("open");
+    });
+  });
+</script>
+
+</body>
+</html>

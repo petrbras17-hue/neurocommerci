@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Пользовательское соглашение (оферта) — NEURO COMMENTING</title>
+  <meta name="description" content="Публичная оферта NEURO COMMENTING — условия использования SaaS-платформы для автоматизации Telegram-маркетинга.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static_css_url }}">
+  <style>
+    .legal-page {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 64px 0 80px;
+    }
+    .legal-page h1 {
+      font-size: clamp(1.6rem, 4vw, 2.4rem);
+      margin-bottom: 8px;
+    }
+    .legal-date {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+      margin-bottom: 40px;
+      font-family: var(--mono);
+    }
+    .legal-page h2 {
+      font-size: 1.15rem;
+      margin: 36px 0 12px;
+      color: var(--accent);
+    }
+    .legal-page p, .legal-page li {
+      color: var(--text-secondary);
+      font-size: 0.92rem;
+      line-height: 1.75;
+    }
+    .legal-page ul {
+      padding-left: 20px;
+    }
+    .legal-page li {
+      margin-bottom: 6px;
+    }
+    .legal-page strong {
+      color: var(--text);
+    }
+    .legal-back {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+      margin-bottom: 32px;
+      transition: color 0.15s;
+    }
+    .legal-back:hover {
+      color: var(--accent);
+    }
+    @media (max-width: 640px) {
+      .legal-page {
+        padding: 40px 0 60px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="site-backdrop"></div>
+
+<!-- NAV -->
+<header>
+  <div class="page-shell">
+    <nav class="top-nav">
+      <a href="/" class="brand">
+        <span class="brand-mark">NC</span>
+        <span>NEURO COMMENTING</span>
+      </a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/pricing">Тарифы</a>
+        <a href="/terms" style="color:var(--accent)">Оферта</a>
+        <a href="/privacy">Конфиденциальность</a>
+        <a href="/refund">Возврат</a>
+      </div>
+      <a href="/app" class="nav-cta">Войти</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </nav>
+    <nav class="mobile-nav" id="mobile-nav">
+      <a href="/">Главная</a>
+      <a href="/pricing">Тарифы</a>
+      <a href="/terms">Оферта</a>
+      <a href="/privacy">Конфиденциальность</a>
+      <a href="/refund">Возврат</a>
+      <a href="/app" class="nav-cta">Войти</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="page-shell">
+    <div class="legal-page">
+      <a href="/" class="legal-back">← На главную</a>
+      <p class="eyebrow">Правовые документы</p>
+      <h1>Пользовательское соглашение (публичная оферта)</h1>
+      <p class="legal-date">Редакция от 14 марта 2026 г.</p>
+
+      <h2>1. Общие положения</h2>
+      <p>
+        Настоящий документ является публичной офертой (далее — «Соглашение» или «Оферта») <strong>[ИП/ООО название]</strong>
+        (ИНН: [указать], ОГРН: [указать]) (далее — «Исполнитель») и адресован любому физическому или юридическому лицу
+        (далее — «Пользователь»), намеревающемуся использовать платформу <strong>NEURO COMMENTING</strong>.
+      </p>
+      <p>
+        Акцептом настоящей оферты является совершение Пользователем любого из следующих действий: регистрация на платформе,
+        начало использования сервиса, оплата тарифного плана.
+      </p>
+
+      <h2>2. Предмет договора</h2>
+      <p>
+        Исполнитель предоставляет Пользователю доступ к SaaS-платформе <strong>NEURO COMMENTING</strong> —
+        программному обеспечению для автоматизации маркетинговых коммуникаций в мессенджере Telegram,
+        включающему инструменты обнаружения каналов, управления кампаниями, AI-генерации контента и аналитики.
+      </p>
+      <p>Доступ предоставляется по модели подписки в соответствии с выбранным тарифным планом.</p>
+
+      <h2>3. Описание услуг</h2>
+      <p>В рамках тарифного плана Пользователю могут быть доступны следующие функции:</p>
+      <ul>
+        <li>парсинг и индексация Telegram-каналов и сообществ;</li>
+        <li>AI-генерация комментариев и публикаций (модели worker, manager, boss в зависимости от тарифа);</li>
+        <li>управление аккаунтами Telegram, прокси и фарм-потоками;</li>
+        <li>аналитика каналов, кампаний и роста аудитории;</li>
+        <li>настройка стилей и шаблонов комментариев;</li>
+        <li>система оценки здоровья аккаунтов и карантина;</li>
+        <li>прочие функции в соответствии с описанием тарифа на странице <a href="/pricing">/pricing</a>.</li>
+      </ul>
+      <p>
+        Исполнитель оставляет за собой право изменять состав функций тарифных планов, уведомляя об этом Пользователей
+        не менее чем за 7 дней до вступления изменений в силу.
+      </p>
+
+      <h2>4. Регистрация и учётная запись</h2>
+      <p>
+        Для доступа к сервису Пользователь обязан пройти регистрацию, предоставив достоверные данные.
+        Пользователь несёт ответственность за сохранность своих учётных данных и за все действия,
+        совершённые с его учётной записи.
+      </p>
+
+      <h2>5. Порядок оплаты</h2>
+      <p>
+        Услуги оказываются на условиях предоплаты. Пользователь самостоятельно выбирает тарифный план
+        и оплачивает его через встроенный платёжный шлюз (ЮKassa). Оплата производится в российских рублях.
+      </p>
+      <p>
+        Подписка является ежемесячной (или ежегодной — при выборе соответствующего варианта) и продлевается
+        автоматически, если Пользователь не отменит её не позднее чем за 24 часа до даты следующего списания.
+      </p>
+      <p>Пробный период (3 дня) предоставляется бесплатно и не требует привязки платёжного инструмента.</p>
+
+      <h2>6. Права и обязанности сторон</h2>
+      <p><strong>Пользователь обязуется:</strong></p>
+      <ul>
+        <li>использовать платформу только в законных целях и в соответствии с правилами Telegram;</li>
+        <li>не нарушать права третьих лиц, не распространять спам и вредоносный контент;</li>
+        <li>своевременно оплачивать выбранный тариф;</li>
+        <li>не передавать учётные данные третьим лицам и не продавать доступ к платформе.</li>
+      </ul>
+      <p><strong>Исполнитель обязуется:</strong></p>
+      <ul>
+        <li>обеспечивать доступность платформы в соответствии с условиями выбранного тарифа;</li>
+        <li>обрабатывать персональные данные Пользователя согласно Политике конфиденциальности;</li>
+        <li>уведомлять Пользователей об изменениях условий не менее чем за 7 дней.</li>
+      </ul>
+
+      <h2>7. Ответственность</h2>
+      <p>
+        Исполнитель не несёт ответственности за последствия использования платформы, нарушающего
+        правила Telegram, действующее законодательство или настоящее Соглашение.
+        Исполнитель не гарантирует непрерывную работу платформы и не несёт ответственности
+        за убытки, возникшие вследствие технических сбоев, действий третьих лиц или обстоятельств непреодолимой силы.
+      </p>
+      <p>
+        Совокупная ответственность Исполнителя перед Пользователем не превышает суммы, уплаченной
+        Пользователем за последние 3 месяца использования сервиса.
+      </p>
+
+      <h2>8. Конфиденциальность</h2>
+      <p>
+        Обработка персональных данных осуществляется в соответствии с <a href="/privacy">Политикой конфиденциальности</a>,
+        которая является неотъемлемой частью настоящего Соглашения.
+      </p>
+
+      <h2>9. Порядок расторжения</h2>
+      <p>
+        Пользователь вправе расторгнуть Соглашение в любой момент, отменив подписку в личном кабинете.
+        Доступ к платформе сохраняется до окончания оплаченного периода.
+      </p>
+      <p>
+        Исполнитель вправе в одностороннем порядке расторгнуть Соглашение и заблокировать учётную запись
+        при нарушении Пользователем условий настоящей оферты — без возврата ранее уплаченных средств.
+      </p>
+
+      <h2>10. Изменение условий</h2>
+      <p>
+        Исполнитель вправе изменять условия настоящего Соглашения. Актуальная версия всегда доступна
+        по адресу <a href="/terms">/terms</a>. Продолжение использования платформы после вступления
+        изменений в силу означает согласие Пользователя с новыми условиями.
+      </p>
+
+      <h2>11. Применимое право</h2>
+      <p>
+        Настоящее Соглашение регулируется законодательством Российской Федерации.
+        Все споры разрешаются в претензионном порядке, а при недостижении соглашения —
+        в судебном порядке по месту нахождения Исполнителя.
+      </p>
+
+      <h2>12. Реквизиты исполнителя</h2>
+      <p>
+        <strong>[ИП/ООО название]</strong><br>
+        ИНН: [указать]<br>
+        ОГРН: [указать]<br>
+        Адрес: [указать]<br>
+        Email: support@neurocommenting.ru
+      </p>
+    </div>
+  </div>
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="page-shell">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
+        NEURO COMMENTING &copy; 2026
+      </div>
+      <div class="footer-links">
+        <a href="/">Главная</a>
+        <a href="/pricing">Тарифы</a>
+        <a href="/terms">Оферта</a>
+        <a href="/privacy">Конфиденциальность</a>
+        <a href="/refund">Возврат</a>
+      </div>
+    </div>
+    <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary); flex-wrap:wrap; gap:8px;">
+      <span>[ИП/ООО название], ИНН: [указать], ОГРН: [указать]</span>
+      <span>support@neurocommenting.ru</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", () => {
+    mobileNav.classList.toggle("open");
+  });
+  mobileNav.querySelectorAll("a").forEach(function(link) {
+    link.addEventListener("click", function() {
+      mobileNav.classList.remove("open");
+    });
+  });
+</script>
+
+</body>
+</html>

@@ -1754,3 +1754,80 @@ class AlertConfig(Base):
     notify_email = Column(Boolean, default=False)
 
 
+# ---------------------------------------------------------------------------
+# Sprint 15 — Agency Package
+# ---------------------------------------------------------------------------
+
+
+class Agency(Base):
+    """Агентство — родительский тенант, управляющий дочерними клиентами."""
+    __tablename__ = "agencies"
+    __table_args__ = (
+        Index("ix_agencies_tenant_id", "tenant_id"),
+        Index("ix_agencies_slug", "slug"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(100), nullable=False, unique=True)
+    # White label
+    custom_logo_url = Column(String(500), nullable=True)
+    custom_brand_name = Column(String(255), nullable=True)
+    custom_accent_color = Column(String(7), nullable=True)  # hex color e.g. #00ff88
+    custom_domain = Column(String(255), nullable=True)
+    # Revenue share
+    revenue_share_pct = Column(Float, default=20.0)  # agency gets N% of client payments
+    # Settings
+    max_clients = Column(Integer, default=50)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    clients = relationship("AgencyClient", back_populates="agency", cascade="all, delete-orphan")
+    invites = relationship("AgencyInvite", back_populates="agency", cascade="all, delete-orphan")
+
+
+class AgencyClient(Base):
+    """Клиент (дочерний тенант), привязанный к агентству."""
+    __tablename__ = "agency_clients"
+    __table_args__ = (
+        Index("ix_agency_clients_agency_id", "agency_id"),
+        Index("ix_agency_clients_client_tenant_id", "client_tenant_id"),
+        UniqueConstraint("client_tenant_id", name="uq_agency_clients_client_tenant"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=False)
+    client_tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    # Client info
+    client_name = Column(String(255), nullable=False)
+    client_contact_email = Column(String(255), nullable=True)
+    # Status
+    status = Column(String(50), default="active")  # active, suspended, churned
+    notes = Column(Text, nullable=True)
+    # Revenue tracking
+    total_revenue_rub = Column(Float, default=0.0)
+    agency_earned_rub = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=utcnow)
+
+    agency = relationship("Agency", back_populates="clients")
+
+
+class AgencyInvite(Base):
+    """Инвайт-ссылка для подключения нового клиента к агентству."""
+    __tablename__ = "agency_invites"
+    __table_args__ = (
+        Index("ix_agency_invites_agency_id", "agency_id"),
+        UniqueConstraint("invite_code", name="uq_agency_invites_invite_code"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agency_id = Column(Integer, ForeignKey("agencies.id"), nullable=False)
+    invite_code = Column(String(64), nullable=False, unique=True)
+    client_email = Column(String(255), nullable=True)
+    max_uses = Column(Integer, default=1)
+    used_count = Column(Integer, default=0)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    agency = relationship("Agency", back_populates="invites")

@@ -1145,3 +1145,108 @@ export async function pollJob(
     });
   }
 }
+
+// ─── Agency API ───────────────────────────────────────────────────────────────
+
+export type Agency = {
+  id: number;
+  tenant_id: number;
+  name: string;
+  slug: string;
+  custom_logo_url: string | null;
+  custom_brand_name: string | null;
+  custom_accent_color: string | null;
+  custom_domain: string | null;
+  revenue_share_pct: number;
+  max_clients: number;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type AgencyClient = {
+  id: number;
+  client_name: string;
+  client_contact_email: string | null;
+  status: string;
+  notes: string | null;
+  total_revenue_rub: number;
+  agency_earned_rub: number;
+  created_at: string;
+  accounts_count?: number;
+  subscription_plan?: string;
+};
+
+export type AgencyInvite = {
+  id: number;
+  invite_code: string;
+  client_email: string | null;
+  max_uses: number;
+  used_count: number;
+  expires_at: string | null;
+  created_at: string;
+};
+
+export type AgencyStats = {
+  total_clients: number;
+  active_clients: number;
+  total_revenue_rub: number;
+  agency_earned_rub: number;
+};
+
+export type AgencyBranding = {
+  custom_logo_url: string | null;
+  custom_brand_name: string | null;
+  custom_accent_color: string | null;
+  custom_domain: string | null;
+};
+
+export const agencyApi = {
+  getOrCreate: (token: string) =>
+    apiFetch<Agency>("/v1/agency", { accessToken: token }),
+
+  stats: (token: string) =>
+    apiFetch<AgencyStats>("/v1/agency/stats", { accessToken: token }),
+
+  listClients: (token: string, limit = 50, offset = 0, search?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (search) params.set("search", search);
+    return apiFetch<{ items: AgencyClient[]; total: number }>(
+      `/v1/agency/clients?${params}`,
+      { accessToken: token }
+    );
+  },
+
+  createClient: (token: string, data: { client_name: string; client_contact_email?: string; notes?: string }) =>
+    apiFetch<AgencyClient>("/v1/agency/clients", {
+      method: "POST",
+      accessToken: token,
+      json: data,
+    }),
+
+  updateClient: (token: string, id: number, data: Partial<Pick<AgencyClient, "client_name" | "client_contact_email" | "status" | "notes">>) =>
+    apiFetch<AgencyClient>(`/v1/agency/clients/${id}`, {
+      method: "PUT",
+      accessToken: token,
+      json: data,
+    }),
+
+  listInvites: (token: string) =>
+    apiFetch<{ items: AgencyInvite[]; total: number }>("/v1/agency/invites", { accessToken: token }),
+
+  createInvite: (token: string, data: { client_email?: string; max_uses?: number; expires_in_days?: number }) =>
+    apiFetch<AgencyInvite>("/v1/agency/invites", {
+      method: "POST",
+      accessToken: token,
+      json: data,
+    }),
+
+  deleteInvite: (token: string, id: number) =>
+    apiFetch<void>(`/v1/agency/invites/${id}`, { method: "DELETE", accessToken: token }),
+
+  updateBranding: (token: string, data: Partial<AgencyBranding>) =>
+    apiFetch<Agency>("/v1/agency/branding", {
+      method: "PUT",
+      accessToken: token,
+      json: data,
+    }),
+};

@@ -31,6 +31,7 @@ import {
   X,
   LogOut,
   MonitorCheck,
+  Building2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -95,6 +96,12 @@ const NAV_GROUPS: NavGroup[] = [
       { to: "/assistant", label: "ИИ-ассистент", icon: Brain },
       { to: "/context", label: "Контекст бизнеса", icon: FileText },
       { to: "/creative", label: "Черновики и креатив", icon: Palette },
+    ],
+  },
+  {
+    section: "Агентство",
+    items: [
+      { to: "/agency", label: "Агентство", icon: Building2 },
     ],
   },
   {

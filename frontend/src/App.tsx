@@ -32,6 +32,7 @@ import { PlatformHealthPage } from "./pages/PlatformHealthPage";
 import { CommentDashboardPage } from "./pages/CommentDashboardPage";
 import { SessionTopologyPage } from "./pages/SessionTopologyPage";
 import { FarmMonitorPage } from "./pages/FarmMonitorPage";
+import { AgencyDashboardPage } from "./pages/AgencyDashboardPage";
 import OfflinePage from "./pages/OfflinePage";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
@@ -89,6 +90,7 @@ export default function App() {
             <Route path="/topology" element={<SessionTopologyPage />} />
             <Route path="/farm-monitor" element={<FarmMonitorPage />} />
             <Route path="/billing" element={<BillingPage />} />
+            <Route path="/agency" element={<AgencyDashboardPage />} />
             <Route
               path="/settings"
               element={<SettingsPage />}

@@ -14,8 +14,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 14 (Backend Wiring + Webhooks + Admin + E2E)` |
-| Next planned sprint | `Sprint 15 — закупка аккаунтов, Stripe/YooKassa keys, live testing` |
+| Current completed sprint | `Sprint 15 Task B (Agency Package backend)` |
+| Next planned sprint | `Sprint 15 Task C — Agency frontend (AgencyPage, client table, invite flow)` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -78,6 +78,10 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-14 | Sprint 12 Farm Monitor | `main` | `2dbbdc8` | Farm monitoring + bulk ops + resource estimation | FarmMonitorPage (445 lines): real-time farm stats, comment quality analysis with style distribution, VPS resource estimation. 7 new endpoints: /v1/farm/stats/live, /v1/farm/comment-quality, /v1/system/resource-estimate, /v1/accounts/auto-bind-proxies, /v1/accounts/bulk-warmup, /v1/accounts/bulk-import-zip, /v1/accounts/import-status. Fixed accessToken auth context. | Green | Green | Sprint 14: закупка аккаунтов + прокси для live testing. |
 
 | 2026-03-14 | Sprint 14 | `main` | `93026ad` | Backend Wiring + Webhooks + Admin + E2E | 15 new backend endpoints (quarantine, analytics, self-healing, auto-purchase, billing usage, onboarding, auth sessions, AB results, reactions, chatting). Stripe/YooKassa webhooks with signature verification + idempotency. Email service (6 Russian templates, fire-and-forget). Admin panel (8 endpoints, full AdminPage.tsx rewrite with tenant management). E2E smoke tests (test_e2e_smoke.py, test_tenant_isolation_e2e.py, smoke_test_vps.sh). VPS smoke: 63/65 passed. | Green | Green | Sprint 15: закупка аккаунтов, Stripe/YooKassa keys, live testing. |
+
+| 2026-03-14 | Sprint 15 Task A | `main` | `working-tree` | Public pricing page + legal pages for YooKassa compliance | Added 4 server-rendered Jinja2 pages: /pricing (6 plans, Dark Terminal design, no-JS), /terms (публичная оферта), /privacy (политика конфиденциальности), /refund (политика возврата). 4 new FastAPI routes in ops_api.py following existing landing page pattern. Updated landing.html nav (Тарифы link), hero CTA (/pricing), footer (legal links + company requisites). ops_api.py compile check passes. | Green | Not deployed | Deploy: `git pull && restart ops_api`. No DB migration needed. |
+
+| 2026-03-14 | Sprint 15 Task B | `main` | `working-tree` | Agency Package — data models, migration, API | Added Agency, AgencyClient, AgencyInvite ORM models to storage/models.py; Alembic migration 20260314_34 (FORCE RLS on all 3 tables, RLS for clients/invites via subquery join to agencies.tenant_id); 16 FastAPI endpoints: POST/GET/PUT /v1/agency, GET /v1/agency/stats, GET/POST /v1/agency/clients, GET/PUT/DELETE /v1/agency/clients/{id}, POST/GET/DELETE /v1/agency/invites, POST /v1/agency/join/{invite_code}, GET/PUT /v1/agency/branding, GET /v1/agency/revenue, GET /v1/agency/revenue/export (CSV). All 3 files compile clean; 13 tests pass. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`; then implement Sprint 15 Task C (AgencyPage frontend). |
 
 ## Update Rules
 

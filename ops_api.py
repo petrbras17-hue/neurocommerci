@@ -118,6 +118,9 @@ from storage.models import (
     AccountHealthHistory,
     AccountHealthScore,
     AccountStageEvent,
+    Agency,
+    AgencyClient,
+    AgencyInvite,
     AIBudgetCounter,
     AIRequest,
     AlertConfig,
@@ -1927,6 +1930,58 @@ async def landing_edtech(request: Request) -> HTMLResponse:
 @app.get("/saas", response_class=HTMLResponse)
 async def landing_saas(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "marketing/landing.html", _page_context(request, MARKETING_PAGES["saas"]))
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+async def landing_pricing(request: Request) -> HTMLResponse:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    ctx = {
+        "request": request,
+        "base_url": base_url,
+        "og_image": f"{base_url}/static/og-default.svg",
+        "static_css_url": f"{base_url}/static/marketing.css",
+    }
+    return templates.TemplateResponse(request, "marketing/pricing.html", ctx)
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def legal_terms(request: Request) -> HTMLResponse:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    ctx = {
+        "request": request,
+        "base_url": base_url,
+        "og_image": f"{base_url}/static/og-default.svg",
+        "static_css_url": f"{base_url}/static/marketing.css",
+    }
+    return templates.TemplateResponse(request, "marketing/terms.html", ctx)
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def legal_privacy(request: Request) -> HTMLResponse:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    ctx = {
+        "request": request,
+        "base_url": base_url,
+        "og_image": f"{base_url}/static/og-default.svg",
+        "static_css_url": f"{base_url}/static/marketing.css",
+    }
+    return templates.TemplateResponse(request, "marketing/privacy.html", ctx)
+
+
+@app.get("/refund", response_class=HTMLResponse)
+async def legal_refund(request: Request) -> HTMLResponse:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    ctx = {
+        "request": request,
+        "base_url": base_url,
+        "og_image": f"{base_url}/static/og-default.svg",
+        "static_css_url": f"{base_url}/static/marketing.css",
+    }
+    return templates.TemplateResponse(request, "marketing/refund.html", ctx)
 
 
 @app.post("/api/leads")
@@ -11554,6 +11609,695 @@ async def chatting_status_view(
             for r in rows
         ],
     }
+
+# ---------------------------------------------------------------------------
+# Sprint 15 Task B — Agency Package
+# ---------------------------------------------------------------------------
+
+import secrets as _secrets
+import csv as _csv
+import io as _io
+
+
+# --- Pydantic models ---
+
+class AgencyCreatePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    slug: str = Field(min_length=1, max_length=100)
+    revenue_share_pct: float = Field(default=20.0, ge=0.0, le=100.0)
+    max_clients: int = Field(default=50, ge=1, le=10000)
+
+    @field_validator("slug")
+    @classmethod
+    def normalize_slug(cls, value: str) -> str:
+        import re
+        value = value.strip().lower()
+        value = re.sub(r"[^a-z0-9\-]", "-", value)
+        value = re.sub(r"-{2,}", "-", value).strip("-")
+        if not value:
+            raise ValueError("slug_empty_after_normalisation")
+        return value
+
+
+class AgencyUpdatePayload(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    revenue_share_pct: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    max_clients: Optional[int] = Field(default=None, ge=1, le=10000)
+    is_active: Optional[bool] = None
+
+
+class AgencyBrandingPayload(BaseModel):
+    custom_logo_url: Optional[str] = Field(default=None, max_length=500)
+    custom_brand_name: Optional[str] = Field(default=None, max_length=255)
+    custom_accent_color: Optional[str] = Field(default=None, max_length=7)
+    custom_domain: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("custom_accent_color")
+    @classmethod
+    def validate_hex_color(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        import re
+        if not re.match(r"^#[0-9a-fA-F]{6}$", value):
+            raise ValueError("must be a 6-digit hex colour like #00ff88")
+        return value.lower()
+
+
+class AgencyClientCreatePayload(BaseModel):
+    client_name: str = Field(min_length=1, max_length=255)
+    client_contact_email: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+    @field_validator("client_contact_email")
+    @classmethod
+    def validate_client_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("invalid_email")
+        return value
+
+
+class AgencyClientUpdatePayload(BaseModel):
+    client_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    client_contact_email: Optional[str] = Field(default=None, max_length=255)
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    status: Optional[str] = Field(default=None, max_length=50)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if value not in {"active", "suspended", "churned"}:
+            raise ValueError("status must be active, suspended, or churned")
+        return value
+
+
+class AgencyInviteCreatePayload(BaseModel):
+    client_email: Optional[str] = Field(default=None, max_length=255)
+    max_uses: int = Field(default=1, ge=1, le=100)
+    expires_in_days: Optional[int] = Field(default=None, ge=1, le=365)
+
+    @field_validator("client_email")
+    @classmethod
+    def validate_invite_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        value = value.strip().lower()
+        if "@" not in value:
+            raise ValueError("invalid_email")
+        return value
+
+
+# --- Serialisers ---
+
+def _serialize_agency(a: Agency) -> dict[str, Any]:
+    return {
+        "id": int(a.id),
+        "tenant_id": int(a.tenant_id),
+        "name": a.name,
+        "slug": a.slug,
+        "custom_logo_url": a.custom_logo_url,
+        "custom_brand_name": a.custom_brand_name,
+        "custom_accent_color": a.custom_accent_color,
+        "custom_domain": a.custom_domain,
+        "revenue_share_pct": a.revenue_share_pct,
+        "max_clients": a.max_clients,
+        "is_active": a.is_active,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+def _serialize_agency_client(c: AgencyClient) -> dict[str, Any]:
+    return {
+        "id": int(c.id),
+        "agency_id": int(c.agency_id),
+        "client_tenant_id": int(c.client_tenant_id),
+        "client_name": c.client_name,
+        "client_contact_email": c.client_contact_email,
+        "status": c.status,
+        "notes": c.notes,
+        "total_revenue_rub": c.total_revenue_rub,
+        "agency_earned_rub": c.agency_earned_rub,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _serialize_agency_invite(i: AgencyInvite) -> dict[str, Any]:
+    return {
+        "id": int(i.id),
+        "agency_id": int(i.agency_id),
+        "invite_code": i.invite_code,
+        "client_email": i.client_email,
+        "max_uses": i.max_uses,
+        "used_count": i.used_count,
+        "expires_at": i.expires_at.isoformat() if i.expires_at else None,
+        "created_at": i.created_at.isoformat() if i.created_at else None,
+        "is_valid": (i.used_count < i.max_uses) and (i.expires_at is None or i.expires_at > utcnow()),
+    }
+
+
+async def _get_agency_for_tenant(session: AsyncSession, tenant_id: int) -> Agency:
+    """Return the Agency for the given tenant or raise 404."""
+    agency = (await session.execute(
+        select(Agency).where(Agency.tenant_id == tenant_id)
+    )).scalar_one_or_none()
+    if agency is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="agency_not_found",
+        )
+    return agency
+
+
+# --- Agency Management ---
+
+@app.post("/v1/agency", status_code=status.HTTP_201_CREATED)
+async def agency_create(
+    payload: AgencyCreatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Создать агентство для текущего тенанта. Один тенант — одно агентство."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    # Check uniqueness on tenant
+    existing = (await session.execute(
+        select(Agency).where(Agency.tenant_id == tenant_context.tenant_id)
+    )).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="agency_already_exists",
+        )
+    # Check slug uniqueness (global)
+    slug_conflict = (await session.execute(
+        select(Agency).where(Agency.slug == payload.slug)
+    )).scalar_one_or_none()
+    if slug_conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="slug_already_taken",
+        )
+    agency = Agency(
+        tenant_id=tenant_context.tenant_id,
+        name=payload.name,
+        slug=payload.slug,
+        revenue_share_pct=payload.revenue_share_pct,
+        max_clients=payload.max_clients,
+        is_active=True,
+        created_at=utcnow(),
+    )
+    session.add(agency)
+    await session.flush()
+    return _serialize_agency(agency)
+
+
+@app.get("/v1/agency")
+async def agency_get(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить профиль агентства текущего тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    return _serialize_agency(agency)
+
+
+@app.put("/v1/agency")
+async def agency_update(
+    payload: AgencyUpdatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Обновить профиль агентства (название, условия, статус)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    if payload.name is not None:
+        agency.name = payload.name
+    if payload.revenue_share_pct is not None:
+        agency.revenue_share_pct = payload.revenue_share_pct
+    if payload.max_clients is not None:
+        agency.max_clients = payload.max_clients
+    if payload.is_active is not None:
+        agency.is_active = payload.is_active
+    await session.flush()
+    return _serialize_agency(agency)
+
+
+@app.get("/v1/agency/stats")
+async def agency_stats(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Агрегированная статистика агентства: кол-во клиентов, выручка."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    clients = (await session.execute(
+        select(AgencyClient).where(AgencyClient.agency_id == agency.id)
+    )).scalars().all()
+    total_clients = len(clients)
+    active_clients = sum(1 for c in clients if c.status == "active")
+    total_revenue = sum(c.total_revenue_rub for c in clients)
+    agency_earned = sum(c.agency_earned_rub for c in clients)
+    return {
+        "agency_id": int(agency.id),
+        "total_clients": total_clients,
+        "active_clients": active_clients,
+        "churned_clients": sum(1 for c in clients if c.status == "churned"),
+        "suspended_clients": sum(1 for c in clients if c.status == "suspended"),
+        "total_revenue_rub": total_revenue,
+        "agency_earned_rub": agency_earned,
+        "revenue_share_pct": agency.revenue_share_pct,
+        "max_clients": agency.max_clients,
+        "slots_remaining": max(0, agency.max_clients - total_clients),
+    }
+
+
+# --- Client Management ---
+
+@app.get("/v1/agency/clients")
+async def agency_clients_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Список клиентов агентства с пагинацией."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    q = select(AgencyClient).where(AgencyClient.agency_id == agency.id)
+    if status_filter:
+        q = q.where(AgencyClient.status == status_filter)
+    q_count = select(func.count()).select_from(q.subquery())
+    total = (await session.execute(q_count)).scalar_one()
+    rows = (await session.execute(
+        q.order_by(AgencyClient.created_at.desc()).limit(limit).offset(offset)
+    )).scalars().all()
+    return {"items": [_serialize_agency_client(c) for c in rows], "total": total}
+
+
+@app.post("/v1/agency/clients", status_code=status.HTTP_201_CREATED)
+async def agency_client_create(
+    payload: AgencyClientCreatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Создать новый клиентский тенант и привязать его к агентству.
+
+    Создаёт Tenant + Workspace + AgencyClient в одной транзакции.
+    Возвращает сериализованный AgencyClient с client_tenant_id.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    # Enforce max_clients limit
+    client_count = (await session.execute(
+        select(func.count()).where(AgencyClient.agency_id == agency.id)
+    )).scalar_one()
+    if client_count >= agency.max_clients:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="agency_client_limit_reached",
+        )
+    import re as _re
+    # Derive slug for the new client tenant
+    base_slug = _re.sub(r"[^a-z0-9]", "-", payload.client_name.lower()).strip("-") or "client"
+    base_slug = _re.sub(r"-{2,}", "-", base_slug)[:80]
+    # Ensure uniqueness
+    suffix = 0
+    candidate = base_slug
+    while True:
+        conflict = (await session.execute(
+            select(Tenant).where(Tenant.slug == candidate)
+        )).scalar_one_or_none()
+        if conflict is None:
+            break
+        suffix += 1
+        candidate = f"{base_slug}-{suffix}"
+    client_tenant = Tenant(
+        name=payload.client_name,
+        slug=candidate,
+        status="active",
+        created_at=utcnow(),
+    )
+    session.add(client_tenant)
+    await session.flush()
+    # Create default workspace for client
+    client_workspace = Workspace(
+        tenant_id=int(client_tenant.id),
+        name="Основной",
+        settings={},
+        created_at=utcnow(),
+    )
+    session.add(client_workspace)
+    await session.flush()
+    # Link to agency
+    client_rec = AgencyClient(
+        agency_id=int(agency.id),
+        client_tenant_id=int(client_tenant.id),
+        client_name=payload.client_name,
+        client_contact_email=payload.client_contact_email,
+        notes=payload.notes,
+        status="active",
+        total_revenue_rub=0.0,
+        agency_earned_rub=0.0,
+        created_at=utcnow(),
+    )
+    session.add(client_rec)
+    await session.flush()
+    result = _serialize_agency_client(client_rec)
+    result["client_tenant_slug"] = candidate
+    return result
+
+
+@app.get("/v1/agency/clients/{client_id}")
+async def agency_client_get(
+    client_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Детальная карточка клиента: информация + статистика аккаунтов."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    client = (await session.execute(
+        select(AgencyClient).where(
+            AgencyClient.id == client_id,
+            AgencyClient.agency_id == agency.id,
+        )
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="client_not_found")
+    # Count accounts in client tenant (no RLS bypass needed — read via count only)
+    account_count = (await session.execute(
+        select(func.count()).where(Account.tenant_id == client.client_tenant_id)
+    )).scalar_one()
+    data = _serialize_agency_client(client)
+    data["account_count"] = account_count
+    return data
+
+
+@app.put("/v1/agency/clients/{client_id}")
+async def agency_client_update(
+    client_id: int,
+    payload: AgencyClientUpdatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Обновить данные клиента (название, email, заметки, статус)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    client = (await session.execute(
+        select(AgencyClient).where(
+            AgencyClient.id == client_id,
+            AgencyClient.agency_id == agency.id,
+        )
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="client_not_found")
+    if payload.client_name is not None:
+        client.client_name = payload.client_name
+    if payload.client_contact_email is not None:
+        client.client_contact_email = payload.client_contact_email
+    if payload.notes is not None:
+        client.notes = payload.notes
+    if payload.status is not None:
+        client.status = payload.status
+    await session.flush()
+    return _serialize_agency_client(client)
+
+
+@app.delete("/v1/agency/clients/{client_id}", status_code=status.HTTP_200_OK)
+async def agency_client_delete(
+    client_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Мягкое удаление клиента (статус → churned)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    client = (await session.execute(
+        select(AgencyClient).where(
+            AgencyClient.id == client_id,
+            AgencyClient.agency_id == agency.id,
+        )
+    )).scalar_one_or_none()
+    if client is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="client_not_found")
+    client.status = "churned"
+    await session.flush()
+    return {"ok": True, "client_id": client_id, "status": "churned"}
+
+
+# --- Invite System ---
+
+@app.post("/v1/agency/invites", status_code=status.HTTP_201_CREATED)
+async def agency_invite_create(
+    payload: AgencyInviteCreatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Создать инвайт-ссылку для подключения нового клиента."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    expires_at = None
+    if payload.expires_in_days is not None:
+        from datetime import timedelta
+        expires_at = utcnow() + timedelta(days=payload.expires_in_days)
+    invite = AgencyInvite(
+        agency_id=int(agency.id),
+        invite_code=_secrets.token_urlsafe(32),
+        client_email=payload.client_email,
+        max_uses=payload.max_uses,
+        used_count=0,
+        expires_at=expires_at,
+        created_at=utcnow(),
+    )
+    session.add(invite)
+    await session.flush()
+    return _serialize_agency_invite(invite)
+
+
+@app.get("/v1/agency/invites")
+async def agency_invites_list(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Список активных и использованных инвайтов."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    rows = (await session.execute(
+        select(AgencyInvite)
+        .where(AgencyInvite.agency_id == agency.id)
+        .order_by(AgencyInvite.created_at.desc())
+        .limit(200)
+    )).scalars().all()
+    return {"items": [_serialize_agency_invite(i) for i in rows], "total": len(rows)}
+
+
+@app.delete("/v1/agency/invites/{invite_id}", status_code=status.HTTP_200_OK)
+async def agency_invite_delete(
+    invite_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Отозвать инвайт-ссылку (установить max_uses = used_count)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    invite = (await session.execute(
+        select(AgencyInvite).where(
+            AgencyInvite.id == invite_id,
+            AgencyInvite.agency_id == agency.id,
+        )
+    )).scalar_one_or_none()
+    if invite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invite_not_found")
+    # Revoke by exhausting uses
+    invite.max_uses = invite.used_count
+    await session.flush()
+    return {"ok": True, "invite_id": invite_id, "revoked": True}
+
+
+@app.post("/v1/agency/join/{invite_code}", status_code=status.HTTP_200_OK)
+async def agency_join(
+    invite_code: str,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Клиент использует инвайт-код для присоединения к агентству.
+
+    Текущий тенант JWT становится клиентом агентства.
+    Требует: тенант ещё не является клиентом никакого агентства.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    # Look up invite without RLS restriction (public join path, invite_code is a secret)
+    invite = (await session.execute(
+        select(AgencyInvite).where(AgencyInvite.invite_code == invite_code)
+    )).scalar_one_or_none()
+    if invite is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="invite_not_found")
+    # Validate invite
+    if invite.used_count >= invite.max_uses:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invite_exhausted")
+    if invite.expires_at is not None and invite.expires_at < utcnow():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="invite_expired")
+    # Check joining tenant is not already a client
+    already = (await session.execute(
+        select(AgencyClient).where(AgencyClient.client_tenant_id == tenant_context.tenant_id)
+    )).scalar_one_or_none()
+    if already is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_agency_client")
+    # Check joining tenant is not an agency itself
+    self_agency = (await session.execute(
+        select(Agency).where(Agency.tenant_id == tenant_context.tenant_id)
+    )).scalar_one_or_none()
+    if self_agency is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="agency_cannot_join_agency")
+    # Fetch tenant name for client record
+    joining_tenant = (await session.execute(
+        select(Tenant).where(Tenant.id == tenant_context.tenant_id)
+    )).scalar_one()
+    # Create agency_client record
+    client_rec = AgencyClient(
+        agency_id=int(invite.agency_id),
+        client_tenant_id=tenant_context.tenant_id,
+        client_name=joining_tenant.name,
+        status="active",
+        total_revenue_rub=0.0,
+        agency_earned_rub=0.0,
+        created_at=utcnow(),
+    )
+    session.add(client_rec)
+    invite.used_count += 1
+    await session.flush()
+    return {"ok": True, "agency_id": int(invite.agency_id), "client_id": int(client_rec.id)}
+
+
+# --- White Label ---
+
+@app.get("/v1/agency/branding")
+async def agency_branding_get(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить white-label настройки агентства."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    return {
+        "agency_id": int(agency.id),
+        "custom_logo_url": agency.custom_logo_url,
+        "custom_brand_name": agency.custom_brand_name,
+        "custom_accent_color": agency.custom_accent_color,
+        "custom_domain": agency.custom_domain,
+    }
+
+
+@app.put("/v1/agency/branding")
+async def agency_branding_update(
+    payload: AgencyBrandingPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Обновить white-label настройки агентства."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    if payload.custom_logo_url is not None:
+        agency.custom_logo_url = payload.custom_logo_url or None
+    if payload.custom_brand_name is not None:
+        agency.custom_brand_name = payload.custom_brand_name or None
+    if payload.custom_accent_color is not None:
+        agency.custom_accent_color = payload.custom_accent_color or None
+    if payload.custom_domain is not None:
+        agency.custom_domain = payload.custom_domain or None
+    await session.flush()
+    return {
+        "agency_id": int(agency.id),
+        "custom_logo_url": agency.custom_logo_url,
+        "custom_brand_name": agency.custom_brand_name,
+        "custom_accent_color": agency.custom_accent_color,
+        "custom_domain": agency.custom_domain,
+    }
+
+
+# --- Revenue ---
+
+@app.get("/v1/agency/revenue")
+async def agency_revenue(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Разбивка выручки по клиентам."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    clients = (await session.execute(
+        select(AgencyClient)
+        .where(AgencyClient.agency_id == agency.id)
+        .order_by(AgencyClient.total_revenue_rub.desc())
+    )).scalars().all()
+    total_revenue = sum(c.total_revenue_rub for c in clients)
+    agency_earned = sum(c.agency_earned_rub for c in clients)
+    breakdown = [
+        {
+            "client_id": int(c.id),
+            "client_name": c.client_name,
+            "status": c.status,
+            "total_revenue_rub": c.total_revenue_rub,
+            "agency_earned_rub": c.agency_earned_rub,
+            "share_pct": (
+                round(c.agency_earned_rub / c.total_revenue_rub * 100, 2)
+                if c.total_revenue_rub > 0 else agency.revenue_share_pct
+            ),
+        }
+        for c in clients
+    ]
+    return {
+        "agency_id": int(agency.id),
+        "revenue_share_pct": agency.revenue_share_pct,
+        "total_revenue_rub": total_revenue,
+        "agency_earned_rub": agency_earned,
+        "clients": breakdown,
+    }
+
+
+@app.get("/v1/agency/revenue/export")
+async def agency_revenue_export(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> StreamingResponse:
+    """CSV-экспорт выручки по клиентам."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    agency = await _get_agency_for_tenant(session, tenant_context.tenant_id)
+    clients = (await session.execute(
+        select(AgencyClient)
+        .where(AgencyClient.agency_id == agency.id)
+        .order_by(AgencyClient.created_at.asc())
+    )).scalars().all()
+    output = _io.StringIO()
+    writer = _csv.writer(output)
+    writer.writerow([
+        "client_id", "client_name", "status",
+        "total_revenue_rub", "agency_earned_rub",
+        "revenue_share_pct", "created_at",
+    ])
+    for c in clients:
+        share = (
+            round(c.agency_earned_rub / c.total_revenue_rub * 100, 2)
+            if c.total_revenue_rub > 0 else agency.revenue_share_pct
+        )
+        writer.writerow([
+            c.id, c.client_name, c.status,
+            c.total_revenue_rub, c.agency_earned_rub,
+            share,
+            c.created_at.isoformat() if c.created_at else "",
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        _io.BytesIO(output.getvalue().encode("utf-8-sig")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=agency_revenue.csv"},
+    )
+
 
 # ---------------------------------------------------------------------------
 # Exception handlers
