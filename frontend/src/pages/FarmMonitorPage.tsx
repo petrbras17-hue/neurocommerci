@@ -148,7 +148,7 @@ function FarmStatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 
 export function FarmMonitorPage() {
-  const { token } = useAuth();
+  const { accessToken: token } = useAuth();
 
   const [liveStats, setLiveStats] = useState<FarmLiveStats | null>(null);
   const [quality, setQuality] = useState<CommentQuality | null>(null);
