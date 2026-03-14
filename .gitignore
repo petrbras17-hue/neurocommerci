@@ -61,3 +61,5 @@ data/proxies.txt
 # Migration artifacts / backups
 artifacts/
 ops/runtime/
+# Storage — runtime account/proxy data, NOT tracked by git
+storage/

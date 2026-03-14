@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, text as sa_text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings, validate_critical_secrets
@@ -37,8 +37,10 @@ from core.billing_service import (
     RESOURCE_FARMS,
     cancel_subscription,
     check_limits,
+    create_stripe_checkout,
     create_subscription,
     create_trial,
+    create_yookassa_payment,
     get_plan_for_tenant,
     get_plans,
     get_subscription,
@@ -52,6 +54,7 @@ from core.billing_service import (
     _serialize_plan,
     _serialize_subscription,
 )
+from core.email_service import schedule_email
 from core.assistant_jobs import (
     ASSISTANT_QUEUE_NAMES,
     JOB_TYPE_ASSISTANT_MESSAGE,
@@ -1651,6 +1654,12 @@ async def auth_register(payload: EmailRegisterPayload, request: Request) -> JSON
         response = JSONResponse(status_code=status.HTTP_201_CREATED, content=_auth_bundle_payload(bundle))
         if bundle.refresh_token:
             _set_refresh_cookie(response, request, bundle.refresh_token)
+        # Fire-and-forget welcome email.
+        schedule_email(
+            "welcome",
+            to=payload.email,
+            name=payload.first_name or "",
+        )
         return response
     except EmailAuthError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
@@ -7286,7 +7295,7 @@ async def channel_map_viewport(
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
     """Return top channels within a bounding box (for viewport list)."""
-    _check_rate_limit("api", str(tenant_context.tenant_id))
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tf = _channel_map_tenant_filter(tenant_context.tenant_id)
     q = (
         select(ChannelMapEntry)
@@ -7341,7 +7350,7 @@ async def channel_map_clusters(
     """
     import math
 
-    _check_rate_limit("api", str(tenant_context.tenant_id))
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
 
     # Cell size in degrees: zoom 0 → 30°, zoom 1 → 20°, zoom 2 → 10°, zoom 3 → 5°, zoom 4 → 2°
     cell_sizes = {0: 30, 1: 20, 2: 10, 3: 5, 4: 2, 5: 1, 6: 0.5}
@@ -7945,7 +7954,7 @@ class SubscribePayload(BaseModel):
 
 
 class CancelSubscriptionPayload(BaseModel):
-    reason: str | None = None
+    reason: Optional[str] = None
 
 
 @app.get("/v1/billing/plans")
@@ -8111,6 +8120,112 @@ async def yookassa_webhook(request: Request) -> dict[str, Any]:
                 result = await handle_yookassa_webhook(raw_body, client_ip, session)
             except BillingError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Sprint 14 — Canonical webhook paths + Checkout Session endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/webhooks/stripe")
+async def stripe_webhook_v1(request: Request) -> dict[str, Any]:
+    """
+    Canonical Stripe webhook endpoint (Sprint 14).
+
+    No JWT auth — verified via Stripe-Signature header.
+    Always returns 200 so Stripe does not retry on application errors.
+    """
+    _check_rate_limit("public", _client_ip(request), max_calls=120, window_seconds=60)
+    raw_body = await request.body()
+    stripe_sig = request.headers.get("stripe-signature", "")
+    async with async_session() as session:
+        async with session.begin():
+            try:
+                result = await handle_stripe_webhook(raw_body, stripe_sig, session)
+            except BillingError as exc:
+                # Log but return 200 to prevent Stripe retry storms.
+                log.warning("Stripe webhook processing error: %s", exc)
+                return {"status": "error", "detail": str(exc)}
+    return result
+
+
+@app.post("/v1/webhooks/yookassa")
+async def yookassa_webhook_v1(request: Request) -> dict[str, Any]:
+    """
+    Canonical YooKassa webhook endpoint (Sprint 14).
+
+    No JWT auth — verified via IP whitelist.
+    Always returns 200 so YooKassa does not retry on application errors.
+    """
+    _check_rate_limit("public", _client_ip(request), max_calls=120, window_seconds=60)
+    raw_body = await request.body()
+    client_ip = _client_ip(request)
+    async with async_session() as session:
+        async with session.begin():
+            try:
+                result = await handle_yookassa_webhook(raw_body, client_ip, session)
+            except BillingError as exc:
+                log.warning("YooKassa webhook processing error: %s", exc)
+                return {"status": "error", "detail": str(exc)}
+    return result
+
+
+class CheckoutPayload(BaseModel):
+    provider: str  # "stripe" | "yookassa"
+    plan_id: int
+    success_url: str = ""
+    cancel_url: str = ""
+    return_url: str = ""
+
+
+@app.post("/v1/billing/checkout")
+async def billing_checkout(
+    payload: CheckoutPayload,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Create a payment checkout session for the given plan.
+
+    Requires JWT auth. Returns a checkout_url to redirect the user.
+    Rate-limited to 10 calls/minute per tenant to prevent abuse.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+
+    provider = payload.provider.strip().lower()
+    if provider not in ("stripe", "yookassa"):
+        raise HTTPException(
+            status_code=400,
+            detail="provider must be 'stripe' or 'yookassa'",
+        )
+
+    # Build default URLs using the request origin if not provided.
+    base_url = str(request.base_url).rstrip("/")
+    success_url = payload.success_url or f"{base_url}/app/billing?checkout=success"
+    cancel_url = payload.cancel_url or f"{base_url}/app/billing?checkout=cancelled"
+    return_url = payload.return_url or f"{base_url}/app/billing?checkout=success"
+
+    try:
+        if provider == "stripe":
+            result = await create_stripe_checkout(
+                plan_id=payload.plan_id,
+                tenant_id=tenant_context.tenant_id,
+                success_url=success_url,
+                cancel_url=cancel_url,
+                session=session,
+            )
+        else:
+            result = await create_yookassa_payment(
+                plan_id=payload.plan_id,
+                tenant_id=tenant_context.tenant_id,
+                return_url=return_url,
+                session=session,
+            )
+    except BillingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return result
 
 
@@ -8762,6 +8877,284 @@ async def admin_tenant_health(
                 })
 
     return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/tenants")
+async def admin_list_tenants(
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None, max_length=255),
+    _: None = Depends(require_admin_auth),
+) -> dict[str, Any]:
+    """List all tenants with per-tenant stats."""
+    async with async_session() as session:
+        async with session.begin():
+            q = select(Tenant).order_by(Tenant.created_at.desc())
+            if search:
+                q = q.where(
+                    or_(
+                        Tenant.name.ilike(f"%{search}%"),
+                        Tenant.slug.ilike(f"%{search}%"),
+                    )
+                )
+            total_count = (await session.execute(
+                select(func.count()).select_from(q.subquery())
+            )).scalar_one()
+            tenants_result = await session.execute(q.limit(limit).offset(offset))
+            tenants = tenants_result.scalars().all()
+
+            items = []
+            for t in tenants:
+                acc_count = (await session.execute(
+                    select(func.count()).select_from(Account).where(Account.tenant_id == t.id)
+                )).scalar_one()
+                sub_result = (await session.execute(
+                    select(Subscription, Plan)
+                    .join(Plan, Subscription.plan_id == Plan.id)
+                    .where(Subscription.tenant_id == t.id)
+                    .order_by(Subscription.id.desc())
+                    .limit(1)
+                )).first()
+                sub_status = None
+                plan_name = None
+                if sub_result:
+                    sub_status = sub_result[0].status
+                    plan_name = sub_result[1].name
+                owner_result = (await session.execute(
+                    select(TeamMember, AuthUser)
+                    .join(AuthUser, TeamMember.user_id == AuthUser.id)
+                    .where(TeamMember.tenant_id == t.id, TeamMember.role == "owner")
+                    .limit(1)
+                )).first()
+                owner_email = None
+                owner_name = None
+                if owner_result:
+                    owner_email = owner_result[1].email
+                    owner_name = owner_result[1].first_name
+                items.append({
+                    "id": t.id,
+                    "name": t.name,
+                    "slug": t.slug,
+                    "status": t.status,
+                    "accounts_count": acc_count,
+                    "subscription_plan": plan_name,
+                    "subscription_status": sub_status,
+                    "owner_email": owner_email,
+                    "owner_name": owner_name,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                })
+
+    return {"items": items, "total": total_count, "limit": limit, "offset": offset}
+
+
+@app.get("/v1/admin/tenants/{tenant_id}")
+async def admin_get_tenant(
+    tenant_id: int,
+    _: None = Depends(require_admin_auth),
+) -> dict[str, Any]:
+    """Get detailed information about a single tenant."""
+    async with async_session() as session:
+        async with session.begin():
+            tenant = (await session.execute(
+                select(Tenant).where(Tenant.id == tenant_id)
+            )).scalar_one_or_none()
+            if tenant is None:
+                raise HTTPException(status_code=404, detail="tenant_not_found")
+
+            # Workspaces
+            workspaces_result = await session.execute(
+                select(Workspace).where(Workspace.tenant_id == tenant_id).limit(50)
+            )
+            workspaces = [
+                {"id": w.id, "name": w.name, "created_at": w.created_at.isoformat() if w.created_at else None}
+                for w in workspaces_result.scalars().all()
+            ]
+
+            # Members with auth_users
+            members_result = await session.execute(
+                select(TeamMember, AuthUser)
+                .join(AuthUser, TeamMember.user_id == AuthUser.id)
+                .where(TeamMember.tenant_id == tenant_id)
+                .limit(50)
+            )
+            members = [
+                {
+                    "user_id": tm.id,
+                    "role": tm.role,
+                    "email": au.email,
+                    "name": au.first_name,
+                    "created_at": tm.created_at.isoformat() if tm.created_at else None,
+                }
+                for tm, au in members_result.all()
+            ]
+
+            # Subscription + Plan
+            sub_result = (await session.execute(
+                select(Subscription, Plan)
+                .join(Plan, Subscription.plan_id == Plan.id)
+                .where(Subscription.tenant_id == tenant_id)
+                .order_by(Subscription.id.desc())
+                .limit(1)
+            )).first()
+            subscription = None
+            if sub_result:
+                sub_obj, plan_obj = sub_result
+                subscription = {
+                    "id": sub_obj.id,
+                    "status": sub_obj.status,
+                    "plan_name": plan_obj.name,
+                    "plan_slug": plan_obj.slug,
+                    "trial_ends_at": sub_obj.trial_ends_at.isoformat() if sub_obj.trial_ends_at else None,
+                    "current_period_end": sub_obj.current_period_end.isoformat() if sub_obj.current_period_end else None,
+                }
+
+            # Accounts summary
+            acc_total = (await session.execute(
+                select(func.count()).select_from(Account).where(Account.tenant_id == tenant_id)
+            )).scalar_one()
+            acc_alive = (await session.execute(
+                select(func.count()).select_from(Account).where(
+                    Account.tenant_id == tenant_id, Account.health_status == "alive"
+                )
+            )).scalar_one()
+
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "status": tenant.status,
+        "created_at": tenant.created_at.isoformat() if tenant.created_at else None,
+        "workspaces": workspaces,
+        "members": members,
+        "subscription": subscription,
+        "accounts": {"total": acc_total, "alive": acc_alive},
+    }
+
+
+@app.put("/v1/admin/tenants/{tenant_id}/status")
+async def admin_update_tenant_status(
+    tenant_id: int,
+    payload: dict[str, Any],
+    _: None = Depends(require_admin_auth),
+) -> dict[str, Any]:
+    """Enable or disable (suspend) a tenant."""
+    new_status = payload.get("status")
+    if new_status not in ("active", "suspended"):
+        raise HTTPException(status_code=400, detail="status must be 'active' or 'suspended'")
+    async with async_session() as session:
+        async with session.begin():
+            tenant = (await session.execute(
+                select(Tenant).where(Tenant.id == tenant_id)
+            )).scalar_one_or_none()
+            if tenant is None:
+                raise HTTPException(status_code=404, detail="tenant_not_found")
+            tenant.status = new_status
+    return {"id": tenant_id, "status": new_status}
+
+
+@app.get("/v1/admin/recent-signups")
+async def admin_recent_signups(
+    limit: int = Query(default=20, ge=1, le=100),
+    _: None = Depends(require_admin_auth),
+) -> dict[str, Any]:
+    """Last N signups: email, name, company, created_at."""
+    async with async_session() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(AuthUser).order_by(AuthUser.created_at.desc()).limit(limit)
+            )
+            users = result.scalars().all()
+            items = [
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "name": u.first_name,
+                    "company": u.company,
+                    "telegram_username": u.telegram_username,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in users
+            ]
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/health-overview")
+async def admin_health_overview(
+    _: None = Depends(require_admin_auth),
+) -> dict[str, Any]:
+    """System health: DB connectivity, Redis memory, queue depth, error rate."""
+    import time as _time
+
+    # DB probe
+    db_ok = False
+    db_latency_ms: Optional[float] = None
+    try:
+        t0 = _time.monotonic()
+        async with async_session() as session:
+            async with session.begin():
+                await session.execute(sa_text("SELECT 1"))
+        db_latency_ms = round((_time.monotonic() - t0) * 1000, 1)
+        db_ok = True
+    except Exception:
+        pass
+
+    # Redis probe
+    redis_ok = False
+    redis_memory_mb: Optional[float] = None
+    redis_total_keys: Optional[int] = None
+    try:
+        await task_queue.connect()
+        redis_ok = await task_queue.ping()
+        if redis_ok and task_queue._redis is not None:
+            info = await task_queue._redis.info("memory")
+            redis_memory_mb = round(info.get("used_memory", 0) / 1024 / 1024, 2)
+            redis_total_keys = await task_queue._redis.dbsize()
+    except Exception:
+        pass
+
+    # Queue depth — check known queues
+    queue_depths: dict[str, int] = {}
+    known_queues = [
+        "farm_tasks", "warmup_tasks", "profile_tasks", "healing_tasks",
+        "comment_tasks", "assistant_tasks",
+    ]
+    try:
+        for q in known_queues:
+            try:
+                depth = await task_queue.queue_size(q)
+                if depth > 0:
+                    queue_depths[q] = int(depth)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Recent error rate (last 5 min from AI requests)
+    error_rate: Optional[float] = None
+    try:
+        from datetime import timedelta as _td
+        cutoff = utcnow() - _td(minutes=5)
+        async with async_session() as session:
+            async with session.begin():
+                total_req = (await session.execute(
+                    select(func.count()).select_from(AIRequest).where(AIRequest.created_at >= cutoff)
+                )).scalar_one()
+                failed_req = (await session.execute(
+                    select(func.count()).select_from(AIRequest).where(
+                        AIRequest.created_at >= cutoff,
+                        AIRequest.status == "failed",
+                    )
+                )).scalar_one()
+        error_rate = round(failed_req / total_req * 100, 1) if total_req > 0 else 0.0
+    except Exception:
+        pass
+
+    return {
+        "db": {"ok": db_ok, "latency_ms": db_latency_ms},
+        "redis": {"ok": redis_ok, "memory_mb": redis_memory_mb, "total_keys": redis_total_keys},
+        "queues": queue_depths,
+        "ai_error_rate_5min": error_rate,
+    }
 
 
 # ===========================================================================
@@ -10448,6 +10841,719 @@ async def system_resource_estimate(
         },
     }
 
+
+# ---------------------------------------------------------------------------
+# Sprint 14 — Missing API endpoints
+# ---------------------------------------------------------------------------
+
+
+# 14.1 Quarantine (account-level, distinct from session-file quarantine)
+
+@app.get("/v1/quarantine")
+async def quarantine_accounts_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Список аккаунтов в карантине для текущего тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    now = utcnow()
+    base_where = [
+        Account.tenant_id == tenant_context.tenant_id,
+        Account.quarantined_until.isnot(None),
+        Account.quarantined_until > now,
+    ]
+    total = (
+        await session.execute(
+            select(func.count(Account.id)).where(*base_where)
+        )
+    ).scalar_one() or 0
+    rows = (
+        await session.execute(
+            select(Account)
+            .where(*base_where)
+            .order_by(Account.quarantined_until.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+    items = [
+        {
+            "id": int(r.id),
+            "phone": r.phone,
+            "status": r.status,
+            "lifecycle_stage": r.lifecycle_stage,
+            "restriction_reason": r.restriction_reason,
+            "quarantined_until": r.quarantined_until.isoformat() if r.quarantined_until else None,
+            "health_status": r.health_status,
+            "last_active_at": r.last_active_at.isoformat() if r.last_active_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.post("/v1/quarantine/{account_id}/lift", status_code=status.HTTP_200_OK)
+async def quarantine_account_lift(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Снять карантин с аккаунта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    result = await session.execute(
+        update(Account)
+        .where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.quarantined_until.isnot(None),
+        )
+        .values(quarantined_until=None, status="active", updated_at=utcnow())
+    )
+    if result.rowcount == 0:  # type: ignore[union-attr]
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="account_not_quarantined")
+    return {"ok": True, "account_id": account_id}
+
+
+# 14.2 Analytics Overview
+
+@app.get("/v1/analytics/overview")
+async def analytics_overview(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Сводная статистика для текущего тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tid = tenant_context.tenant_id
+    today_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    total_comments = (
+        await session.execute(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.tenant_id == tid,
+                AnalyticsEvent.event_type == "comment_sent",
+            )
+        )
+    ).scalar_one() or 0
+
+    total_reactions = (
+        await session.execute(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.tenant_id == tid,
+                AnalyticsEvent.event_type == "reaction_sent",
+            )
+        )
+    ).scalar_one() or 0
+
+    active_accounts = (
+        await session.execute(
+            select(func.count(Account.id)).where(
+                Account.tenant_id == tid,
+                Account.status == "active",
+            )
+        )
+    ).scalar_one() or 0
+
+    active_farms = (
+        await session.execute(
+            select(func.count(FarmConfig.id)).where(
+                FarmConfig.tenant_id == tid,
+                FarmConfig.status == "running",
+            )
+        )
+    ).scalar_one() or 0
+
+    comments_today = (
+        await session.execute(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.tenant_id == tid,
+                AnalyticsEvent.event_type == "comment_sent",
+                AnalyticsEvent.created_at >= today_start,
+            )
+        )
+    ).scalar_one() or 0
+
+    chan_result = await session.execute(
+        select(
+            AnalyticsEvent.channel_username,
+            func.count(AnalyticsEvent.id).label("cnt"),
+        )
+        .where(
+            AnalyticsEvent.tenant_id == tid,
+            AnalyticsEvent.channel_username.isnot(None),
+        )
+        .group_by(AnalyticsEvent.channel_username)
+        .order_by(func.count(AnalyticsEvent.id).desc())
+        .limit(5)
+    )
+    top_channels = [
+        {"channel": row.channel_username, "total_actions": int(row.cnt)}
+        for row in chan_result.all()
+    ]
+
+    return {
+        "total_comments": int(total_comments),
+        "total_reactions": int(total_reactions),
+        "active_accounts": int(active_accounts),
+        "active_farms": int(active_farms),
+        "comments_today": int(comments_today),
+        "top_channels": top_channels,
+    }
+
+
+# 14.3 Self-Healing Status and Config
+
+
+class SelfHealingConfigUpdatePayload(BaseModel):
+    enabled: Optional[bool] = None
+    health_sweep_interval_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
+    min_health_score_threshold: Optional[int] = Field(default=None, ge=0, le=100)
+    auto_proxy_replace: Optional[bool] = None
+    auto_quarantine_banned: Optional[bool] = None
+
+
+@app.get("/v1/self-healing/status")
+async def self_healing_status(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Сводка активности self-healing для текущего тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tid = tenant_context.tenant_id
+
+    total_actions = (
+        await session.execute(
+            select(func.count(HealingAction.id)).where(HealingAction.tenant_id == tid)
+        )
+    ).scalar_one() or 0
+
+    counts_result = await session.execute(
+        select(HealingAction.action_type, func.count(HealingAction.id).label("cnt"))
+        .where(HealingAction.tenant_id == tid)
+        .group_by(HealingAction.action_type)
+    )
+    by_type: dict[str, int] = {row.action_type: int(row.cnt) for row in counts_result.all()}
+
+    outcome_result = await session.execute(
+        select(HealingAction.outcome, func.count(HealingAction.id).label("cnt"))
+        .where(HealingAction.tenant_id == tid)
+        .group_by(HealingAction.outcome)
+    )
+    by_outcome: dict[str, int] = {row.outcome: int(row.cnt) for row in outcome_result.all()}
+
+    recent_rows = (
+        await session.execute(
+            select(HealingAction)
+            .where(HealingAction.tenant_id == tid)
+            .order_by(HealingAction.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+
+    recent_actions = [
+        {
+            "id": int(r.id),
+            "action_type": r.action_type,
+            "target_type": r.target_type,
+            "target_id": r.target_id,
+            "outcome": r.outcome,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in recent_rows
+    ]
+
+    alert_cfg_rows = (
+        await session.execute(
+            select(AlertConfig).where(AlertConfig.tenant_id == tid)
+        )
+    ).scalars().all()
+    auto_heal_config = [
+        {
+            "resource_type": r.resource_type,
+            "threshold_percent": r.threshold_percent,
+            "auto_purchase_enabled": r.auto_purchase_enabled,
+            "notify_telegram": r.notify_telegram,
+            "notify_email": r.notify_email,
+        }
+        for r in alert_cfg_rows
+    ]
+
+    return {
+        "total_actions": int(total_actions),
+        "by_type": by_type,
+        "by_outcome": by_outcome,
+        "recent_actions": recent_actions,
+        "auto_heal_config": auto_heal_config,
+    }
+
+
+@app.put("/v1/self-healing/config", status_code=status.HTTP_200_OK)
+async def self_healing_config_update(
+    payload: SelfHealingConfigUpdatePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Обновить конфигурацию self-healing (флаги и пороги)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    updates: dict[str, Any] = {}
+    if payload.auto_proxy_replace is not None:
+        updates["auto_proxy_replace"] = payload.auto_proxy_replace
+    if payload.auto_quarantine_banned is not None:
+        updates["auto_quarantine_banned"] = payload.auto_quarantine_banned
+    if payload.enabled is not None:
+        await session.execute(
+            update(AlertConfig)
+            .where(AlertConfig.tenant_id == tenant_context.tenant_id)
+            .values(auto_purchase_enabled=payload.enabled)
+        )
+        updates["enabled"] = payload.enabled
+    return {"ok": True, "applied": updates}
+
+
+# 14.4 Auto-Purchase Config
+
+
+class AutoPurchaseConfigPayload(BaseModel):
+    enabled: Optional[bool] = None
+    provider: Optional[str] = Field(default=None, max_length=100)
+    budget_usd: Optional[float] = Field(default=None, ge=0.0)
+    min_accounts_threshold: Optional[int] = Field(default=None, ge=0)
+    min_proxies_threshold: Optional[int] = Field(default=None, ge=0)
+
+
+@app.get("/v1/auto-purchase/config")
+async def auto_purchase_config_get(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить текущие настройки авто-закупки ресурсов."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    rows = (
+        await session.execute(
+            select(AlertConfig).where(AlertConfig.tenant_id == tenant_context.tenant_id)
+        )
+    ).scalars().all()
+
+    last_purchase = (
+        await session.execute(
+            select(PurchaseRequest)
+            .where(PurchaseRequest.tenant_id == tenant_context.tenant_id)
+            .order_by(PurchaseRequest.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    config_by_type = {
+        r.resource_type: {
+            "threshold_percent": r.threshold_percent,
+            "auto_purchase_enabled": r.auto_purchase_enabled,
+            "notify_telegram": r.notify_telegram,
+            "notify_email": r.notify_email,
+        }
+        for r in rows
+    }
+
+    return {
+        "config": config_by_type,
+        "last_purchase": {
+            "id": int(last_purchase.id),
+            "resource_type": last_purchase.resource_type,
+            "quantity": last_purchase.quantity,
+            "provider_name": last_purchase.provider_name,
+            "status": last_purchase.status,
+            "created_at": last_purchase.created_at.isoformat() if last_purchase.created_at else None,
+        } if last_purchase else None,
+    }
+
+
+@app.put("/v1/auto-purchase/config", status_code=status.HTTP_200_OK)
+async def auto_purchase_config_update(
+    payload: AutoPurchaseConfigPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Обновить настройки авто-закупки ресурсов."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    updates: dict[str, Any] = {}
+    if payload.enabled is not None:
+        await session.execute(
+            update(AlertConfig)
+            .where(AlertConfig.tenant_id == tenant_context.tenant_id)
+            .values(auto_purchase_enabled=payload.enabled)
+        )
+        updates["enabled"] = payload.enabled
+    if payload.min_accounts_threshold is not None:
+        await session.execute(
+            update(AlertConfig)
+            .where(
+                AlertConfig.tenant_id == tenant_context.tenant_id,
+                AlertConfig.resource_type == "account",
+            )
+            .values(threshold_percent=payload.min_accounts_threshold)
+        )
+        updates["min_accounts_threshold"] = payload.min_accounts_threshold
+    if payload.min_proxies_threshold is not None:
+        await session.execute(
+            update(AlertConfig)
+            .where(
+                AlertConfig.tenant_id == tenant_context.tenant_id,
+                AlertConfig.resource_type == "proxy",
+            )
+            .values(threshold_percent=payload.min_proxies_threshold)
+        )
+        updates["min_proxies_threshold"] = payload.min_proxies_threshold
+    return {"ok": True, "applied": updates}
+
+
+# 14.5 Billing Usage
+
+@app.get("/v1/billing/usage")
+async def billing_usage(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Использование ресурсов за текущий период для тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tid = tenant_context.tenant_id
+    today_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    comments_used = (
+        await session.execute(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.tenant_id == tid,
+                AnalyticsEvent.event_type == "comment_sent",
+                AnalyticsEvent.created_at >= today_start,
+            )
+        )
+    ).scalar_one() or 0
+
+    accounts_used = (
+        await session.execute(
+            select(func.count(Account.id)).where(Account.tenant_id == tid)
+        )
+    ).scalar_one() or 0
+
+    farms_used = (
+        await session.execute(
+            select(func.count(FarmConfig.id)).where(FarmConfig.tenant_id == tid)
+        )
+    ).scalar_one() or 0
+
+    ai_calls_used = (
+        await session.execute(
+            select(func.count(AIRequest.id)).where(
+                AIRequest.tenant_id == tid,
+                AIRequest.created_at >= today_start,
+            )
+        )
+    ).scalar_one() or 0
+
+    plan_row = await get_plan_for_tenant(tenant_id=tid, session=session)
+
+    return {
+        "period": today_start.date().isoformat(),
+        "comments_used": int(comments_used),
+        "comments_limit": plan_row.max_comments_per_day if plan_row else None,
+        "accounts_used": int(accounts_used),
+        "accounts_limit": plan_row.max_accounts if plan_row else None,
+        "farms_used": int(farms_used),
+        "farms_limit": plan_row.max_campaigns if plan_row else None,
+        "ai_calls_used": int(ai_calls_used),
+        "ai_calls_limit": None,
+    }
+
+
+# 14.6 Onboarding Status
+
+
+class OnboardingCompleteStepPayload(BaseModel):
+    step_key: str = Field(min_length=1, max_length=64)
+    result: str = Field(default="ok", max_length=32)
+    notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+@app.get("/v1/onboarding/status")
+async def onboarding_status(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Прогресс онбординга для текущего тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    from storage.models import AccountOnboardingRun
+
+    tenant_user_ids_subq = (
+        select(Account.user_id)
+        .where(
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.user_id.isnot(None),
+        )
+        .scalar_subquery()
+    )
+
+    runs = (
+        await session.execute(
+            select(AccountOnboardingRun)
+            .where(AccountOnboardingRun.user_id.in_(tenant_user_ids_subq))
+            .order_by(AccountOnboardingRun.started_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+
+    run_items = [
+        {
+            "id": int(r.id),
+            "account_id": r.account_id,
+            "phone": r.phone,
+            "status": r.status,
+            "current_step": r.current_step,
+            "last_result": r.last_result,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in runs
+    ]
+
+    return {
+        "total_runs": len(runs),
+        "completed_runs": sum(1 for r in runs if r.status == "completed"),
+        "in_progress": sum(1 for r in runs if r.status == "active"),
+        "runs": run_items,
+    }
+
+
+@app.post("/v1/onboarding/complete-step", status_code=status.HTTP_200_OK)
+async def onboarding_complete_step(
+    payload: OnboardingCompleteStepPayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Отметить шаг онбординга как выполненный."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=30, window_seconds=60)
+    from storage.models import AccountOnboardingRun, AccountOnboardingStep
+
+    tenant_user_ids_subq = (
+        select(Account.user_id)
+        .where(
+            Account.tenant_id == tenant_context.tenant_id,
+            Account.user_id.isnot(None),
+        )
+        .scalar_subquery()
+    )
+
+    run = (
+        await session.execute(
+            select(AccountOnboardingRun)
+            .where(
+                AccountOnboardingRun.user_id.in_(tenant_user_ids_subq),
+                AccountOnboardingRun.status == "active",
+            )
+            .order_by(AccountOnboardingRun.started_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no_active_onboarding_run",
+        )
+
+    step = AccountOnboardingStep(
+        run_id=run.id,
+        account_id=run.account_id,
+        user_id=run.user_id,
+        phone=run.phone,
+        step_key=payload.step_key,
+        actor="user",
+        source="web",
+        channel="web",
+        result=payload.result,
+        notes=payload.notes,
+        created_at=utcnow(),
+    )
+    session.add(step)
+    run.current_step = payload.step_key
+    run.last_result = payload.result
+    run.updated_at = utcnow()
+    if payload.result in ("completed", "done"):
+        run.status = "completed"
+        run.completed_at = utcnow()
+
+    await session.flush()
+    return {"ok": True, "run_id": int(run.id), "step_key": payload.step_key}
+
+
+# 14.7 Auth Sessions (v1 namespace aliases)
+
+@app.get("/v1/auth/sessions", response_model=SessionListResponse)
+async def v1_auth_sessions_list(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+    refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
+) -> dict[str, Any]:
+    """Список активных сессий текущего пользователя (v1 namespace)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    current_hash = _refresh_token_hash(refresh_token) if refresh_token else None
+    items = await list_user_sessions(
+        session,
+        user_id=tenant_context.user_id,
+        tenant_id=tenant_context.tenant_id,
+        current_token_hash=current_hash,
+    )
+    return {"items": items, "total": len(items)}
+
+
+@app.delete("/v1/auth/sessions/{session_id}", status_code=status.HTTP_200_OK)
+async def v1_auth_sessions_revoke_one(
+    session_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+    refresh_token: Optional[str] = Cookie(default=None, alias=settings.WEBAPP_SESSION_COOKIE_NAME),
+) -> dict[str, Any]:
+    """Отозвать конкретную сессию по id (v1 namespace)."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    current_hash = _refresh_token_hash(refresh_token) if refresh_token else None
+    try:
+        await revoke_session_by_id(
+            session,
+            session_id=session_id,
+            user_id=tenant_context.user_id,
+            tenant_id=tenant_context.tenant_id,
+            current_token_hash=current_hash,
+        )
+    except TelegramAuthError as exc:
+        code = str(exc)
+        if code == "session_not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=code) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=code) from exc
+    return {"ok": True}
+
+
+# 14.8 Comments A/B Results
+
+@app.get("/v1/comments/ab-results")
+async def comments_ab_results(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Результаты A/B тестирования стилей комментариев с пагинацией."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    base_where = [CommentABResult.tenant_id == tenant_context.tenant_id]
+
+    total = (
+        await session.execute(
+            select(func.count(CommentABResult.id)).where(*base_where)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            select(CommentABResult)
+            .where(*base_where)
+            .order_by(CommentABResult.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    items = [
+        {
+            "id": int(r.id),
+            "style_name": r.style_name,
+            "tone": r.tone,
+            "channel_username": r.channel_username,
+            "account_id": r.account_id,
+            "reactions_count": r.reactions_count,
+            "replies_count": r.replies_count,
+            "was_deleted": r.was_deleted,
+            "posted_at": r.posted_at.isoformat() if r.posted_at else None,
+            "measured_at": r.measured_at.isoformat() if r.measured_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+# 14.9 Fix GET /v1/reactions/jobs and GET /v1/chatting/status
+
+
+@app.get("/v1/reactions/jobs")
+async def reactions_jobs_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Список задач реакций с опциональной фильтрацией по статусу."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    base_where = [ReactionJob.tenant_id == tenant_context.tenant_id]
+    if status_filter:
+        base_where.append(ReactionJob.status == status_filter)
+
+    total = (
+        await session.execute(
+            select(func.count(ReactionJob.id)).where(*base_where)
+        )
+    ).scalar_one() or 0
+
+    rows = (
+        await session.execute(
+            select(ReactionJob)
+            .where(*base_where)
+            .order_by(ReactionJob.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+
+    items = [_serialize_reaction_job(r) for r in rows]
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.get("/v1/chatting/status")
+async def chatting_status_view(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Сводный статус всех chatting конфигураций для тенанта."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    rows = (
+        await session.execute(
+            select(ChattingConfig)
+            .where(ChattingConfig.tenant_id == tenant_context.tenant_id)
+            .order_by(ChattingConfig.created_at.desc())
+        )
+    ).scalars().all()
+
+    total = len(rows)
+    running = sum(1 for r in rows if r.status == "running")
+    stopped = sum(1 for r in rows if r.status == "stopped")
+    paused = sum(1 for r in rows if r.status == "paused")
+
+    return {
+        "total": total,
+        "running": running,
+        "stopped": stopped,
+        "paused": paused,
+        "configs": [
+            {
+                "id": int(r.id),
+                "name": r.name,
+                "status": r.status,
+                "mode": r.mode,
+                "max_messages_per_hour": r.max_messages_per_hour,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 # ---------------------------------------------------------------------------
 # Exception handlers

@@ -28,3 +28,5 @@ pytest>=8.3.0
 pytest-asyncio>=0.24.0
 PyYAML>=6.0.1
 bcrypt>=4.0.0
+stripe>=8.0.0
+aiosmtplib>=3.0.0

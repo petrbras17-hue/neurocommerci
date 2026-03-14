@@ -231,9 +231,18 @@ class Settings(BaseSettings):
     # --- Billing / Payments (Sprint 13) ---
     STRIPE_SECRET_KEY: str = Field(default="")
     STRIPE_WEBHOOK_SECRET: str = Field(default="")
+    STRIPE_PRICE_ID_MAP: str = Field(default="")  # JSON: {"starter": "price_xxx", ...}
     YOOKASSA_SHOP_ID: str = Field(default="")
     YOOKASSA_SECRET_KEY: str = Field(default="")
     BILLING_TRIAL_DAYS: int = Field(default=3)
+
+    # --- Email / SMTP (Sprint 14) ---
+    SMTP_ENABLED: bool = Field(default=False)
+    SMTP_HOST: str = Field(default="smtp.gmail.com")
+    SMTP_PORT: int = Field(default=587)
+    SMTP_USER: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_FROM_EMAIL: str = Field(default="")  # Defaults to SMTP_USER if empty
 
     model_config = {
         "env_file": str(BASE_DIR / ".env"),

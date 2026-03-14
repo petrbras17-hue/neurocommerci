@@ -742,6 +742,104 @@ export type AdminTenantHealthItem = {
   accounts_total: number; accounts_alive: number; created_at: string | null;
 };
 
+// ─── Extended Admin API types ─────────────────────────────────────────────────
+
+export type TenantSummary = {
+  id: number;
+  name: string;
+  slug: string;
+  status: string;
+  accounts_count: number;
+  subscription_plan: string | null;
+  subscription_status: string | null;
+  owner_email: string | null;
+  owner_name: string | null;
+  created_at: string | null;
+};
+
+export type TenantDetail = {
+  id: number;
+  name: string;
+  slug: string;
+  status: string;
+  created_at: string | null;
+  workspaces: Array<{ id: number; name: string; created_at: string | null }>;
+  members: Array<{
+    user_id: number;
+    role: string;
+    email: string | null;
+    name: string | null;
+    created_at: string | null;
+  }>;
+  subscription: {
+    id: number;
+    status: string;
+    plan_name: string;
+    plan_slug: string;
+    trial_ends_at: string | null;
+    current_period_end: string | null;
+  } | null;
+  accounts: { total: number; alive: number };
+};
+
+export type RecentSignup = {
+  id: number;
+  email: string | null;
+  name: string | null;
+  company: string | null;
+  telegram_username: string | null;
+  created_at: string | null;
+};
+
+export type HealthOverview = {
+  db: { ok: boolean; latency_ms: number | null };
+  redis: { ok: boolean; memory_mb: number | null; total_keys: number | null };
+  queues: Record<string, number>;
+  ai_error_rate_5min: number | null;
+};
+
+export const adminApi = {
+  platformStats: (token: string) =>
+    apiFetch<AdminPlatformStats>("/v1/admin/platform-stats", { accessToken: token }),
+
+  aiSpend: (token: string) =>
+    apiFetch<AdminAiSpend>("/v1/admin/ai-spend", { accessToken: token }),
+
+  tenantHealth: (token: string, limit = 20) =>
+    apiFetch<{ items: AdminTenantHealthItem[]; total: number }>(
+      `/v1/admin/tenant-health?limit=${limit}`,
+      { accessToken: token }
+    ),
+
+  listTenants: (token: string, limit = 50, offset = 0, search?: string) => {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (search) params.set("search", search);
+    return apiFetch<{ items: TenantSummary[]; total: number; limit: number; offset: number }>(
+      `/v1/admin/tenants?${params}`,
+      { accessToken: token }
+    );
+  },
+
+  getTenant: (token: string, id: number) =>
+    apiFetch<TenantDetail>(`/v1/admin/tenants/${id}`, { accessToken: token }),
+
+  updateTenantStatus: (token: string, id: number, newStatus: "active" | "suspended") =>
+    apiFetch<{ id: number; status: string }>(`/v1/admin/tenants/${id}/status`, {
+      method: "PUT",
+      accessToken: token,
+      json: { status: newStatus },
+    }),
+
+  recentSignups: (token: string, limit = 20) =>
+    apiFetch<{ items: RecentSignup[]; total: number }>(
+      `/v1/admin/recent-signups?limit=${limit}`,
+      { accessToken: token }
+    ),
+
+  healthOverview: (token: string) =>
+    apiFetch<HealthOverview>("/v1/admin/health-overview", { accessToken: token }),
+};
+
 export const analyticsApi = {
   dashboard: (token: string, days = 7) =>
     apiFetch<DashboardData>(`/v1/analytics/dashboard?days=${days}`, {accessToken: token}),

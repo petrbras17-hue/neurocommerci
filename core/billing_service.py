@@ -1,8 +1,9 @@
 """
-Sprint 13 — Billing Service.
+Sprint 13/14 — Billing Service.
 
 Provides plan management, subscription lifecycle, trial activation,
-plan-limit enforcement, and payment recording for NEURO COMMENTING SaaS.
+plan-limit enforcement, payment recording, Stripe/YooKassa checkout
+session creation, and webhook handling for NEURO COMMENTING SaaS.
 
 All tenant-scoped queries run inside a session that already has RLS context
 applied via apply_session_rls_context(). Platform-level queries (e.g. plan
@@ -10,6 +11,7 @@ listing) bypass RLS by using a non-tenant session.
 """
 from __future__ import annotations
 
+import json as _json
 import logging
 from datetime import timedelta
 from typing import Any
@@ -498,14 +500,14 @@ async def list_payments(
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """List payment history for a tenant from the payments table."""
+    """List payment history for a tenant from the payment_events table."""
     from sqlalchemy import text
 
     result = await session.execute(
         text("""
-            SELECT id, tenant_id, subscription_id, amount, currency, payment_provider,
-                   external_payment_id, status, metadata, created_at
-            FROM payments
+            SELECT id, tenant_id, subscription_id, event_type, amount_rub, payment_provider,
+                   external_payment_id, metadata, created_at
+            FROM payment_events
             WHERE tenant_id = :tenant_id
             ORDER BY created_at DESC
             LIMIT :limit OFFSET :offset
@@ -518,13 +520,12 @@ async def list_payments(
             "id": r[0],
             "tenant_id": r[1],
             "subscription_id": r[2],
-            "amount": r[3],
-            "currency": r[4],
+            "event_type": r[3],
+            "amount_rub": r[4],
             "payment_provider": r[5],
             "external_payment_id": r[6],
-            "status": r[7],
-            "metadata": r[8] or {},
-            "created_at": r[9].isoformat() if r[9] else None,
+            "metadata": r[7] or {},
+            "created_at": r[8].isoformat() if r[8] else None,
         }
         for r in rows
     ]
@@ -561,6 +562,47 @@ async def _record_payment_event(
         created_at=now,
     )
     session.add(event)
+
+
+# ---------------------------------------------------------------------------
+# Tenant email lookup helper
+# ---------------------------------------------------------------------------
+
+
+async def _get_tenant_email(tenant_id: int, session: AsyncSession) -> str | None:
+    """Return the email address of the owner auth_user for this tenant, or None."""
+    from storage.models import AuthUser, Tenant, TeamMember
+
+    # Look up the tenant owner — team member with role='owner', else first member.
+    try:
+        result = await session.execute(
+            select(AuthUser.email)
+            .join(TeamMember, TeamMember.user_id == AuthUser.id)
+            .where(
+                TeamMember.tenant_id == tenant_id,
+                TeamMember.role == "owner",
+                AuthUser.email.is_not(None),
+            )
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            return row
+
+        # Fallback: any team member with an email.
+        result2 = await session.execute(
+            select(AuthUser.email)
+            .join(TeamMember, TeamMember.user_id == AuthUser.id)
+            .where(
+                TeamMember.tenant_id == tenant_id,
+                AuthUser.email.is_not(None),
+            )
+            .limit(1)
+        )
+        return result2.scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("_get_tenant_email tenant=%d failed: %s", tenant_id, exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -603,20 +645,22 @@ async def handle_stripe_webhook(
         except (KeyError, ValueError) as exc:
             raise BillingError(f"Stripe webhook signature parse error: {exc}") from exc
 
-    import json as _json
-
     event = _json.loads(raw_body)
     event_type = event.get("type", "")
     data_obj = event.get("data", {}).get("object", {})
 
     log.info("Stripe webhook received: %s", event_type)
 
-    if event_type == "invoice.payment_succeeded":
+    if event_type in ("invoice.payment_succeeded", "invoice.paid"):
         await _handle_stripe_payment_succeeded(data_obj, session)
     elif event_type == "invoice.payment_failed":
         await _handle_stripe_payment_failed(data_obj, session)
     elif event_type == "customer.subscription.deleted":
         await _handle_stripe_subscription_deleted(data_obj, session)
+    elif event_type == "customer.subscription.updated":
+        await _handle_stripe_subscription_updated(data_obj, session)
+    elif event_type == "checkout.session.completed":
+        await _handle_stripe_checkout_completed(data_obj, session)
 
     return {"status": "ok", "event_type": event_type}
 
@@ -630,6 +674,11 @@ async def _handle_stripe_payment_succeeded(obj: dict, session: AsyncSession) -> 
     external_payment_id = obj.get("id")
 
     if not external_sub_id:
+        return
+
+    # Idempotency: skip if this payment was already recorded.
+    if external_payment_id and await _payment_event_exists(external_payment_id, session):
+        log.info("Stripe invoice %s already processed — skipping", external_payment_id)
         return
 
     sub = (
@@ -657,6 +706,23 @@ async def _handle_stripe_payment_succeeded(obj: dict, session: AsyncSession) -> 
         status="succeeded",
         session=session,
     )
+
+    # Send email notification (fire-and-forget).
+    tenant_email = await _get_tenant_email(sub.tenant_id, session)
+    if tenant_email:
+        period_end = (
+            sub.current_period_end.strftime("%d.%m.%Y")
+            if sub.current_period_end
+            else ""
+        )
+        from core.email_service import schedule_email
+        schedule_email(
+            "payment_success",
+            to=tenant_email,
+            amount=amount // 100 if currency in ("RUB", "USD", "EUR") else amount,
+            currency=currency,
+            period_end=period_end,
+        )
 
     # Notify admin via Telegram (best-effort).
     await _notify_admin(
@@ -686,6 +752,12 @@ async def _handle_stripe_payment_failed(obj: dict, session: AsyncSession) -> Non
         sub.updated_at = utcnow()
     await session.flush()
 
+    # Send email notification (fire-and-forget).
+    tenant_email = await _get_tenant_email(sub.tenant_id, session)
+    if tenant_email:
+        from core.email_service import schedule_email
+        schedule_email("payment_failed", to=tenant_email)
+
 
 async def _handle_stripe_subscription_deleted(obj: dict, session: AsyncSession) -> None:
     from storage.models import Subscription
@@ -709,6 +781,101 @@ async def _handle_stripe_subscription_deleted(obj: dict, session: AsyncSession) 
     if hasattr(sub, "updated_at"):
         sub.updated_at = utcnow()
     await session.flush()
+
+    # Send email notification (fire-and-forget).
+    tenant_email = await _get_tenant_email(sub.tenant_id, session)
+    if tenant_email:
+        period_end = (
+            sub.current_period_end.strftime("%d.%m.%Y")
+            if sub.current_period_end
+            else ""
+        )
+        from core.email_service import schedule_email
+        schedule_email("subscription_cancelled", to=tenant_email, period_end=period_end)
+
+
+async def _handle_stripe_subscription_updated(obj: dict, session: AsyncSession) -> None:
+    """Handle Stripe customer.subscription.updated — sync status changes."""
+    from storage.models import Subscription
+
+    external_sub_id = obj.get("id")
+    if not external_sub_id:
+        return
+
+    sub = (
+        await session.execute(
+            select(Subscription)
+            .where(Subscription.external_subscription_id == external_sub_id)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if sub is None:
+        return
+
+    stripe_status = obj.get("status", "")
+    status_map = {
+        "active": "active",
+        "trialing": "trialing",
+        "past_due": "past_due",
+        "canceled": "cancelled",
+        "unpaid": "past_due",
+    }
+    new_status = status_map.get(stripe_status)
+    if new_status and sub.status != new_status:
+        sub.status = new_status
+        if hasattr(sub, "updated_at"):
+            sub.updated_at = utcnow()
+        await session.flush()
+        log.info(
+            "Stripe subscription updated: external=%s status=%s -> %s",
+            external_sub_id,
+            sub.status,
+            new_status,
+        )
+
+
+async def _handle_stripe_checkout_completed(obj: dict, session: AsyncSession) -> None:
+    """Handle Stripe checkout.session.completed — activate subscription from metadata."""
+    from storage.models import Plan
+
+    metadata = obj.get("metadata", {}) or {}
+    tenant_id_str = metadata.get("tenant_id")
+    plan_id_str = metadata.get("plan_id")
+    external_sub_id = obj.get("subscription")
+
+    if not tenant_id_str:
+        log.warning("checkout.session.completed missing metadata.tenant_id")
+        return
+
+    try:
+        tenant_id = int(tenant_id_str)
+    except ValueError:
+        return
+
+    plan_id: int | None = None
+    if plan_id_str:
+        try:
+            plan_id = int(plan_id_str)
+        except ValueError:
+            pass
+
+    if plan_id is None:
+        log.warning("checkout.session.completed missing metadata.plan_id — skipping activation")
+        return
+
+    await create_subscription(
+        tenant_id=tenant_id,
+        plan_id=plan_id,
+        provider="stripe",
+        external_id=external_sub_id,
+        session=session,
+    )
+    log.info(
+        "checkout.session.completed: tenant=%d plan=%d sub=%s activated",
+        tenant_id,
+        plan_id,
+        external_sub_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -790,6 +957,11 @@ async def _handle_yookassa_payment_succeeded(obj: dict, session: AsyncSession) -
     except ValueError:
         return
 
+    # Idempotency: skip if this payment was already recorded.
+    if external_payment_id and await _payment_event_exists(external_payment_id, session):
+        log.info("YooKassa payment %s already processed — skipping", external_payment_id)
+        return
+
     sub = await get_subscription(tenant_id, session)
     if sub:
         sub.status = "active"
@@ -808,6 +980,21 @@ async def _handle_yookassa_payment_succeeded(obj: dict, session: AsyncSession) -
         status="succeeded",
         session=session,
     )
+
+    # Send email notification (fire-and-forget).
+    tenant_email = await _get_tenant_email(tenant_id, session)
+    if tenant_email:
+        period_end = ""
+        if sub and sub.current_period_end:
+            period_end = sub.current_period_end.strftime("%d.%m.%Y")
+        from core.email_service import schedule_email
+        schedule_email(
+            "payment_success",
+            to=tenant_email,
+            amount=amount // 100,  # kopecks -> rubles
+            currency=currency,
+            period_end=period_end,
+        )
 
     await _notify_admin(
         f"YooKassa payment succeeded: tenant={tenant_id} amount={amount}{currency}"
@@ -843,6 +1030,205 @@ async def _handle_yookassa_refund(obj: dict, session: AsyncSession) -> None:
     currency = amount_obj.get("currency", "RUB")
     external_payment_id = obj.get("payment_id")
     log.info("YooKassa refund: payment_id=%s amount=%d %s", external_payment_id, amount, currency)
+
+
+# ---------------------------------------------------------------------------
+# Idempotency helper
+# ---------------------------------------------------------------------------
+
+
+async def _payment_event_exists(
+    external_payment_id: str,
+    session: AsyncSession,
+) -> bool:
+    """Return True if a payment with this external_payment_id was already recorded."""
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text(
+            "SELECT 1 FROM payments WHERE external_payment_id = :eid LIMIT 1"
+        ),
+        {"eid": external_payment_id},
+    )
+    return result.fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# Stripe Checkout Session creation (Sprint 14)
+# ---------------------------------------------------------------------------
+
+
+async def create_stripe_checkout(
+    plan_id: int,
+    tenant_id: int,
+    success_url: str,
+    cancel_url: str,
+    session: AsyncSession,
+) -> dict[str, Any]:
+    """
+    Create a Stripe Checkout Session for the given plan and tenant.
+
+    Requires STRIPE_SECRET_KEY to be set. Raises BillingError if the key
+    is missing or if stripe returns an error.
+
+    Returns {"checkout_url": str, "session_id": str}.
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        raise BillingError("STRIPE_SECRET_KEY not configured")
+
+    from storage.models import Plan
+
+    plan = (
+        await session.execute(select(Plan).where(Plan.id == plan_id).limit(1))
+    ).scalar_one_or_none()
+    if plan is None:
+        raise BillingError(f"Plan id={plan_id} not found")
+
+    # Build a unit_amount from the plan's monthly price in kopecks (Stripe uses smallest unit).
+    # price_monthly_rub is stored in whole rubles; Stripe expects kopecks.
+    price_rub = plan.price_monthly_rub or 0
+    unit_amount = price_rub * 100  # rubles -> kopecks
+
+    # Resolve Stripe price ID from env map if available.
+    price_id: str | None = None
+    price_id_map_raw = settings.STRIPE_PRICE_ID_MAP
+    if price_id_map_raw:
+        try:
+            price_id_map = _json.loads(price_id_map_raw)
+            price_id = price_id_map.get(plan.slug)
+        except (ValueError, KeyError):
+            pass
+
+    try:
+        import stripe as _stripe  # type: ignore[import]
+
+        _stripe.api_key = settings.STRIPE_SECRET_KEY
+
+        session_params: dict[str, Any] = {
+            "mode": "subscription",
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "metadata": {
+                "tenant_id": str(tenant_id),
+                "plan_id": str(plan_id),
+                "plan_slug": plan.slug,
+            },
+            "client_reference_id": str(tenant_id),
+        }
+
+        if price_id:
+            session_params["line_items"] = [{"price": price_id, "quantity": 1}]
+        else:
+            # Create an ad-hoc price inline.
+            session_params["line_items"] = [
+                {
+                    "price_data": {
+                        "currency": "rub",
+                        "unit_amount": unit_amount,
+                        "recurring": {"interval": "month"},
+                        "product_data": {"name": plan.name},
+                    },
+                    "quantity": 1,
+                }
+            ]
+
+        checkout_session = _stripe.checkout.Session.create(**session_params)
+        return {
+            "checkout_url": checkout_session.url,
+            "session_id": checkout_session.id,
+            "provider": "stripe",
+        }
+    except ImportError:
+        raise BillingError(
+            "stripe library not installed. Run: pip install stripe"
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise BillingError(f"Stripe checkout creation failed: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# YooKassa Payment creation (Sprint 14)
+# ---------------------------------------------------------------------------
+
+
+async def create_yookassa_payment(
+    plan_id: int,
+    tenant_id: int,
+    return_url: str,
+    session: AsyncSession,
+) -> dict[str, Any]:
+    """
+    Create a YooKassa payment for the given plan and tenant.
+
+    Requires YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY to be set.
+    Raises BillingError on configuration error or provider error.
+
+    Returns {"checkout_url": str, "payment_id": str}.
+    """
+    if not settings.YOOKASSA_SHOP_ID or not settings.YOOKASSA_SECRET_KEY:
+        raise BillingError("YOOKASSA_SHOP_ID / YOOKASSA_SECRET_KEY not configured")
+
+    from storage.models import Plan
+    import uuid
+    import aiohttp
+
+    plan = (
+        await session.execute(select(Plan).where(Plan.id == plan_id).limit(1))
+    ).scalar_one_or_none()
+    if plan is None:
+        raise BillingError(f"Plan id={plan_id} not found")
+
+    price_rub = plan.price_monthly_rub or 0
+    idempotence_key = str(uuid.uuid4())
+
+    payload = {
+        "amount": {
+            "value": f"{price_rub}.00",
+            "currency": "RUB",
+        },
+        "confirmation": {
+            "type": "redirect",
+            "return_url": return_url,
+        },
+        "capture": True,
+        "description": f"Подписка {plan.name} — NEURO COMMENTING",
+        "metadata": {
+            "tenant_id": str(tenant_id),
+            "plan_id": str(plan_id),
+            "plan_slug": plan.slug,
+        },
+    }
+
+    url = "https://api.yookassa.ru/v3/payments"
+    auth = aiohttp.BasicAuth(
+        login=settings.YOOKASSA_SHOP_ID,
+        password=settings.YOOKASSA_SECRET_KEY,
+    )
+    headers = {
+        "Idempotence-Key": idempotence_key,
+        "Content-Type": "application/json",
+    }
+
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+            async with http.post(url, json=payload, auth=auth, headers=headers) as resp:
+                resp_data = await resp.json()
+                if resp.status not in (200, 201):
+                    raise BillingError(
+                        f"YooKassa API error {resp.status}: {resp_data.get('description', resp_data)}"
+                    )
+        confirmation = resp_data.get("confirmation", {})
+        checkout_url = confirmation.get("confirmation_url", "")
+        payment_id = resp_data.get("id", "")
+        return {
+            "checkout_url": checkout_url,
+            "payment_id": payment_id,
+            "provider": "yookassa",
+        }
+    except BillingError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise BillingError(f"YooKassa payment creation failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

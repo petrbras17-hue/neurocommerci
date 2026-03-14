@@ -14,8 +14,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 13 (Billing & Subscriptions)` |
-| Next planned sprint | `Sprint 14 — requires account purchase for live testing` |
+| Current completed sprint | `Sprint 14 (Stripe + YooKassa webhooks + Email service)` |
+| Next planned sprint | `Sprint 14 continued — live testing with real Stripe/YooKassa keys` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -76,6 +76,8 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-14 | Sprint 13 Billing | `main` | `e2255d9` | Plans, trial, Stripe + YooKassa, UI | Added billing_service.py (866 lines): get_plans, create_trial, create_subscription, cancel_subscription, check_limits, get_usage. Migration 20260314_33 (plans seed, payments table, FORCE RLS). 8 billing API endpoints. BillingPage rewritten with usage bars, trial countdown, plan grid, payment history. 21 billing tests pass. | Green | Green | Sprint 12 merge. |
 
 | 2026-03-14 | Sprint 12 Farm Monitor | `main` | `2dbbdc8` | Farm monitoring + bulk ops + resource estimation | FarmMonitorPage (445 lines): real-time farm stats, comment quality analysis with style distribution, VPS resource estimation. 7 new endpoints: /v1/farm/stats/live, /v1/farm/comment-quality, /v1/system/resource-estimate, /v1/accounts/auto-bind-proxies, /v1/accounts/bulk-warmup, /v1/accounts/bulk-import-zip, /v1/accounts/import-status. Fixed accessToken auth context. | Green | Green | Sprint 14: закупка аккаунтов + прокси для live testing. |
+
+| 2026-03-14 | Sprint 14 | `main` | `working-tree` | Stripe + YooKassa webhooks + email service | Added `core/email_service.py` (6 Russian templates, smtplib thread executor, fire-and-forget via `schedule_email()`). Added SMTP env vars to `config.py` (SMTP_ENABLED, SMTP_HOST/PORT/USER/PASSWORD/FROM_EMAIL). Extended `core/billing_service.py`: `_payment_event_exists()` idempotency guard on both Stripe and YooKassa handlers, `_get_tenant_email()` tenant owner lookup, `create_stripe_checkout()` (Stripe Checkout Session with price ID map or inline price), `create_yookassa_payment()` (aiohttp + BasicAuth), `_handle_stripe_subscription_updated()`, `_handle_stripe_checkout_completed()`, email notifications on payment_success/payment_failed/subscription_cancelled. Added to `ops_api.py`: canonical `POST /v1/webhooks/stripe` and `POST /v1/webhooks/yookassa` (always 200, Stripe-Signature verified), `POST /v1/billing/checkout` (JWT-required, rate-limited 10/min/tenant), welcome email on `/auth/register`. Added `stripe>=8.0.0` and `aiosmtplib>=3.0.0` to `requirements.txt`. All 4 files compile clean; 21 billing tests pass. | Green | Not deployed | Run `pip install stripe aiosmtplib` on VPS, set SMTP_ENABLED/SMTP_* env vars, restart `ops_api`, configure Stripe webhook URL to `/v1/webhooks/stripe` and YooKassa to `/v1/webhooks/yookassa`. |
 
 ## Update Rules
 
