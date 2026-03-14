@@ -33,6 +33,22 @@ import { CommentDashboardPage } from "./pages/CommentDashboardPage";
 import { SessionTopologyPage } from "./pages/SessionTopologyPage";
 import { FarmMonitorPage } from "./pages/FarmMonitorPage";
 import { AgencyDashboardPage } from "./pages/AgencyDashboardPage";
+import { AdminDashboardPage } from "./pages/admin/AdminDashboardPage";
+import { AccountOnboardingWizard } from "./pages/admin/AccountOnboardingWizard";
+import { AdminProxyManagerPage } from "./pages/admin/AdminProxyManagerPage";
+import { AdminOperationsLogPage } from "./pages/admin/AdminOperationsLogPage";
+import { AccountPackagingPage } from "./pages/admin/AccountPackagingPage";
+import { MassPackagingPage } from "./pages/admin/MassPackagingPage";
+import { WarmupControlPage } from "./pages/admin/WarmupControlPage";
+import { LiveLogsPage } from "./pages/admin/LiveLogsPage";
+import { NeurocommentingPage } from "./pages/admin/NeurocommentingPage";
+import { ChattingV2Page } from "./pages/admin/ChattingV2Page";
+import { UnifiedInboxPage } from "./pages/admin/UnifiedInboxPage";
+import { ParserV2Page } from "./pages/admin/ParserV2Page";
+import { ReactionsV2Page } from "./pages/admin/ReactionsV2Page";
+import { MonitoringDashboardPage } from "./pages/admin/MonitoringDashboardPage";
+import { FarmLaunchPage } from "./pages/admin/FarmLaunchPage";
+import { AntifraudPage } from "./pages/admin/AntifraudPage";
 import OfflinePage from "./pages/OfflinePage";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
@@ -91,6 +107,22 @@ export default function App() {
             <Route path="/farm-monitor" element={<FarmMonitorPage />} />
             <Route path="/billing" element={<BillingPage />} />
             <Route path="/agency" element={<AgencyDashboardPage />} />
+            <Route path="/admin-dashboard" element={<AdminDashboardPage />} />
+            <Route path="/admin-onboarding" element={<AccountOnboardingWizard />} />
+            <Route path="/admin-proxies" element={<AdminProxyManagerPage />} />
+            <Route path="/admin-ops-log" element={<AdminOperationsLogPage />} />
+            <Route path="/admin-packaging" element={<AccountPackagingPage />} />
+            <Route path="/admin-mass-packaging" element={<MassPackagingPage />} />
+            <Route path="/admin-warmup" element={<WarmupControlPage />} />
+            <Route path="/admin-logs" element={<LiveLogsPage />} />
+            <Route path="/admin-commenting" element={<NeurocommentingPage />} />
+            <Route path="/admin-chatting" element={<ChattingV2Page />} />
+            <Route path="/admin-inbox" element={<UnifiedInboxPage />} />
+            <Route path="/admin-parser" element={<ParserV2Page />} />
+            <Route path="/admin-reactions" element={<ReactionsV2Page />} />
+            <Route path="/admin-monitoring" element={<MonitoringDashboardPage />} />
+            <Route path="/admin-farm-launch" element={<FarmLaunchPage />} />
+            <Route path="/admin-antifraud" element={<AntifraudPage />} />
             <Route
               path="/settings"
               element={<SettingsPage />}

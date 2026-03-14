@@ -16,11 +16,15 @@ export type AuthBundle = {
   status: "anonymous" | "profile_incomplete" | "authorized";
   access_token?: string | null;
   setup_token?: string | null;
-  user?: Record<string, unknown>;
+  user?: Record<string, unknown> & { is_platform_admin?: boolean };
   tenant?: Record<string, unknown>;
   workspace?: Record<string, unknown>;
   onboarding?: Record<string, unknown>;
 };
+
+export function isPlatformAdmin(profile: AuthBundle | null): boolean {
+  return profile?.user?.is_platform_admin === true;
+}
 
 export type AuthState = {
   ready: boolean;

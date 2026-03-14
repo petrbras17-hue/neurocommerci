@@ -165,6 +165,15 @@ from storage.models import (
     WarmupSession,
     WeeklyReport,
     Workspace,
+    ChannelBlacklist,
+    ChannelWhitelist,
+    FarmPreset,
+    AutoDmConfig,
+    AutoResponderConfig,
+    ChattingConfigV2,
+    ChattingPreset,
+    DmInbox,
+    DmMessage,
 )
 from storage.sqlite_db import apply_session_rls_context, async_session, dispose_engine, init_db
 from utils.helpers import utcnow
@@ -12836,8 +12845,614 @@ async def admin_operations_log(
             }
 
 
+# ---------------------------------------------------------------------------
+# Sprint 18: Account Packaging
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/admin/accounts/{account_id}/generate-profile")
+async def admin_generate_profile(request: Request, account_id: int):
+    """Generate AI profile for an admin account."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.account_packaging import generate_profile
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            try:
+                result = await generate_profile(
+                    db, ctx.workspace_id, account_id, body, tenant_id=ctx.tenant_id,
+                )
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.post("/v1/admin/accounts/mass-generate-profiles")
+async def admin_mass_generate_profiles(request: Request):
+    """Bulk generate profiles for multiple accounts."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    account_ids = body.get("account_ids", [])
+    params = body.get("params", {})
+    if not account_ids:
+        raise HTTPException(400, "'account_ids' array required")
+    if len(account_ids) > 100:
+        raise HTTPException(400, "Maximum 100 accounts per batch")
+    from core.account_packaging import mass_generate_profiles
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            try:
+                results = await mass_generate_profiles(
+                    db, ctx.workspace_id, account_ids, params, tenant_id=ctx.tenant_id,
+                )
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return {"results": results, "total": len(results)}
+
+
+@app.post("/v1/admin/accounts/{account_id}/apply-profile")
+async def admin_apply_profile(request: Request, account_id: int):
+    """Apply generated profile to Telegram account (name/bio/username)."""
+    ctx = await require_platform_admin(request)
+    from core.account_packaging import apply_profile
+    from core.admin_proxy_service import get_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            from core.admin_onboarding import get_account
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            proxy = None
+            if account.proxy_id:
+                proxy = await get_proxy(db, account.proxy_id)
+            try:
+                result = await apply_profile(db, ctx.workspace_id, account_id, proxy=proxy)
+            except (ValueError, FileNotFoundError) as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.post("/v1/admin/accounts/{account_id}/generate-avatar")
+async def admin_generate_avatar(request: Request, account_id: int):
+    """Generate avatar via AI for an account."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    prompt = body.get("prompt", "professional avatar")
+    from core.account_packaging import generate_avatar
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            try:
+                result = await generate_avatar(
+                    db, ctx.workspace_id, account_id, prompt, tenant_id=ctx.tenant_id,
+                )
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.post("/v1/admin/accounts/{account_id}/upload-avatar")
+async def admin_upload_avatar(request: Request, account_id: int):
+    """Upload avatar image file for an account."""
+    ctx = await require_platform_admin(request)
+    form = await request.form()
+    avatar_file = form.get("avatar")
+    if not avatar_file:
+        raise HTTPException(400, "'avatar' file required")
+    file_bytes = await avatar_file.read()
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Avatar file too large (max 5MB)")
+    filename = getattr(avatar_file, "filename", "avatar.jpg")
+    from core.account_packaging import upload_avatar
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            try:
+                result = await upload_avatar(db, ctx.workspace_id, account_id, file_bytes, filename)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.post("/v1/admin/accounts/{account_id}/apply-avatar")
+async def admin_apply_avatar(request: Request, account_id: int):
+    """Apply uploaded/generated avatar to Telegram profile photo."""
+    ctx = await require_platform_admin(request)
+    from core.account_packaging import apply_avatar
+    from core.admin_proxy_service import get_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            from core.admin_onboarding import get_account
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            proxy = None
+            if account.proxy_id:
+                proxy = await get_proxy(db, account.proxy_id)
+            try:
+                result = await apply_avatar(db, ctx.workspace_id, account_id, proxy=proxy)
+            except (ValueError, FileNotFoundError) as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.post("/v1/admin/accounts/{account_id}/create-channel")
+async def admin_create_channel(request: Request, account_id: int):
+    """Create Telegram channel for an account."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    title = body.get("title", "")
+    description = body.get("description", "")
+    first_post_text = body.get("first_post_text", "")
+    from core.account_packaging import create_channel
+    from core.admin_proxy_service import get_proxy
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            from core.admin_onboarding import get_account
+            account = await get_account(db, account_id)
+            if not account:
+                raise HTTPException(404, "Account not found")
+            proxy = None
+            if account.proxy_id:
+                proxy = await get_proxy(db, account.proxy_id)
+            try:
+                result = await create_channel(
+                    db, ctx.workspace_id, account_id,
+                    title=title, description=description,
+                    first_post_text=first_post_text, proxy=proxy,
+                )
+            except (ValueError, FileNotFoundError) as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+@app.get("/v1/admin/accounts/{account_id}/packaging-status")
+async def admin_packaging_status(request: Request, account_id: int):
+    """Get packaging status for an account."""
+    ctx = await require_platform_admin(request)
+    from core.account_packaging import get_packaging_status
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            try:
+                result = await get_packaging_status(db, ctx.workspace_id, account_id)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return result
+
+
+# ---------------------------------------------------------------------------
+# Sprint 19: Operation Logs + Warmup v2
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/v1/ws/logs")
+async def ws_operation_logs(websocket):
+    """WebSocket for real-time operation logs via Redis pub/sub.
+
+    Query params: ?workspace_id=N&module=warmup
+    """
+    from fastapi import WebSocket, WebSocketDisconnect
+    import json as _json
+    import redis.asyncio as aioredis
+
+    await websocket.accept()
+    workspace_id = websocket.query_params.get("workspace_id")
+    module_filter = websocket.query_params.get("module")
+    if not workspace_id:
+        await websocket.close(code=4001, reason="workspace_id required")
+        return
+    try:
+        redis = aioredis.from_url(settings.REDIS_URL)
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(f"operation_logs:{workspace_id}")
+        try:
+            while True:
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if msg and msg["type"] == "message":
+                    data = _json.loads(msg["data"])
+                    if module_filter and data.get("module") != module_filter:
+                        continue
+                    await websocket.send_json(data)
+        except Exception:
+            pass
+        finally:
+            await pubsub.unsubscribe()
+            await redis.aclose()
+    except Exception:
+        pass
+
+
+@app.get("/v1/admin/operation-logs")
+async def admin_operation_logs_list(
+    request: Request,
+    module: Optional[str] = Query(None),
+    account_id: Optional[int] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """List operation logs (admin only, paginated, filterable)."""
+    ctx = await require_platform_admin(request)
+    from storage.models import OperationLog
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            stmt = select(OperationLog).where(
+                OperationLog.workspace_id == ctx.workspace_id,
+            ).order_by(OperationLog.created_at.desc())
+            if module:
+                stmt = stmt.where(OperationLog.module == module)
+            if account_id is not None:
+                stmt = stmt.where(OperationLog.account_id == account_id)
+            total_stmt = select(func.count(OperationLog.id)).where(
+                OperationLog.workspace_id == ctx.workspace_id,
+            )
+            if module:
+                total_stmt = total_stmt.where(OperationLog.module == module)
+            if account_id is not None:
+                total_stmt = total_stmt.where(OperationLog.account_id == account_id)
+            total = (await db.execute(total_stmt)).scalar() or 0
+            rows = (await db.execute(stmt.offset(offset).limit(limit))).scalars().all()
+            items = [
+                {
+                    "id": r.id,
+                    "workspace_id": r.workspace_id,
+                    "account_id": r.account_id,
+                    "module": r.module,
+                    "action": r.action,
+                    "status": r.status,
+                    "detail": r.detail,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+            return {"items": items, "total": total}
+
+
+@app.get("/v1/admin/operation-logs/stats")
+async def admin_operation_logs_stats(request: Request):
+    """Aggregate counts by module and status (admin only)."""
+    ctx = await require_platform_admin(request)
+    from storage.models import OperationLog
+    async with async_session() as db:
+        async with db.begin():
+            await apply_session_rls_context(db, tenant_id=ctx.tenant_id, user_id=ctx.user_id)
+            rows = (
+                await db.execute(
+                    select(
+                        OperationLog.module,
+                        OperationLog.status,
+                        func.count(OperationLog.id).label("cnt"),
+                    )
+                    .where(OperationLog.workspace_id == ctx.workspace_id)
+                    .group_by(OperationLog.module, OperationLog.status)
+                )
+            ).all()
+            stats = [
+                {"module": r.module, "status": r.status, "count": r.cnt}
+                for r in rows
+            ]
+            return {"stats": stats}
+
+
+class WarmupSchedulePayload(BaseModel):
+    schedule_start_hour: Optional[int] = Field(None, ge=0, le=23)
+    schedule_end_hour: Optional[int] = Field(None, ge=0, le=23)
+    sessions_per_day: Optional[int] = Field(None, ge=1, le=24)
+    session_duration_minutes: Optional[int] = Field(None, ge=5, le=480)
+    enable_story_viewing: Optional[bool] = None
+    enable_channel_joining: Optional[bool] = None
+    enable_dialogs: Optional[bool] = None
+    max_channels_to_join: Optional[int] = Field(None, ge=0, le=20)
+
+
+@app.put("/v1/warmup/{config_id}/schedule")
+async def warmup_schedule_update(
+    config_id: int,
+    payload: WarmupSchedulePayload,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Update warmup v2 schedule settings."""
+    cfg = (
+        await session.execute(
+            select(WarmupConfig).where(
+                WarmupConfig.id == config_id,
+                WarmupConfig.tenant_id == tenant_context.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if cfg is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="warmup_not_found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for k, v in updates.items():
+        setattr(cfg, k, v)
+    cfg.updated_at = utcnow()
+    await session.flush()
+    return {"ok": True, "config_id": cfg.id}
+
+
+@app.get("/v1/warmup/{config_id}/progress")
+async def warmup_progress(
+    config_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Get progress for all sessions in a warmup config."""
+    cfg = (
+        await session.execute(
+            select(WarmupConfig).where(
+                WarmupConfig.id == config_id,
+                WarmupConfig.tenant_id == tenant_context.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if cfg is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="warmup_not_found")
+
+    rows = (
+        await session.execute(
+            select(WarmupSession).where(
+                WarmupSession.warmup_id == config_id,
+                WarmupSession.tenant_id == tenant_context.tenant_id,
+            ).order_by(WarmupSession.id)
+        )
+    ).scalars().all()
+
+    sessions_out = [
+        {
+            "id": s.id,
+            "account_id": s.account_id,
+            "status": s.status,
+            "actions_completed": getattr(s, "actions_completed", 0) or 0,
+            "channels_visited": getattr(s, "channels_visited", 0) or 0,
+            "stories_viewed": getattr(s, "stories_viewed", 0) or 0,
+            "channels_joined": getattr(s, "channels_joined", 0) or 0,
+            "days_warmed": getattr(s, "days_warmed", 0) or 0,
+            "progress_pct": getattr(s, "progress_pct", 0) or 0,
+            "started_at": s.started_at.isoformat() if s.started_at else None,
+            "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+        }
+        for s in rows
+    ]
+    return {"config_id": config_id, "sessions": sessions_out, "total": len(sessions_out)}
+
+
 # Exception handlers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Sprint 20: Neurocommenting v2
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/admin/blacklist", status_code=status.HTTP_201_CREATED)
+async def admin_add_blacklist(request: Request):
+    """Add a channel to the workspace blacklist."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    channel_id = body.get("channel_id")
+    if not channel_id:
+        raise HTTPException(400, "channel_id required")
+    from core.neurocommenting_v2 import add_to_blacklist
+    try:
+        result = await add_to_blacklist(
+            workspace_id=ctx.workspace_id,
+            channel_id=int(channel_id),
+            username=body.get("channel_username"),
+            title=body.get("channel_title"),
+            reason=body.get("reason", "manual"),
+        )
+    except Exception as exc:
+        if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+            raise HTTPException(409, "channel_already_blacklisted")
+        raise
+    return result
+
+
+@app.delete("/v1/admin/blacklist/{channel_id}")
+async def admin_remove_blacklist(channel_id: int, request: Request):
+    """Remove a channel from the workspace blacklist."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import remove_from_blacklist
+    deleted = await remove_from_blacklist(ctx.workspace_id, channel_id)
+    if not deleted:
+        raise HTTPException(404, "channel_not_in_blacklist")
+    return {"ok": True}
+
+
+@app.get("/v1/admin/blacklist")
+async def admin_list_blacklist(request: Request, limit: int = 50, offset: int = 0):
+    """List blacklisted channels (paginated)."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import get_blacklist
+    items = await get_blacklist(ctx.workspace_id, limit=min(limit, 200), offset=offset)
+    return {"items": items, "total": len(items)}
+
+
+@app.post("/v1/admin/whitelist", status_code=status.HTTP_201_CREATED)
+async def admin_add_whitelist(request: Request):
+    """Add a channel to the workspace whitelist."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    channel_id = body.get("channel_id")
+    if not channel_id:
+        raise HTTPException(400, "channel_id required")
+    from core.neurocommenting_v2 import add_to_whitelist
+    try:
+        result = await add_to_whitelist(
+            workspace_id=ctx.workspace_id,
+            channel_id=int(channel_id),
+            username=body.get("channel_username"),
+            title=body.get("channel_title"),
+        )
+    except Exception as exc:
+        if "unique" in str(exc).lower() or "duplicate" in str(exc).lower():
+            raise HTTPException(409, "channel_already_whitelisted")
+        raise
+    return result
+
+
+@app.delete("/v1/admin/whitelist/{channel_id}")
+async def admin_remove_whitelist(channel_id: int, request: Request):
+    """Remove a channel from the workspace whitelist."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import remove_from_whitelist
+    deleted = await remove_from_whitelist(ctx.workspace_id, channel_id)
+    if not deleted:
+        raise HTTPException(404, "channel_not_in_whitelist")
+    return {"ok": True}
+
+
+@app.get("/v1/admin/whitelist")
+async def admin_list_whitelist(request: Request, limit: int = 50, offset: int = 0):
+    """List whitelisted channels (paginated)."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import get_whitelist
+    items = await get_whitelist(ctx.workspace_id, limit=min(limit, 200), offset=offset)
+    return {"items": items, "total": len(items)}
+
+
+@app.post("/v1/admin/farm/{farm_id}/auto-dm")
+async def admin_setup_auto_dm(farm_id: int, request: Request):
+    """Setup auto-DM for a farm."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    message = body.get("message")
+    if not message:
+        raise HTTPException(400, "message required")
+    from core.neurocommenting_v2 import setup_auto_dm
+    result = await setup_auto_dm(
+        workspace_id=ctx.workspace_id,
+        farm_id=farm_id,
+        message=message,
+        max_per_day=body.get("max_dms_per_day", 10),
+    )
+    return result
+
+
+@app.put("/v1/admin/farm/{farm_id}/auto-dm")
+async def admin_update_auto_dm(farm_id: int, request: Request):
+    """Update auto-DM config for a farm."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.neurocommenting_v2 import update_auto_dm
+    result = await update_auto_dm(
+        workspace_id=ctx.workspace_id,
+        farm_id=farm_id,
+        message=body.get("message"),
+        max_per_day=body.get("max_dms_per_day"),
+        is_active=body.get("is_active"),
+    )
+    if not result:
+        raise HTTPException(404, "auto_dm_config_not_found")
+    return result
+
+
+@app.get("/v1/admin/farm/{farm_id}/auto-dm")
+async def admin_get_auto_dm(farm_id: int, request: Request):
+    """Get auto-DM config for a farm."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import get_auto_dm
+    result = await get_auto_dm(ctx.workspace_id, farm_id)
+    if not result:
+        raise HTTPException(404, "auto_dm_config_not_found")
+    return result
+
+
+@app.delete("/v1/admin/farm/{farm_id}/auto-dm")
+async def admin_delete_auto_dm(farm_id: int, request: Request):
+    """Delete auto-DM config for a farm."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import delete_auto_dm
+    deleted = await delete_auto_dm(ctx.workspace_id, farm_id)
+    if not deleted:
+        raise HTTPException(404, "auto_dm_config_not_found")
+    return {"ok": True}
+
+
+@app.post("/v1/admin/presets", status_code=status.HTTP_201_CREATED)
+async def admin_save_preset(request: Request):
+    """Save a farm preset."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    name = body.get("name")
+    config = body.get("config")
+    if not name or config is None:
+        raise HTTPException(400, "name and config required")
+    from core.neurocommenting_v2 import save_preset
+    result = await save_preset(
+        workspace_id=ctx.workspace_id,
+        name=name,
+        config_dict=config,
+        targeting_mode=body.get("targeting_mode", "all"),
+        targeting_params=body.get("targeting_params"),
+        comment_as_channel=body.get("comment_as_channel", False),
+        auto_dm_enabled=body.get("auto_dm_enabled", False),
+        auto_dm_message=body.get("auto_dm_message"),
+        language=body.get("language", "auto"),
+    )
+    return result
+
+
+@app.get("/v1/admin/presets")
+async def admin_list_presets(request: Request):
+    """List all farm presets."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import list_presets
+    items = await list_presets(ctx.workspace_id)
+    return {"items": items}
+
+
+@app.get("/v1/admin/presets/{preset_id}")
+async def admin_get_preset(preset_id: int, request: Request):
+    """Get a single farm preset."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import load_preset
+    result = await load_preset(ctx.workspace_id, preset_id)
+    if not result:
+        raise HTTPException(404, "preset_not_found")
+    return result
+
+
+@app.delete("/v1/admin/presets/{preset_id}")
+async def admin_delete_preset(preset_id: int, request: Request):
+    """Delete a farm preset."""
+    ctx = await require_platform_admin(request)
+    from core.neurocommenting_v2 import delete_preset
+    deleted = await delete_preset(ctx.workspace_id, preset_id)
+    if not deleted:
+        raise HTTPException(404, "preset_not_found")
+    return {"ok": True}
+
+
+@app.post("/v1/admin/farm/{farm_id}/import-folder")
+async def admin_import_folder(farm_id: int, request: Request):
+    """Import channels from a Telegram folder (stub — requires live Telethon client)."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    folder_name = body.get("folder_name")
+    if not folder_name:
+        raise HTTPException(400, "folder_name required")
+    # In production, this would obtain a Telethon client for the farm's account.
+    # For now, return a stub response.
+    return {"imported": 0, "channel_ids": [], "note": "Requires live Telethon client session"}
+
+
+@app.get("/v1/admin/channels/{channel_id}/language")
+async def admin_detect_language(channel_id: int, request: Request):
+    """Detect language of a channel."""
+    await require_platform_admin(request)
+    from core.neurocommenting_v2 import detect_channel_language
+    lang = await detect_channel_language(channel_id)
+    return {"channel_id": channel_id, "language": lang}
 
 
 def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
@@ -12876,6 +13491,595 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+# ---------------------------------------------------------------------------
+# Sprint 21: Chatting v2 + Dialogs v2
+# ---------------------------------------------------------------------------
+
+
+def _serialize_chatting_config_v2(c: ChattingConfigV2) -> dict:
+    return {
+        "id": c.id,
+        "workspace_id": c.workspace_id,
+        "name": c.name,
+        "mode": c.mode,
+        "interval_percent": c.interval_percent,
+        "trigger_keywords": c.trigger_keywords,
+        "semantic_topics": c.semantic_topics,
+        "product_name": c.product_name,
+        "product_description": c.product_description,
+        "product_problems_solved": c.product_problems_solved,
+        "mention_frequency": c.mention_frequency,
+        "context_depth": c.context_depth,
+        "is_active": c.is_active,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _serialize_dm_inbox(i: DmInbox) -> dict:
+    return {
+        "id": i.id,
+        "workspace_id": i.workspace_id,
+        "account_id": i.account_id,
+        "account_phone": i.account_phone,
+        "peer_id": i.peer_id,
+        "peer_name": i.peer_name,
+        "peer_username": i.peer_username,
+        "last_message_text": i.last_message_text,
+        "last_message_at": i.last_message_at.isoformat() if i.last_message_at else None,
+        "unread_count": i.unread_count,
+        "is_auto_responding": i.is_auto_responding,
+        "created_at": i.created_at.isoformat() if i.created_at else None,
+    }
+
+
+def _serialize_dm_message(m: DmMessage) -> dict:
+    return {
+        "id": m.id,
+        "inbox_id": m.inbox_id,
+        "sender": m.sender,
+        "text": m.text,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+    }
+
+
+def _serialize_auto_responder(c: AutoResponderConfig) -> dict:
+    return {
+        "id": c.id,
+        "workspace_id": c.workspace_id,
+        "account_id": c.account_id,
+        "product_name": c.product_name,
+        "product_description": c.product_description,
+        "tone": c.tone,
+        "max_responses_per_day": c.max_responses_per_day,
+        "responses_today": c.responses_today,
+        "is_active": c.is_active,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+def _serialize_chatting_preset(p: ChattingPreset) -> dict:
+    return {
+        "id": p.id,
+        "workspace_id": p.workspace_id,
+        "name": p.name,
+        "config": p.config,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+@app.post("/v1/admin/chatting/configs", status_code=status.HTTP_201_CREATED)
+async def admin_create_chatting_config(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.chatting_v2 import create_chatting_config
+    cfg = await create_chatting_config(ctx.workspace_id, **body)
+    return _serialize_chatting_config_v2(cfg)
+
+
+@app.get("/v1/admin/chatting/configs")
+async def admin_list_chatting_configs(request: Request):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import list_chatting_configs
+    configs = await list_chatting_configs(ctx.workspace_id)
+    return {"items": [_serialize_chatting_config_v2(c) for c in configs]}
+
+
+@app.put("/v1/admin/chatting/configs/{config_id}")
+async def admin_update_chatting_config(request: Request, config_id: int):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.chatting_v2 import update_chatting_config
+    cfg = await update_chatting_config(ctx.workspace_id, config_id, **body)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="config_not_found")
+    return _serialize_chatting_config_v2(cfg)
+
+
+@app.delete("/v1/admin/chatting/configs/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_chatting_config(request: Request, config_id: int):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import delete_chatting_config
+    deleted = await delete_chatting_config(ctx.workspace_id, config_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="config_not_found")
+
+
+@app.get("/v1/admin/dialogs/inbox")
+async def admin_get_dm_inbox(request: Request, limit: int = 50, offset: int = 0):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import get_dm_inbox
+    items = await get_dm_inbox(ctx.workspace_id, limit=min(limit, 200), offset=offset)
+    return {"items": [_serialize_dm_inbox(i) for i in items]}
+
+
+@app.get("/v1/admin/dialogs/inbox/{account_id}/{peer_id}")
+async def admin_get_dm_conversation(request: Request, account_id: int, peer_id: int, limit: int = 100):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import get_dm_conversation
+    messages = await get_dm_conversation(ctx.workspace_id, account_id, peer_id, limit=min(limit, 500))
+    return {"items": [_serialize_dm_message(m) for m in messages]}
+
+
+@app.post("/v1/admin/dialogs/inbox/{account_id}/{peer_id}/send")
+async def admin_send_dm(request: Request, account_id: int, peer_id: int):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text_required")
+    if len(text) > 4096:
+        raise HTTPException(status_code=400, detail="text_too_long")
+    from core.chatting_v2 import send_dm
+    msg = await send_dm(ctx.workspace_id, account_id, peer_id, text)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="account_not_found")
+    return _serialize_dm_message(msg)
+
+
+@app.post("/v1/admin/dialogs/inbox/{account_id}/sync")
+async def admin_sync_inbox(request: Request, account_id: int):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import sync_inbox_from_telegram
+    new_count = await sync_inbox_from_telegram(ctx.workspace_id, account_id)
+    return {"synced": new_count}
+
+
+@app.post("/v1/admin/auto-responder", status_code=status.HTTP_201_CREATED)
+async def admin_create_auto_responder(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.chatting_v2 import create_auto_responder
+    cfg = await create_auto_responder(ctx.workspace_id, **body)
+    return _serialize_auto_responder(cfg)
+
+
+@app.get("/v1/admin/auto-responder")
+async def admin_list_auto_responders(request: Request):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import list_auto_responders
+    configs = await list_auto_responders(ctx.workspace_id)
+    return {"items": [_serialize_auto_responder(c) for c in configs]}
+
+
+@app.put("/v1/admin/auto-responder/{config_id}")
+async def admin_update_auto_responder(request: Request, config_id: int):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.chatting_v2 import update_auto_responder
+    cfg = await update_auto_responder(ctx.workspace_id, config_id, **body)
+    if cfg is None:
+        raise HTTPException(status_code=404, detail="config_not_found")
+    return _serialize_auto_responder(cfg)
+
+
+@app.delete("/v1/admin/auto-responder/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_auto_responder(request: Request, config_id: int):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import delete_auto_responder
+    deleted = await delete_auto_responder(ctx.workspace_id, config_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="config_not_found")
+
+
+@app.post("/v1/admin/chatting/presets", status_code=status.HTTP_201_CREATED)
+async def admin_save_chatting_preset(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    name = body.get("name", "").strip()
+    config_dict = body.get("config", {})
+    if not name:
+        raise HTTPException(status_code=400, detail="name_required")
+    from core.chatting_v2 import save_chatting_preset
+    preset = await save_chatting_preset(ctx.workspace_id, name, config_dict)
+    return _serialize_chatting_preset(preset)
+
+
+@app.get("/v1/admin/chatting/presets")
+async def admin_list_chatting_presets(request: Request):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import list_chatting_presets
+    presets = await list_chatting_presets(ctx.workspace_id)
+    return {"items": [_serialize_chatting_preset(p) for p in presets]}
+
+
+@app.delete("/v1/admin/chatting/presets/{preset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_chatting_preset(request: Request, preset_id: int):
+    ctx = await require_platform_admin(request)
+    from core.chatting_v2 import delete_chatting_preset
+    deleted = await delete_chatting_preset(ctx.workspace_id, preset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="preset_not_found")
+
+
+# ---------------------------------------------------------------------------
+# Exception Handlers
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Sprint 22: Parsing v2
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/admin/parser/groups", status_code=status.HTTP_201_CREATED)
+async def admin_start_group_parsing(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    keywords = body.get("keywords")
+    if not keywords or not isinstance(keywords, list):
+        raise HTTPException(400, "keywords must be a non-empty list")
+    filters = body.get("filters")
+    from core.parsing_v2 import start_group_parsing
+    return await start_group_parsing(ctx.workspace_id, keywords, filters)
+
+
+@app.get("/v1/admin/parser/groups")
+async def admin_list_group_parsing(request: Request):
+    ctx = await require_platform_admin(request)
+    limit = min(int(request.query_params.get("limit", "50")), 200)
+    offset = int(request.query_params.get("offset", "0"))
+    from core.parsing_v2 import list_group_parsing_jobs
+    items = await list_group_parsing_jobs(ctx.workspace_id, limit, offset)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/parser/groups/{job_id}")
+async def admin_get_group_parsing(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import get_group_parsing_job
+    job = await get_group_parsing_job(ctx.workspace_id, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
+@app.delete("/v1/admin/parser/groups/{job_id}")
+async def admin_cancel_group_parsing(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import cancel_group_parsing_job
+    job = await cancel_group_parsing_job(ctx.workspace_id, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
+@app.post("/v1/admin/parser/messages", status_code=status.HTTP_201_CREATED)
+async def admin_start_message_parsing(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    channel_id = body.get("channel_id")
+    if not channel_id:
+        raise HTTPException(400, "channel_id required")
+    keywords = body.get("keywords")
+    date_from = body.get("date_from")
+    date_to = body.get("date_to")
+    from datetime import datetime as _dt
+    df = _dt.fromisoformat(date_from) if date_from else None
+    dt = _dt.fromisoformat(date_to) if date_to else None
+    from core.parsing_v2 import start_message_parsing
+    return await start_message_parsing(ctx.workspace_id, channel_id, keywords, df, dt)
+
+
+@app.get("/v1/admin/parser/messages")
+async def admin_list_message_parsing(request: Request):
+    ctx = await require_platform_admin(request)
+    limit = min(int(request.query_params.get("limit", "50")), 200)
+    offset = int(request.query_params.get("offset", "0"))
+    from core.parsing_v2 import list_message_parsing_jobs
+    items = await list_message_parsing_jobs(ctx.workspace_id, limit, offset)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/parser/messages/{job_id}")
+async def admin_get_message_parsing(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import get_message_parsing_job
+    job = await get_message_parsing_job(ctx.workspace_id, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
+@app.delete("/v1/admin/parser/messages/{job_id}")
+async def admin_cancel_message_parsing(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import cancel_message_parsing_job
+    job = await cancel_message_parsing_job(ctx.workspace_id, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return job
+
+
+@app.get("/v1/admin/parser/messages/{job_id}/results")
+async def admin_get_message_results(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    limit = min(int(request.query_params.get("limit", "50")), 200)
+    offset = int(request.query_params.get("offset", "0"))
+    from core.parsing_v2 import get_message_parsing_results
+    items = await get_message_parsing_results(ctx.workspace_id, job_id, limit, offset)
+    return {"items": items, "total": len(items)}
+
+
+@app.post("/v1/admin/parser/messages/{job_id}/export")
+async def admin_export_message_results(request: Request, job_id: int):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    fmt = body.get("format", "json")
+    if fmt not in ("json", "csv", "txt"):
+        raise HTTPException(400, "format must be json, csv, or txt")
+    from core.parsing_v2 import export_results
+    result = await export_results(ctx.workspace_id, job_id, fmt)
+    if fmt == "csv":
+        return Response(content=result, media_type="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename=results_{job_id}.csv"})
+    if fmt == "txt":
+        return Response(content=result, media_type="text/plain",
+                        headers={"Content-Disposition": f"attachment; filename=results_{job_id}.txt"})
+    return result
+
+
+@app.post("/v1/admin/parser/suggest-keywords")
+async def admin_suggest_keywords(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    seed = body.get("seed_keywords")
+    if not seed or not isinstance(seed, list):
+        raise HTTPException(400, "seed_keywords must be a non-empty list")
+    from core.parsing_v2 import suggest_keywords
+    expanded = await suggest_keywords(ctx.workspace_id, seed)
+    return {"keywords": expanded}
+
+
+@app.get("/v1/admin/parser/templates")
+async def admin_list_templates(request: Request):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import get_system_templates, get_user_templates
+    system = await get_system_templates()
+    user = await get_user_templates(ctx.workspace_id)
+    return {"system": system, "user": user}
+
+
+@app.post("/v1/admin/parser/templates", status_code=status.HTTP_201_CREATED)
+async def admin_create_template(request: Request):
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    name = body.get("name")
+    keywords = body.get("keywords")
+    if not name or not keywords:
+        raise HTTPException(400, "name and keywords required")
+    from core.parsing_v2 import create_template
+    tmpl = await create_template(
+        ctx.workspace_id,
+        name,
+        body.get("category"),
+        keywords,
+        body.get("filters"),
+        body.get("description"),
+    )
+    return tmpl
+
+
+@app.delete("/v1/admin/parser/templates/{template_id}")
+async def admin_delete_template(request: Request, template_id: int):
+    ctx = await require_platform_admin(request)
+    from core.parsing_v2 import delete_template
+    ok = await delete_template(ctx.workspace_id, template_id)
+    if not ok:
+        raise HTTPException(404, "Template not found or is a system template")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 23: Reactions v2 + Monitoring
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/admin/reactions/monitoring", status_code=status.HTTP_201_CREATED)
+async def admin_reactions_monitoring_create(request: Request):
+    """Create a reaction monitoring config."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.reactions_v2 import create_monitoring_config
+    try:
+        result = await create_monitoring_config(
+            workspace_id=ctx.workspace_id,
+            channel_id=body["channel_id"],
+            title=body.get("channel_title"),
+            emoji=body.get("reaction_emoji", "\U0001f44d"),
+            react_within_seconds=body.get("react_within_seconds", 30),
+            accounts=body.get("accounts_assigned"),
+            max_per_hour=body.get("max_reactions_per_hour", 30),
+            use_channel=body.get("use_channel_reaction", False),
+        )
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    return result
+
+
+@app.get("/v1/admin/reactions/monitoring")
+async def admin_reactions_monitoring_list(request: Request):
+    """List reaction monitoring configs."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import list_monitoring_configs
+    items = await list_monitoring_configs(ctx.workspace_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.put("/v1/admin/reactions/monitoring/{config_id}")
+async def admin_reactions_monitoring_update(request: Request, config_id: int):
+    """Update a reaction monitoring config."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.reactions_v2 import update_monitoring_config
+    try:
+        result = await update_monitoring_config(ctx.workspace_id, config_id, **body)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return result
+
+
+@app.delete("/v1/admin/reactions/monitoring/{config_id}")
+async def admin_reactions_monitoring_delete(request: Request, config_id: int):
+    """Delete a reaction monitoring config."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import delete_monitoring_config
+    try:
+        await delete_monitoring_config(ctx.workspace_id, config_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True}
+
+
+@app.post("/v1/admin/reactions/monitoring/{config_id}/start")
+async def admin_reactions_monitoring_start(request: Request, config_id: int):
+    """Start monitoring loop for a config."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import start_monitoring_loop
+    await start_monitoring_loop(config_id, ctx.workspace_id)
+    return {"ok": True, "config_id": config_id, "status": "started"}
+
+
+@app.post("/v1/admin/reactions/monitoring/{config_id}/stop")
+async def admin_reactions_monitoring_stop(request: Request, config_id: int):
+    """Stop monitoring loop for a config."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import stop_monitoring_loop
+    await stop_monitoring_loop(config_id)
+    return {"ok": True, "config_id": config_id, "status": "stopped"}
+
+
+@app.post("/v1/admin/reactions/blacklist", status_code=status.HTTP_201_CREATED)
+async def admin_reactions_blacklist_add(request: Request):
+    """Add a channel to the reaction blacklist."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.reactions_v2 import add_reaction_blacklist
+    try:
+        result = await add_reaction_blacklist(
+            workspace_id=ctx.workspace_id,
+            channel_id=body["channel_id"],
+            title=body.get("channel_title"),
+            reason=body.get("reason"),
+        )
+    except Exception as e:
+        # Unique constraint violation
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(409, "Channel already blacklisted")
+        raise HTTPException(400, str(e))
+    return result
+
+
+@app.delete("/v1/admin/reactions/blacklist/{channel_id}")
+async def admin_reactions_blacklist_remove(request: Request, channel_id: int):
+    """Remove a channel from the reaction blacklist."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import remove_reaction_blacklist
+    try:
+        await remove_reaction_blacklist(ctx.workspace_id, channel_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True}
+
+
+@app.get("/v1/admin/reactions/blacklist")
+async def admin_reactions_blacklist_list(request: Request):
+    """List reaction blacklist."""
+    ctx = await require_platform_admin(request)
+    from core.reactions_v2 import get_reaction_blacklist
+    items = await get_reaction_blacklist(ctx.workspace_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/monitoring/accounts")
+async def admin_monitoring_accounts(request: Request):
+    """Get all live account statuses."""
+    ctx = await require_platform_admin(request)
+    from core.monitoring_service import get_all_account_statuses
+    items = await get_all_account_statuses(ctx.workspace_id)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/admin/monitoring/throughput")
+async def admin_monitoring_throughput(
+    request: Request,
+    hours: int = Query(default=1, ge=1, le=24),
+):
+    """Get throughput stats."""
+    ctx = await require_platform_admin(request)
+    from core.monitoring_service import get_throughput_stats
+    return await get_throughput_stats(ctx.workspace_id, hours=hours)
+
+
+@app.get("/v1/admin/monitoring/dashboard")
+async def admin_monitoring_dashboard(request: Request):
+    """Get full monitoring dashboard summary."""
+    ctx = await require_platform_admin(request)
+    from core.monitoring_service import get_dashboard_summary
+    return await get_dashboard_summary(ctx.workspace_id)
+
+
+@app.websocket("/v1/ws/status")
+async def ws_account_status(websocket):
+    """WebSocket for real-time account status updates via Redis pub/sub.
+
+    Query params: ?workspace_id=N
+    """
+    from fastapi import WebSocket, WebSocketDisconnect
+    import json as _json
+    import redis.asyncio as aioredis
+
+    await websocket.accept()
+    workspace_id = websocket.query_params.get("workspace_id")
+    if not workspace_id:
+        await websocket.close(code=4001, reason="workspace_id required")
+        return
+    try:
+        redis = aioredis.from_url(settings.REDIS_URL)
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(f"status_updates:{workspace_id}")
+        try:
+            while True:
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if msg and msg["type"] == "message":
+                    data = msg["data"]
+                    if isinstance(data, bytes):
+                        data = data.decode("utf-8")
+                    await websocket.send_text(data)
+        except Exception:
+            pass
+        finally:
+            await pubsub.unsubscribe(f"status_updates:{workspace_id}")
+            await pubsub.aclose()
+            await redis.aclose()
+    except Exception as exc:
+        log.debug("ws_account_status: error: %s", exc)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.exception_handler(TelegramAuthError)
@@ -12917,6 +14121,249 @@ async def unexpected_exception_handler(request: Request, exc: Exception) -> JSON
         content={"detail": "internal_error"},
         headers={settings.REQUEST_ID_HEADER: request_id},
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24: Farm Launch + Anti-Fraud Intelligence
+# ---------------------------------------------------------------------------
+
+
+@app.post("/v1/admin/farm/launch-plans", status_code=status.HTTP_201_CREATED)
+async def admin_create_launch_plan(request: Request):
+    """Create a farm launch plan with scaling curve."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.farm_launcher import create_launch_plan
+    plan = await create_launch_plan(
+        workspace_id=ctx.workspace_id,
+        farm_id=body.get("farm_id", 0),
+        name=body.get("name"),
+        scaling_curve=body.get("scaling_curve", "gradual"),
+        custom_curve=body.get("custom_curve"),
+        day_1_limit=body.get("day_1_limit", 2),
+        day_3_limit=body.get("day_3_limit", 5),
+        day_7_limit=body.get("day_7_limit", 10),
+        day_14_limit=body.get("day_14_limit", 20),
+        day_30_limit=body.get("day_30_limit", -1),
+        health_gate_threshold=body.get("health_gate_threshold", 40),
+        auto_reduce_factor=body.get("auto_reduce_factor", 0.5),
+    )
+    return {
+        "id": plan.id,
+        "farm_id": plan.farm_id,
+        "name": plan.name,
+        "scaling_curve": plan.scaling_curve,
+        "current_day": plan.current_day,
+        "is_active": plan.is_active,
+    }
+
+
+@app.get("/v1/admin/farm/launch-plans")
+async def admin_list_launch_plans(request: Request):
+    """List all launch plans."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import list_launch_plans
+    plans = await list_launch_plans(ctx.workspace_id)
+    return {
+        "items": [
+            {
+                "id": p.id,
+                "farm_id": p.farm_id,
+                "name": p.name,
+                "scaling_curve": p.scaling_curve,
+                "current_day": p.current_day,
+                "is_active": p.is_active,
+                "day_1_limit": p.day_1_limit,
+                "day_3_limit": p.day_3_limit,
+                "day_7_limit": p.day_7_limit,
+                "day_14_limit": p.day_14_limit,
+                "day_30_limit": p.day_30_limit,
+                "health_gate_threshold": p.health_gate_threshold,
+                "auto_reduce_factor": p.auto_reduce_factor,
+                "started_at": p.started_at.isoformat() if p.started_at else None,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in plans
+        ]
+    }
+
+
+@app.get("/v1/admin/farm/launch-plans/{plan_id}")
+async def admin_get_launch_plan(request: Request, plan_id: int):
+    """Get launch plan details."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import get_launch_plan
+    plan = await get_launch_plan(ctx.workspace_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+    return {
+        "id": plan.id,
+        "farm_id": plan.farm_id,
+        "name": plan.name,
+        "scaling_curve": plan.scaling_curve,
+        "custom_curve": plan.custom_curve,
+        "current_day": plan.current_day,
+        "is_active": plan.is_active,
+        "day_1_limit": plan.day_1_limit,
+        "day_3_limit": plan.day_3_limit,
+        "day_7_limit": plan.day_7_limit,
+        "day_14_limit": plan.day_14_limit,
+        "day_30_limit": plan.day_30_limit,
+        "health_gate_threshold": plan.health_gate_threshold,
+        "auto_reduce_factor": plan.auto_reduce_factor,
+        "started_at": plan.started_at.isoformat() if plan.started_at else None,
+        "created_at": plan.created_at.isoformat() if plan.created_at else None,
+    }
+
+
+@app.delete("/v1/admin/farm/launch-plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def admin_delete_launch_plan(request: Request, plan_id: int):
+    """Delete a launch plan."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import delete_launch_plan
+    deleted = await delete_launch_plan(ctx.workspace_id, plan_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+
+
+@app.post("/v1/admin/farm/launch-plans/{plan_id}/advance-day")
+async def admin_advance_day(request: Request, plan_id: int):
+    """Advance the current day of a launch plan."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import advance_day
+    plan = await advance_day(ctx.workspace_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+    return {"id": plan.id, "current_day": plan.current_day}
+
+
+@app.get("/v1/admin/farm/launch-plans/{plan_id}/current-limit")
+async def admin_get_current_limit(request: Request, plan_id: int):
+    """Get the current action limit for a launch plan."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import get_launch_plan, get_current_limit
+    plan = await get_launch_plan(ctx.workspace_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+    health_score = request.query_params.get("health_score")
+    hs = int(health_score) if health_score else None
+    limit_val = get_current_limit(plan, health_score=hs)
+    return {"plan_id": plan.id, "current_day": plan.current_day, "current_limit": limit_val}
+
+
+@app.get("/v1/admin/farm/launch-plans/{plan_id}/scaling-history")
+async def admin_get_scaling_history(request: Request, plan_id: int):
+    """Get scaling history for a launch plan's farm."""
+    ctx = await require_platform_admin(request)
+    from core.farm_launcher import get_launch_plan, get_scaling_history
+    plan = await get_launch_plan(ctx.workspace_id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="plan_not_found")
+    history = await get_scaling_history(ctx.workspace_id, farm_id=plan.farm_id)
+    return {
+        "items": [
+            {
+                "id": h.id,
+                "farm_id": h.farm_id,
+                "account_id": h.account_id,
+                "day_number": h.day_number,
+                "max_allowed": h.max_allowed,
+                "actual_performed": h.actual_performed,
+                "was_health_gated": h.was_health_gated,
+                "was_antifraud_gated": h.was_antifraud_gated,
+                "recorded_at": h.recorded_at.isoformat() if h.recorded_at else None,
+            }
+            for h in history
+        ]
+    }
+
+
+@app.post("/v1/admin/antifraud/score")
+async def admin_score_action(request: Request):
+    """Score an action for antifraud risk."""
+    ctx = await require_platform_admin(request)
+    body = await request.json()
+    from core.antifraud_engine import score_action_risk
+    score = await score_action_risk(
+        workspace_id=ctx.workspace_id,
+        account_id=body.get("account_id", 0),
+        action_type=body.get("action_type", "comment"),
+        context=body.get("context"),
+    )
+    return {
+        "id": score.id,
+        "account_id": score.account_id,
+        "action_type": score.action_type,
+        "risk_score": score.risk_score,
+        "risk_factors": score.risk_factors,
+        "decision": score.decision,
+        "decided_at": score.decided_at.isoformat() if score.decided_at else None,
+    }
+
+
+@app.post("/v1/admin/antifraud/detect-patterns")
+async def admin_detect_patterns(request: Request):
+    """Run cross-account pattern detection."""
+    ctx = await require_platform_admin(request)
+    from core.antifraud_engine import detect_cross_account_patterns
+    detections = await detect_cross_account_patterns(ctx.workspace_id)
+    return {
+        "detected": len(detections),
+        "items": [
+            {
+                "id": d.id,
+                "pattern_type": d.pattern_type,
+                "accounts_involved": d.accounts_involved,
+                "severity": d.severity,
+                "detail": d.detail,
+                "is_resolved": d.is_resolved,
+            }
+            for d in detections
+        ],
+    }
+
+
+@app.get("/v1/admin/antifraud/summary")
+async def admin_risk_summary(request: Request):
+    """Get aggregated risk summary."""
+    ctx = await require_platform_admin(request)
+    from core.antifraud_engine import get_risk_summary
+    summary = await get_risk_summary(ctx.workspace_id)
+    return summary
+
+
+@app.get("/v1/admin/antifraud/alerts")
+async def admin_pattern_alerts(request: Request):
+    """Get pattern alerts."""
+    ctx = await require_platform_admin(request)
+    unresolved = request.query_params.get("unresolved_only", "true").lower() == "true"
+    from core.antifraud_engine import get_pattern_alerts
+    alerts = await get_pattern_alerts(ctx.workspace_id, unresolved_only=unresolved)
+    return {
+        "items": [
+            {
+                "id": a.id,
+                "pattern_type": a.pattern_type,
+                "accounts_involved": a.accounts_involved,
+                "severity": a.severity,
+                "detail": a.detail,
+                "is_resolved": a.is_resolved,
+                "detected_at": a.detected_at.isoformat() if a.detected_at else None,
+            }
+            for a in alerts
+        ]
+    }
+
+
+@app.post("/v1/admin/antifraud/alerts/{pattern_id}/resolve")
+async def admin_resolve_pattern(request: Request, pattern_id: int):
+    """Resolve a pattern alert."""
+    ctx = await require_platform_admin(request)
+    from core.antifraud_engine import resolve_pattern
+    resolved = await resolve_pattern(ctx.workspace_id, pattern_id)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="pattern_not_found")
+    return {"resolved": True}
 
 
 if __name__ == "__main__":

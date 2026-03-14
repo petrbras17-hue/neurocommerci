@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useAuth } from "../auth";
+import { useAuth, isPlatformAdmin } from "../auth";
+import { AdminModeToggle, useAdminMode } from "../components/admin/AdminModeToggle";
 import {
   LayoutDashboard,
   Users,
@@ -10,6 +11,8 @@ import {
   Flame,
   HeartPulse,
   Sparkles,
+  MessageCircle,
+  Inbox,
   MessageSquare,
   MessagesSquare,
   Map,
@@ -32,6 +35,11 @@ import {
   LogOut,
   MonitorCheck,
   Building2,
+  Upload,
+  Plug,
+  ClipboardList,
+  ShieldCheck,
+  ScrollText,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -45,6 +53,40 @@ interface NavGroup {
   section: string;
   items: NavItem[];
 }
+
+const ADMIN_NAV_GROUPS: NavGroup[] = [
+  {
+    section: "🔴 ADMIN",
+    items: [
+      { to: "/admin-dashboard", label: "Command Center", icon: ShieldCheck },
+    ],
+  },
+  {
+    section: "Onboarding",
+    items: [
+      { to: "/admin-onboarding", label: "Загрузить аккаунт", icon: Upload },
+      { to: "/admin-proxies", label: "Менеджер прокси", icon: Plug },
+      { to: "/admin-packaging", label: "Packaging", icon: UserCog },
+      { to: "/admin-mass-packaging", label: "Mass Packaging", icon: Users },
+    ],
+  },
+  {
+    section: "Мониторинг",
+    items: [
+      { to: "/admin-ops-log", label: "Лог операций", icon: ClipboardList },
+      { to: "/admin-warmup", label: "Warmup v2", icon: Flame },
+      { to: "/admin-logs", label: "Live Logs", icon: ScrollText },
+      { to: "/admin-commenting", label: "Commenting v2", icon: MessageSquare },
+      { to: "/admin-chatting", label: "Chatting v2", icon: MessageCircle },
+      { to: "/admin-inbox", label: "Unified Inbox", icon: Inbox },
+      { to: "/admin-parser", label: "Parser v2", icon: Search },
+      { to: "/admin-reactions", label: "Reactions v2", icon: HeartPulse },
+      { to: "/admin-monitoring", label: "Monitoring", icon: Activity },
+      { to: "/admin-farm-launch", label: "Farm Launch", icon: Rocket },
+      { to: "/admin-antifraud", label: "Anti-Fraud", icon: Shield },
+    ],
+  },
+];
 
 const NAV_GROUPS: NavGroup[] = [
   {
@@ -127,6 +169,8 @@ export function AppShell() {
   const { profile, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [adminMode] = useAdminMode();
+  const isAdmin = isPlatformAdmin(profile);
 
   const workspaceName = String(
     profile?.workspace?.name || "Workspace"
@@ -138,6 +182,10 @@ export function AppShell() {
   );
 
   const closeSidebar = () => setSidebarOpen(false);
+
+  const navGroups = adminMode === "admin" && isAdmin
+    ? [...ADMIN_NAV_GROUPS, ...NAV_GROUPS]
+    : NAV_GROUPS;
 
   return (
     <div className="shell">
@@ -156,8 +204,14 @@ export function AppShell() {
           </div>
         </div>
 
+        {isAdmin && (
+          <div style={{ padding: "8px 16px" }}>
+            <AdminModeToggle />
+          </div>
+        )}
+
         <nav>
-          {NAV_GROUPS.map((group) => (
+          {navGroups.map((group) => (
             <div className="nav-section" key={group.section}>
               <div className="nav-section-label">{group.section}</div>
               <div className="nav-list">

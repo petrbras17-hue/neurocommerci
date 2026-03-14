@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from core.account_lifecycle import AccountLifecycle
 from core.anti_detection import AntiDetection
+from core.operation_logger import log_operation
 from core.session_pool import PoolCapacityError, SessionDeadError, SessionPool
 from storage.models import Account, AccountHealthScore, WarmupConfig, WarmupSession
 from storage.sqlite_db import apply_session_rls_context, async_session
@@ -727,6 +728,11 @@ class WarmupEngine:
             pool.append("reaction")
         if config.enable_dialogs_between_accounts:
             pool.append("dialog_read")
+        # Sprint 19: new warmup v2 actions
+        if getattr(config, "enable_story_viewing", False):
+            pool.append("view_stories")
+        if getattr(config, "enable_channel_joining", False):
+            pool.append("join_channel")
 
         if not pool:
             return False
@@ -742,6 +748,10 @@ class WarmupEngine:
             return await self._do_reaction(client, anti_detection, config)
         if action == "dialog_read":
             return await self._do_dialog_read(client, anti_detection)
+        if action == "view_stories":
+            return await self._do_view_stories(client, anti_detection)
+        if action == "join_channel":
+            return await self._do_join_channel(client, anti_detection, config)
 
         return False
 
@@ -888,6 +898,152 @@ class WarmupEngine:
                 raise _FrozenError() from exc
             log.debug(f"WarmupEngine: _do_dialog_read: {exc}")
             return False
+
+    # ------------------------------------------------------------------
+    # Sprint 19: Story viewing
+    # ------------------------------------------------------------------
+
+    async def _do_view_stories(
+        self,
+        client,
+        anti_detection: AntiDetection,
+    ) -> bool:
+        """
+        View recent stories from contacts/channels. Mark as read.
+
+        Returns True on success.
+        Raises _QuarantineError on FloodWaitError.
+        """
+        try:
+            from telethon.errors import FloodWaitError
+            from telethon.tl.functions.stories import (
+                GetAllStoriesRequest,
+                ReadStoriesRequest,
+            )
+        except ImportError:
+            log.warning("WarmupEngine: Telethon stories API not available")
+            return False
+
+        try:
+            result = await client(GetAllStoriesRequest(next="", hidden=False))
+            peer_stories = getattr(result, "peer_stories", []) or []
+            if not peer_stories:
+                return False
+
+            # Pick up to 3 peers to view stories from
+            selected = random.sample(peer_stories, min(3, len(peer_stories)))
+            viewed = 0
+            for ps in selected:
+                stories = getattr(ps, "stories", []) or []
+                if not stories:
+                    continue
+                story_ids = [s.id for s in stories[:5]]
+                try:
+                    await client(ReadStoriesRequest(
+                        peer=ps.peer,
+                        max_id=max(story_ids),
+                    ))
+                    viewed += len(story_ids)
+                    # Human delay between story views: 2-8 seconds
+                    await asyncio.sleep(random.uniform(2.0, 8.0))
+                except FloodWaitError as exc:
+                    raise _QuarantineError(exc.seconds) from exc
+                except Exception as exc:
+                    if "FrozenMethodInvalid" in type(exc).__name__:
+                        raise _FrozenError() from exc
+                    log.debug(f"WarmupEngine: _do_view_stories peer error: {exc}")
+
+            log.debug(f"WarmupEngine: viewed {viewed} stories")
+            return viewed > 0
+
+        except FloodWaitError as exc:
+            raise _QuarantineError(exc.seconds) from exc
+        except (_QuarantineError, _FrozenError):
+            raise
+        except Exception as exc:
+            if "FrozenMethodInvalid" in type(exc).__name__:
+                raise _FrozenError() from exc
+            log.debug(f"WarmupEngine: _do_view_stories: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Sprint 19: Channel joining
+    # ------------------------------------------------------------------
+
+    async def _do_join_channel(
+        self,
+        client,
+        anti_detection: AntiDetection,
+        config: WarmupConfig,
+    ) -> bool:
+        """
+        Join a random channel from the target list with human delays.
+
+        Returns True on success.
+        Raises _QuarantineError on FloodWaitError.
+        """
+        try:
+            from telethon.errors import FloodWaitError, ChannelPrivateError
+            from telethon.tl.functions.channels import JoinChannelRequest
+        except ImportError:
+            log.warning("WarmupEngine: Telethon not available for _do_join_channel")
+            return False
+
+        max_join = getattr(config, "max_channels_to_join", 3) or 3
+
+        # Build channel list from target_channels or fallback
+        channels: List[str] = []
+        raw = config.target_channels
+        if isinstance(raw, list):
+            channels = [str(c) for c in raw if c]
+        if not channels:
+            channels = list(_FALLBACK_READ_CHANNELS)
+
+        channel_id = random.choice(channels)
+
+        try:
+            entity = await client.get_entity(channel_id)
+            # Human delay before joining: 60-120 seconds
+            await asyncio.sleep(random.uniform(60.0, 120.0))
+            await client(JoinChannelRequest(entity))
+            log.debug(f"WarmupEngine: joined channel {channel_id}")
+            return True
+
+        except FloodWaitError as exc:
+            raise _QuarantineError(exc.seconds) from exc
+        except ChannelPrivateError:
+            log.debug(f"WarmupEngine: channel {channel_id} private, cannot join")
+            return False
+        except Exception as exc:
+            if "FrozenMethodInvalid" in type(exc).__name__:
+                raise _FrozenError() from exc
+            log.debug(f"WarmupEngine: _do_join_channel [{channel_id}]: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Sprint 19: Operation logging helper for warmup actions
+    # ------------------------------------------------------------------
+
+    async def _log_warmup_action(
+        self,
+        workspace_id: int,
+        account_id: int,
+        action: str,
+        status: str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Fire-and-forget operation log for warmup actions."""
+        try:
+            await log_operation(
+                workspace_id=workspace_id,
+                account_id=account_id,
+                module="warmup",
+                action=action,
+                status=status,
+                detail=detail,
+            )
+        except Exception as exc:
+            log.debug(f"WarmupEngine: _log_warmup_action failed: {exc}")
 
     # ------------------------------------------------------------------
     # DB helpers — each opens its own session to keep transactions short

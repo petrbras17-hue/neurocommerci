@@ -758,6 +758,12 @@ class FarmConfig(Base):
     auto_responder_enabled = Column(Boolean, default=False)
     auto_responder_prompt = Column(Text, nullable=True)
     auto_responder_redirect_url = Column(Text, nullable=True)
+    targeting_mode = Column(String(24), default="all")  # all, random_pct, keyword_match
+    targeting_params = Column(JSONType, nullable=True)
+    comment_as_channel = Column(Boolean, default=False)
+    auto_dm_enabled = Column(Boolean, default=False)
+    auto_dm_message = Column(Text, nullable=True)
+    language_mode = Column(String(8), default="auto")
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow)
 
@@ -1015,6 +1021,15 @@ class WarmupConfig(Base):
     enable_read_channels = Column(Boolean, default=True)
     enable_dialogs_between_accounts = Column(Boolean, default=True)
     target_channels = Column(JSONType, nullable=True)  # list of channel usernames
+    # Sprint 19: Warmup v2 schedule columns
+    schedule_start_hour = Column(Integer, default=9)
+    schedule_end_hour = Column(Integer, default=22)
+    sessions_per_day = Column(Integer, default=3)
+    session_duration_minutes = Column(Integer, default=30)
+    enable_story_viewing = Column(Boolean, default=True)
+    enable_channel_joining = Column(Boolean, default=True)
+    enable_dialogs = Column(Boolean, default=False)
+    max_channels_to_join = Column(Integer, default=3)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow)
 
@@ -1038,6 +1053,13 @@ class WarmupSession(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     next_session_at = Column(DateTime, nullable=True)
+    # Sprint 19: Warmup v2 progress columns
+    actions_completed = Column(Integer, default=0)
+    channels_visited = Column(Integer, default=0)
+    stories_viewed = Column(Integer, default=0)
+    channels_joined = Column(Integer, default=0)
+    days_warmed = Column(Integer, default=0)
+    progress_pct = Column(Integer, default=0)
 
 
 class AccountHealthScore(Base):
@@ -1865,6 +1887,22 @@ class AdminAccount(Base):
     security_hardened_at = Column(DateTime(timezone=True))
     warmup_started_at = Column(DateTime(timezone=True))
     profile_change_earliest = Column(DateTime(timezone=True))
+    # Sprint 18: Account Packaging
+    profile_gender = Column(String(16))
+    profile_age_range = Column(String(16))
+    profile_country = Column(String(4))
+    profile_profession = Column(String(64))
+    profile_bio = Column(Text)
+    profile_first_name = Column(String(64))
+    profile_last_name = Column(String(64))
+    profile_username = Column(String(64))
+    avatar_path = Column(String(256))
+    channel_id = Column(BigInteger)
+    channel_username = Column(String(64))
+    channel_title = Column(String(128))
+    profile_applied_at = Column(DateTime(timezone=True))
+    channel_created_at = Column(DateTime(timezone=True))
+    packaging_status = Column(String(24), server_default="not_started")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -1910,4 +1948,447 @@ class AdminOperationLog(Base):
     action = Column(String(64), nullable=False)
     status = Column(String(16), nullable=False)
     detail = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Sprint 19: Operation Logs (platform-wide, RLS on workspace_id) ─────────
+
+
+class OperationLog(Base):
+    """Platform-wide operation log with WebSocket broadcast via Redis pub/sub."""
+    __tablename__ = "operation_logs"
+    __table_args__ = (
+        Index("ix_operation_logs_workspace_id", "workspace_id"),
+        Index("ix_operation_logs_module_created", "module", "created_at"),
+        Index("ix_operation_logs_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=True)
+    module = Column(String(32), nullable=False)
+    action = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False)
+    detail = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Sprint 20: Neurocommenting v2 ─────────────────────────────────────────
+
+
+class ChannelBlacklist(Base):
+    """Чёрный список каналов — не комментируем."""
+    __tablename__ = "channel_blacklists"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "channel_id", name="uq_channel_blacklists_ws_ch"),
+        Index("ix_channel_blacklists_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    channel_username = Column(String(64), nullable=True)
+    channel_title = Column(String(256), nullable=True)
+    reason = Column(String(64), nullable=True)  # manual, auto_ban, auto_mute
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChannelWhitelist(Base):
+    """Белый список каналов — успешно комментируем."""
+    __tablename__ = "channel_whitelists"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "channel_id", name="uq_channel_whitelists_ws_ch"),
+        Index("ix_channel_whitelists_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    channel_username = Column(String(64), nullable=True)
+    channel_title = Column(String(256), nullable=True)
+    successful_comments = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class FarmPreset(Base):
+    """Пресет конфигурации фермы — для быстрого создания."""
+    __tablename__ = "farm_presets"
+    __table_args__ = (
+        Index("ix_farm_presets_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    name = Column(String(128), nullable=False)
+    config = Column(JSONType, nullable=False)
+    targeting_mode = Column(String(24), default="all")
+    targeting_params = Column(JSONType, nullable=True)
+    comment_as_channel = Column(Boolean, default=False)
+    auto_dm_enabled = Column(Boolean, default=False)
+    auto_dm_message = Column(Text, nullable=True)
+    language = Column(String(8), default="auto")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AutoDmConfig(Base):
+    """Конфигурация автоответчика в ЛС для фермы."""
+    __tablename__ = "auto_dm_configs"
+    __table_args__ = (
+        Index("ix_auto_dm_configs_workspace_id", "workspace_id"),
+        Index("ix_auto_dm_configs_farm_id", "farm_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    farm_id = Column(Integer, nullable=False)
+    message = Column(Text, nullable=False)
+    is_active = Column(Boolean, default=True)
+    max_dms_per_day = Column(Integer, default=10)
+    dms_sent_today = Column(Integer, default=0)
+    last_reset_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChattingConfigV2(Base):
+    """Sprint 21: Chatting v2 — advanced chatting config with modes and product promotion."""
+    __tablename__ = "chatting_configs_v2"
+    __table_args__ = (
+        Index("ix_chatting_configs_v2_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    name = Column(String(128), nullable=True)
+    mode = Column(String(24), server_default="interval")  # interval, keyword_trigger, semantic_match
+    interval_percent = Column(Integer, server_default="10")
+    trigger_keywords = Column(JSONType, nullable=True)
+    semantic_topics = Column(JSONType, nullable=True)
+    product_name = Column(String(128), nullable=True)
+    product_description = Column(Text, nullable=True)
+    product_problems_solved = Column(Text, nullable=True)
+    mention_frequency = Column(String(24), server_default="subtle")  # never, subtle, moderate, aggressive
+    context_depth = Column(Integer, server_default="5")
+    is_active = Column(Boolean, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DmInbox(Base):
+    """Sprint 21: Unified DM inbox entry per account+peer."""
+    __tablename__ = "dm_inbox"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "account_id", "peer_id", name="uq_dm_inbox_ws_acct_peer"),
+        Index("ix_dm_inbox_workspace_id", "workspace_id"),
+        Index("ix_dm_inbox_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=False)
+    account_phone = Column(String(20), nullable=True)
+    peer_id = Column(BigInteger, nullable=False)
+    peer_name = Column(String(128), nullable=True)
+    peer_username = Column(String(64), nullable=True)
+    last_message_text = Column(Text, nullable=True)
+    last_message_at = Column(DateTime(timezone=True), nullable=True)
+    unread_count = Column(Integer, server_default="0")
+    is_auto_responding = Column(Boolean, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DmMessage(Base):
+    """Sprint 21: Individual DM message in a conversation."""
+    __tablename__ = "dm_messages"
+    __table_args__ = (
+        Index("ix_dm_messages_workspace_id", "workspace_id"),
+        Index("ix_dm_messages_inbox_id", "inbox_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    inbox_id = Column(Integer, nullable=False)
+    sender = Column(String(16), nullable=False)  # 'us' or 'them'
+    text = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChattingPreset(Base):
+    """Sprint 21: Saved chatting config preset."""
+    __tablename__ = "chatting_presets"
+    __table_args__ = (
+        Index("ix_chatting_presets_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    name = Column(String(128), nullable=False)
+    config = Column(JSONType, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AutoResponderConfig(Base):
+    """Sprint 21: Auto-responder config for DM responses."""
+    __tablename__ = "auto_responder_configs"
+    __table_args__ = (
+        Index("ix_auto_responder_configs_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=True)
+    product_name = Column(String(128), nullable=True)
+    product_description = Column(Text, nullable=True)
+    tone = Column(String(24), server_default="friendly")  # friendly, professional, casual
+    max_responses_per_day = Column(Integer, server_default="20")
+    responses_today = Column(Integer, server_default="0")
+    is_active = Column(Boolean, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Sprint 22: Parsing v2
+# ---------------------------------------------------------------------------
+
+
+class GroupParsingJob(Base):
+    """Sprint 22: Group/chat parsing job via Telethon global search."""
+    __tablename__ = "group_parsing_jobs"
+    __table_args__ = (
+        Index("ix_group_parsing_jobs_workspace_id", "workspace_id"),
+        Index("ix_group_parsing_jobs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    keywords = Column(JSONType, nullable=False)
+    status = Column(String(16), server_default="pending")  # pending/running/completed/cancelled/error
+    filters = Column(JSONType, nullable=True)
+    results_count = Column(Integer, server_default="0")
+    progress = Column(Integer, server_default="0")
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class MessageParsingJob(Base):
+    """Sprint 22: Message-based parsing job — search messages in a channel."""
+    __tablename__ = "message_parsing_jobs"
+    __table_args__ = (
+        Index("ix_message_parsing_jobs_workspace_id", "workspace_id"),
+        Index("ix_message_parsing_jobs_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    keywords = Column(JSONType, nullable=True)
+    date_from = Column(DateTime(timezone=True), nullable=True)
+    date_to = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(16), server_default="pending")
+    results_count = Column(Integer, server_default="0")
+    progress = Column(Integer, server_default="0")
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class MessageParsingResult(Base):
+    """Sprint 22: Individual message result from message-based parsing."""
+    __tablename__ = "message_parsing_results"
+    __table_args__ = (
+        Index("ix_message_parsing_results_workspace_id", "workspace_id"),
+        Index("ix_message_parsing_results_job_id", "job_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    job_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, nullable=True)
+    username = Column(String(64), nullable=True)
+    first_name = Column(String(128), nullable=True)
+    message_text = Column(Text, nullable=True)
+    message_date = Column(DateTime(timezone=True), nullable=True)
+    channel_id = Column(BigInteger, nullable=True)
+    channel_title = Column(String(256), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ParsingTemplate(Base):
+    """Sprint 22: Parsing template — system or user-created keyword set."""
+    __tablename__ = "parsing_templates"
+    __table_args__ = (
+        Index("ix_parsing_templates_workspace_id", "workspace_id"),
+        Index("ix_parsing_templates_category", "category"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=True)  # NULL = system template
+    name = Column(String(128), nullable=False)
+    category = Column(String(64), nullable=True)
+    keywords = Column(JSONType, nullable=False)
+    filters = Column(JSONType, nullable=True)
+    description = Column(Text, nullable=True)
+    is_system = Column(Boolean, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReactionMonitoringConfig(Base):
+    """Sprint 23: Reaction monitoring config — auto-react to new comments in a channel."""
+    __tablename__ = "reaction_monitoring_configs"
+    __table_args__ = (
+        Index("ix_reaction_monitoring_configs_workspace_id", "workspace_id"),
+        Index("ix_reaction_monitoring_configs_channel_id", "channel_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    channel_title = Column(String(256), nullable=True)
+    reaction_emoji = Column(String(8), server_default="👍")
+    react_within_seconds = Column(Integer, server_default="30")
+    is_active = Column(Boolean, server_default="true")
+    accounts_assigned = Column(JSONType, nullable=True)
+    max_reactions_per_hour = Column(Integer, server_default="30")
+    reactions_this_hour = Column(Integer, server_default="0")
+    use_channel_reaction = Column(Boolean, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReactionBlacklist(Base):
+    """Sprint 23: Channel blacklist for reactions."""
+    __tablename__ = "reaction_blacklists"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "channel_id", name="uq_reaction_blacklists_ws_channel"),
+        Index("ix_reaction_blacklists_workspace_id", "workspace_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+    channel_title = Column(String(256), nullable=True)
+    reason = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccountStatusLive(Base):
+    """Sprint 23: Live account status — what module/action each account is currently running."""
+    __tablename__ = "account_status_live"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "account_id", name="uq_account_status_live_ws_account"),
+        Index("ix_account_status_live_workspace_id", "workspace_id"),
+        Index("ix_account_status_live_current_module", "current_module"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=False)
+    account_phone = Column(String(20), nullable=True)
+    current_module = Column(String(32), nullable=True)
+    current_action = Column(String(64), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    last_heartbeat_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class FarmLaunchPlan(Base):
+    """Sprint 24: Farm launch plan with scaling curve and health gating."""
+    __tablename__ = "farm_launch_plans"
+    __table_args__ = (
+        Index("ix_farm_launch_plans_workspace_id", "workspace_id"),
+        Index("ix_farm_launch_plans_farm_id", "farm_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    farm_id = Column(Integer, nullable=False)
+    name = Column(String(128), nullable=True)
+    scaling_curve = Column(String(24), server_default="gradual")
+    custom_curve = Column(JSONType, nullable=True)
+    day_1_limit = Column(Integer, server_default="2")
+    day_3_limit = Column(Integer, server_default="5")
+    day_7_limit = Column(Integer, server_default="10")
+    day_14_limit = Column(Integer, server_default="20")
+    day_30_limit = Column(Integer, server_default="-1")
+    current_day = Column(Integer, server_default="0")
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    is_active = Column(Boolean, server_default="true")
+    health_gate_threshold = Column(Integer, server_default="40")
+    auto_reduce_factor = Column(Float, server_default="0.5")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AntifraudScore(Base):
+    """Sprint 24: Per-action anti-fraud risk score and decision."""
+    __tablename__ = "antifraud_scores"
+    __table_args__ = (
+        Index("ix_antifraud_scores_workspace_id", "workspace_id"),
+        Index("ix_antifraud_scores_account_id", "account_id"),
+        Index("ix_antifraud_scores_action_type", "action_type"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=False)
+    action_type = Column(String(32), nullable=False)
+    risk_score = Column(Float, nullable=False)
+    risk_factors = Column(JSONType, nullable=True)
+    decision = Column(String(16), nullable=False)
+    decided_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PatternDetection(Base):
+    """Sprint 24: Cross-account pattern detection (timing, content, burst, geo)."""
+    __tablename__ = "pattern_detections"
+    __table_args__ = (
+        Index("ix_pattern_detections_workspace_id", "workspace_id"),
+        Index("ix_pattern_detections_pattern_type", "pattern_type"),
+        Index("ix_pattern_detections_is_resolved", "is_resolved"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    pattern_type = Column(String(64), nullable=False)
+    accounts_involved = Column(JSONType, nullable=True)
+    severity = Column(String(16), nullable=False)
+    detail = Column(Text, nullable=True)
+    is_resolved = Column(Boolean, server_default="false")
+    detected_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScalingHistory(Base):
+    """Sprint 24: Per-account per-day scaling event log."""
+    __tablename__ = "scaling_history"
+    __table_args__ = (
+        Index("ix_scaling_history_workspace_id", "workspace_id"),
+        Index("ix_scaling_history_farm_id", "farm_id"),
+        Index("ix_scaling_history_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    farm_id = Column(Integer, nullable=False)
+    account_id = Column(Integer, nullable=True)
+    day_number = Column(Integer, nullable=True)
+    max_allowed = Column(Integer, nullable=True)
+    actual_performed = Column(Integer, nullable=True)
+    was_health_gated = Column(Boolean, server_default="false")
+    was_antifraud_gated = Column(Boolean, server_default="false")
+    recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ModuleThroughput(Base):
+    """Sprint 23: Per-module throughput stats aggregated in 5-minute buckets."""
+    __tablename__ = "module_throughput"
+    __table_args__ = (
+        Index("ix_module_throughput_workspace_id", "workspace_id"),
+        Index("ix_module_throughput_module", "module"),
+        Index("ix_module_throughput_period_start", "period_start"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    workspace_id = Column(Integer, nullable=False)
+    module = Column(String(32), nullable=False)
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    actions_count = Column(Integer, server_default="0")
+    errors_count = Column(Integer, server_default="0")
+    avg_latency_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

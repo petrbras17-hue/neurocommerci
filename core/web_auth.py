@@ -360,6 +360,7 @@ def _user_payload(user: AuthUser) -> dict[str, Any]:
         "last_name": user.last_name,
         "email": user.email,
         "company": user.company,
+        "is_platform_admin": user.is_platform_admin,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
 
