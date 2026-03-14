@@ -7,7 +7,10 @@
 
 import { useRef, useState, useEffect, useMemo, useCallback } from "react";
 import ReactGlobe from "react-globe.gl";
-import * as THREE from "three";
+// NOTE: We intentionally avoid `import * as THREE from 'three'` here.
+// globe.gl internally bundles Three.js; a second import causes "Multiple
+// instances" which breaks raycasting (instanceof checks fail).
+// Instead we access THREE via globe.gl's scene() after mount.
 
 import type { GeoPoint } from "../../api";
 import type { DrillPathEntry } from "./hooks/useGlobeInteraction";
@@ -124,17 +127,9 @@ function channelLabel(point: GeoPoint): HTMLElement {
   return el;
 }
 
-// ── Globe material (created once) ─────────────────────────────────────────────
-
-function makeGlobeMaterial(): THREE.MeshPhongMaterial {
-  return new THREE.MeshPhongMaterial({
-    color: "#1a1a2e",
-    emissive: "#0a0a0b",
-    shininess: 25,
-    transparent: true,
-    opacity: 0.95,
-  });
-}
+// ── Globe material helper ─────────────────────────────────────────────────────
+// We apply the material via the globe ref after mount to avoid importing
+// Three.js directly (which causes duplicate-instance raycasting breakage).
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -173,8 +168,21 @@ export function GlobeView(props: GlobeViewProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Stable globe material — never recreated across renders.
-  const globeMaterial = useMemo(() => makeGlobeMaterial(), []);
+  // Apply dark globe material after mount via the imperative API,
+  // using the same THREE that globe.gl uses internally.
+  useEffect(() => {
+    const g = globeEl.current;
+    if (!g) return;
+    const scene = g.scene();
+    if (!scene) return;
+    // The globe mesh is the first child with geometry (sphere).
+    // globe.gl exposes globeMaterial() setter:
+    g.globeMaterial().color?.set("#1a1a2e");
+    g.globeMaterial().emissive?.set("#0a0a0b");
+    g.globeMaterial().shininess = 25;
+    g.globeMaterial().transparent = true;
+    g.globeMaterial().opacity = 0.95;
+  }, []);
 
   // ── Filtered points ──────────────────────────────────────────────────────────
 
@@ -314,7 +322,6 @@ export function GlobeView(props: GlobeViewProps) {
         height={dims.h}
         // Globe appearance
         globeImageUrl=""
-        globeMaterial={globeMaterial}
         backgroundColor="#0a0a0b"
         atmosphereColor="#00ff88"
         atmosphereAltitude={0.18}
