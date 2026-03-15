@@ -14613,9 +14613,20 @@ async def persona_update(
 ) -> dict[str, Any]:
     """Ручное редактирование персоны."""
     body = await request.json()
+    # Whitelist: только безопасные поля, без id/tenant_id/account_id/approved
+    _ALLOWED_PERSONA_FIELDS = {
+        "country", "city", "language_primary", "language_secondary",
+        "age_range", "gender", "occupation", "interests", "personality_traits",
+        "preferred_channels", "emoji_set", "comment_style", "reply_probability",
+        "timezone_offset", "wake_hour", "sleep_hour", "peak_hours",
+        "weekend_activity", "persona_prompt",
+    }
+    safe_fields = {k: v for k, v in body.items() if k in _ALLOWED_PERSONA_FIELDS}
+    if not safe_fields:
+        raise HTTPException(status_code=400, detail="no_valid_fields")
     from core.persona_engine import PersonaEngine
     engine = PersonaEngine()
-    persona = await engine.update_persona(account_id, tenant_context.tenant_id, session, **body)
+    persona = await engine.update_persona(account_id, tenant_context.tenant_id, session, **safe_fields)
     await session.commit()
     return {"id": persona.id, "updated": True}
 
@@ -14727,9 +14738,10 @@ async def scheduler_status(
 
 @app.post("/v1/scheduler/pause")
 async def scheduler_pause(
-    _: TenantContext = Depends(get_tenant_context),
+    request: Request,
 ) -> dict[str, Any]:
-    """Приостановить scheduler."""
+    """Приостановить scheduler (admin only)."""
+    ctx = await require_platform_admin(request)
     scheduler = app_state.get("warmup_scheduler")
     if scheduler is None:
         raise HTTPException(status_code=503, detail="scheduler_not_initialized")
@@ -14739,9 +14751,10 @@ async def scheduler_pause(
 
 @app.post("/v1/scheduler/resume")
 async def scheduler_resume(
-    _: TenantContext = Depends(get_tenant_context),
+    request: Request,
 ) -> dict[str, Any]:
-    """Возобновить scheduler."""
+    """Возобновить scheduler (admin only)."""
+    ctx = await require_platform_admin(request)
     scheduler = app_state.get("warmup_scheduler")
     if scheduler is None:
         raise HTTPException(status_code=503, detail="scheduler_not_initialized")
@@ -14752,9 +14765,19 @@ async def scheduler_resume(
 @app.post("/v1/scheduler/force/{account_id}")
 async def scheduler_force(
     account_id: int,
-    _: TenantContext = Depends(get_tenant_context),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
     """Принудительно запустить warmup-сессию для аккаунта."""
+    # Verify account belongs to this tenant
+    acct = (await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_context.tenant_id,
+        )
+    )).scalar_one_or_none()
+    if acct is None:
+        raise HTTPException(status_code=404, detail="account_not_found")
     scheduler = app_state.get("warmup_scheduler")
     if scheduler is None:
         raise HTTPException(status_code=503, detail="scheduler_not_initialized")
