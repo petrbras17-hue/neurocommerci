@@ -200,39 +200,47 @@ class WarmupScheduler:
         """Найти аккаунты с наступившим next_session_at.
 
         Scheduler — системный процесс, ему нужно видеть аккаунты всех тенантов.
-        Используем raw SQL для обхода RLS, затем загружаем ORM объекты по ID
-        с установленным RLS-контекстом для каждого tenant.
+        FORCE RLS на nc role блокирует даже raw SQL, поэтому перебираем
+        все tenant_id и устанавливаем RLS-контекст для каждого.
         """
         from sqlalchemy import text as sa_text
-        # Raw SQL обходит ORM → RLS policies не применяются к text() запросам
-        raw = await session.execute(sa_text(
-            "SELECT id, tenant_id FROM accounts "
-            "WHERE next_session_at <= :now "
-            "AND next_session_at IS NOT NULL "
-            "AND health_status NOT IN ('dead', 'frozen', 'banned') "
-            "AND (quarantined_until IS NULL OR quarantined_until < :now) "
-            "ORDER BY next_session_at ASC "
-            "LIMIT :lim"
-        ), {"now": now, "lim": MAX_CONCURRENT_SESSIONS * 2})
-        rows = raw.fetchall()
-        if not rows:
-            return []
 
-        # Загружаем полные ORM-объекты с RLS-контекстом
+        # Сначала получаем список тенантов (tenants таблица без RLS)
+        tenant_rows = await session.execute(sa_text("SELECT id FROM tenants"))
+        tenant_ids = [r[0] for r in tenant_rows.fetchall()]
+
         results: list[Account] = []
-        for row in rows:
-            acct_id, tenant_id = row[0], row[1]
+        for tid in tenant_ids:
             try:
                 await session.execute(
                     sa_text("SET LOCAL app.tenant_id = :tid"),
-                    {"tid": str(tenant_id)},
+                    {"tid": str(tid)},
                 )
-                acct = await session.get(Account, acct_id)
-                if acct:
-                    results.append(acct)
+                stmt = (
+                    select(Account)
+                    .where(
+                        and_(
+                            Account.next_session_at <= now,
+                            Account.next_session_at.isnot(None),
+                            Account.health_status.notin_(["dead", "frozen", "banned"]),
+                            or_(
+                                Account.quarantined_until.is_(None),
+                                Account.quarantined_until < now,
+                            ),
+                        )
+                    )
+                    .order_by(Account.next_session_at.asc())
+                    .limit(MAX_CONCURRENT_SESSIONS)
+                )
+                result = await session.execute(stmt)
+                accts = list(result.scalars().all())
+                results.extend(accts)
             except Exception as exc:
-                log.warning("warmup_scheduler: failed to load account %s: %s", acct_id, exc)
-        return results
+                log.warning("warmup_scheduler: failed to poll tenant %s: %s", tid, exc)
+
+        # Сортируем по next_session_at и ограничиваем
+        results.sort(key=lambda a: a.next_session_at or now)
+        return results[:MAX_CONCURRENT_SESSIONS * 2]
 
     # ── Выполнение одной сессии ──────────────────────────────────────
 
