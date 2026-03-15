@@ -197,25 +197,42 @@ class WarmupScheduler:
     async def _find_ready_accounts(
         self, session: AsyncSession, now: datetime
     ) -> list[Account]:
-        """Найти аккаунты с наступившим next_session_at."""
-        stmt = (
-            select(Account)
-            .where(
-                and_(
-                    Account.next_session_at <= now,
-                    Account.next_session_at.isnot(None),
-                    Account.health_status.notin_(["dead", "frozen", "banned"]),
-                    or_(
-                        Account.quarantined_until.is_(None),
-                        Account.quarantined_until < now,
-                    ),
+        """Найти аккаунты с наступившим next_session_at.
+
+        Scheduler — системный процесс, ему нужно видеть аккаунты всех тенантов.
+        Используем raw SQL для обхода RLS, затем загружаем ORM объекты по ID
+        с установленным RLS-контекстом для каждого tenant.
+        """
+        from sqlalchemy import text as sa_text
+        # Raw SQL обходит ORM → RLS policies не применяются к text() запросам
+        raw = await session.execute(sa_text(
+            "SELECT id, tenant_id FROM accounts "
+            "WHERE next_session_at <= :now "
+            "AND next_session_at IS NOT NULL "
+            "AND health_status NOT IN ('dead', 'frozen', 'banned') "
+            "AND (quarantined_until IS NULL OR quarantined_until < :now) "
+            "ORDER BY next_session_at ASC "
+            "LIMIT :lim"
+        ), {"now": now, "lim": MAX_CONCURRENT_SESSIONS * 2})
+        rows = raw.fetchall()
+        if not rows:
+            return []
+
+        # Загружаем полные ORM-объекты с RLS-контекстом
+        results: list[Account] = []
+        for row in rows:
+            acct_id, tenant_id = row[0], row[1]
+            try:
+                await session.execute(
+                    sa_text("SET LOCAL app.tenant_id = :tid"),
+                    {"tid": str(tenant_id)},
                 )
-            )
-            .order_by(Account.next_session_at.asc())
-            .limit(MAX_CONCURRENT_SESSIONS * 2)
-        )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+                acct = await session.get(Account, acct_id)
+                if acct:
+                    results.append(acct)
+            except Exception as exc:
+                log.warning("warmup_scheduler: failed to load account %s: %s", acct_id, exc)
+        return results
 
     # ── Выполнение одной сессии ──────────────────────────────────────
 
@@ -237,6 +254,12 @@ class WarmupScheduler:
     async def _execute_session(self, account_id: int, tenant_id: int) -> None:
         """Выполнить одну warmup-сессию для аккаунта."""
         async with self._db_session_factory() as session:
+            # Установить RLS-контекст для tenant
+            from sqlalchemy import text as sa_text
+            await session.execute(
+                sa_text("SET LOCAL app.tenant_id = :tid"),
+                {"tid": str(tenant_id)},
+            )
             # Загружаем аккаунт и персону
             acct = await session.get(Account, account_id)
             if acct is None:
