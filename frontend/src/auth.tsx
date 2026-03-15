@@ -253,8 +253,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
     async (code: string) => {
       const result = await apiFetch<Record<string, unknown>>(`/auth/telegram/bot-check?code=${encodeURIComponent(code)}`);
       const s = String(result.status || "");
-      if (s === "pending" || s === "expired" || s === "error") {
+      if (s === "pending" || s === "expired") {
         return null;
+      }
+      if (s === "error") {
+        throw new Error(String(result.detail || "auth_failed"));
       }
       return applyBundle(result as unknown as AuthBundle) as AuthBundle;
     },

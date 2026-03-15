@@ -500,20 +500,34 @@ async def register_with_email(
     if existing.scalar_one_or_none() is not None:
         raise EmailAuthError("email_already_registered")
 
+    try:
+        pw_hash = hash_password(password)
+    except Exception as exc:
+        log.error("register_with_email: hash_password failed: %s", exc)
+        raise EmailAuthError("registration_failed") from exc
+
     auth_user = AuthUser(
         email=normalized_email,
         first_name=_clean_optional_text(first_name, 255),
         company=_clean_optional_text(company, 255),
-        password_hash=hash_password(password),
+        password_hash=pw_hash,
         last_login_at=utcnow(),
     )
     session.add(auth_user)
-    await session.flush()
+    try:
+        await session.flush()
+    except Exception as exc:
+        log.error("register_with_email: flush auth_user failed: %s", exc)
+        raise EmailAuthError("registration_failed") from exc
 
-    tenant, workspace, membership = await _bootstrap_membership_email(
-        session,
-        auth_user=auth_user,
-    )
+    try:
+        tenant, workspace, membership = await _bootstrap_membership_email(
+            session,
+            auth_user=auth_user,
+        )
+    except Exception as exc:
+        log.error("register_with_email: bootstrap_membership failed: %s", exc)
+        raise EmailAuthError("registration_failed") from exc
 
     # Re-apply RLS context with newly created tenant so subsequent
     # INSERTs (refresh_tokens, onboarding) pass FORCE RLS policies
@@ -527,16 +541,26 @@ async def register_with_email(
         workspace_id=workspace.id,
         role=membership.role,
     )
-    refresh_token = await _issue_refresh_record(
-        session,
-        auth_user=auth_user,
-        tenant=tenant,
-        workspace=workspace,
-        role=membership.role,
-        user_agent=user_agent,
-        ip_address=ip_address,
-    )
-    onboarding = await _build_onboarding_state(session, tenant_id=tenant.id, workspace_id=workspace.id)
+    try:
+        refresh_token = await _issue_refresh_record(
+            session,
+            auth_user=auth_user,
+            tenant=tenant,
+            workspace=workspace,
+            role=membership.role,
+            user_agent=user_agent,
+            ip_address=ip_address,
+        )
+    except Exception as exc:
+        log.error("register_with_email: issue_refresh_record failed: %s", exc)
+        raise EmailAuthError("registration_failed") from exc
+
+    try:
+        onboarding = await _build_onboarding_state(session, tenant_id=tenant.id, workspace_id=workspace.id)
+    except Exception as exc:
+        log.error("register_with_email: build_onboarding_state failed: %s", exc)
+        raise EmailAuthError("registration_failed") from exc
+
     return WebAuthBundle(
         access_token=access_token,
         refresh_token=refresh_token,
