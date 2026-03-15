@@ -58,7 +58,8 @@ function formatDuration(startedAt: string | null): string {
 }
 
 export function MonitoringDashboardPage() {
-  const { accessToken, workspace } = useAuth();
+  const { accessToken, profile } = useAuth();
+  const workspace = profile?.workspace;
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);

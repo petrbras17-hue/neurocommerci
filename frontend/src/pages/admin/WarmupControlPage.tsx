@@ -33,7 +33,8 @@ interface SessionProgress {
 }
 
 export function WarmupControlPage() {
-  const { accessToken, workspaceId } = useAuth();
+  const { accessToken, profile } = useAuth();
+  const workspaceId = profile?.workspace?.id as number | undefined;
   const [configs, setConfigs] = useState<WarmupConfig[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [progress, setProgress] = useState<SessionProgress[]>([]);
@@ -114,7 +115,7 @@ export function WarmupControlPage() {
       await apiFetch(`/v1/warmup/${selectedId}/schedule`, {
         accessToken,
         method: "PUT",
-        body: scheduleForm,
+        json: scheduleForm,
       });
       loadConfigs();
     } catch {

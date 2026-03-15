@@ -3,7 +3,8 @@ import { useAuth } from "../../auth";
 import { OperationLogPanel } from "../../components/admin/OperationLogPanel";
 
 export function LiveLogsPage() {
-  const { workspaceId } = useAuth();
+  const { profile } = useAuth();
+  const workspaceId = profile?.workspace?.id as number | undefined;
   const [moduleFilter, setModuleFilter] = useState("");
 
   const handleCopyLogs = useCallback(() => {

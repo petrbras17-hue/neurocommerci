@@ -123,7 +123,7 @@ export function NeurocommentingPage() {
       await apiFetch("/v1/admin/blacklist", {
         accessToken,
         method: "POST",
-        body: { channel_id: Number(blChannelId), channel_username: blUsername || undefined, channel_title: blTitle || undefined },
+        json: { channel_id: Number(blChannelId), channel_username: blUsername || undefined, channel_title: blTitle || undefined },
       });
       setBlChannelId(""); setBlUsername(""); setBlTitle("");
       await loadBlacklist();
@@ -148,7 +148,7 @@ export function NeurocommentingPage() {
       await apiFetch("/v1/admin/whitelist", {
         accessToken,
         method: "POST",
-        body: { channel_id: Number(wlChannelId), channel_username: wlUsername || undefined, channel_title: wlTitle || undefined },
+        json: { channel_id: Number(wlChannelId), channel_username: wlUsername || undefined, channel_title: wlTitle || undefined },
       });
       setWlChannelId(""); setWlUsername(""); setWlTitle("");
       await loadWhitelist();
@@ -174,7 +174,7 @@ export function NeurocommentingPage() {
       await apiFetch("/v1/admin/presets", {
         accessToken,
         method: "POST",
-        body: {
+        json: {
           name: presetName,
           config: configObj,
           targeting_mode: targetingMode,
@@ -208,7 +208,7 @@ export function NeurocommentingPage() {
       const data = await apiFetch<AutoDmEntry>(`/v1/admin/farm/${dmFarmId}/auto-dm`, {
         accessToken,
         method: "POST",
-        body: { message: dmMessage, max_dms_per_day: Number(dmMaxPerDay) },
+        json: { message: dmMessage, max_dms_per_day: Number(dmMaxPerDay) },
       });
       setAutoDm(data);
     } catch (e: unknown) { setError(String(e)); }
@@ -244,7 +244,7 @@ export function NeurocommentingPage() {
       await apiFetch(`/v1/admin/farm/${dmFarmId}/import-folder`, {
         accessToken,
         method: "POST",
-        body: { folder_name: folderName },
+        json: { folder_name: folderName },
       });
     } catch (e: unknown) { setError(String(e)); }
     setLoading(false);
