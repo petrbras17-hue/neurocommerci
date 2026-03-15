@@ -163,27 +163,25 @@ class WarmupScheduler:
             del self._active_sessions[aid]
 
         async with self._db_session_factory() as session:
-            # Ищем аккаунты, готовые к сессии
-            accounts = await self._find_ready_accounts(session, now)
+            async with session.begin():
+                # Ищем аккаунты, готовые к сессии
+                accounts = await self._find_ready_accounts(session, now)
 
-            for acct in accounts:
-                # Не запускаем если уже в работе
-                if acct.id in self._active_sessions:
-                    continue
+                launch_list: list[tuple[int, int]] = []
+                for acct in accounts:
+                    if acct.id in self._active_sessions:
+                        continue
+                    if not self._is_awake(acct, now):
+                        await self._defer_to_morning(session, acct)
+                        continue
+                    launch_list.append((acct.id, acct.tenant_id))
 
-                # Проверяем: сейчас "день" для этого аккаунта?
-                if not self._is_awake(acct, now):
-                    # Перенести на утро
-                    await self._defer_to_morning(session, acct)
-                    continue
-
-                # Запускаем сессию через semaphore
+            # Запускаем сессии вне транзакции
+            for account_id, tenant_id in launch_list:
                 task = asyncio.create_task(
-                    self._guarded_session(acct.id, acct.tenant_id)
+                    self._guarded_session(account_id, tenant_id)
                 )
-                self._active_sessions[acct.id] = task
-
-            await session.commit()
+                self._active_sessions[account_id] = task
 
         # Периодические задачи
         if now.timestamp() - self._last_hourly > HOURLY_MAINTENANCE_INTERVAL:
@@ -273,14 +271,15 @@ class WarmupScheduler:
     async def _execute_session(self, account_id: int, tenant_id: int) -> None:
         """Выполнить одну warmup-сессию для аккаунта."""
         async with self._db_session_factory() as session:
-            # Установить RLS-контекст для tenant
-            from sqlalchemy import text as sa_text
-            await session.execute(
-                sa_text("SET LOCAL app.tenant_id = :tid"),
-                {"tid": str(tenant_id)},
-            )
-            # Загружаем аккаунт и персону
-            acct = await session.get(Account, account_id)
+            async with session.begin():
+                # Установить RLS-контекст для tenant
+                from sqlalchemy import text as sa_text
+                await session.execute(
+                    sa_text("SET LOCAL app.tenant_id = :tid"),
+                    {"tid": str(tenant_id)},
+                )
+                # Загружаем аккаунт и персону
+                acct = await session.get(Account, account_id)
             if acct is None:
                 return
 
