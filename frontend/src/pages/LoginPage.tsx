@@ -104,6 +104,7 @@ export function LoginPage() {
     if (!botAuthCode) {
       return;
     }
+    let errorCount = 0;
     const poll = setInterval(() => {
       void auth.checkBotAuth(botAuthCode).then((bundle) => {
         if (bundle) {
@@ -112,8 +113,16 @@ export function LoginPage() {
           setBotAuthCode(null);
           setBotDeepLink(null);
         }
+        errorCount = 0; // Reset on any successful poll
       }).catch(() => {
-        // Silently retry
+        errorCount++;
+        if (errorCount >= 3) {
+          clearInterval(poll);
+          setBotAuthBusy(false);
+          setBotAuthCode(null);
+          setBotDeepLink(null);
+          setBotAuthError("Ошибка авторизации. Попробуйте снова.");
+        }
       });
     }, 2000);
     pollRef.current = poll;

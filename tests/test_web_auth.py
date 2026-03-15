@@ -135,6 +135,103 @@ async def test_invalid_telegram_hash_is_rejected(web_client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
+async def test_email_register_returns_201_and_tokens(web_client: AsyncClient) -> None:
+    response = await web_client.post("/auth/register", json={
+        "email": "newuser@example.com",
+        "password": "secure_pass_123",
+        "first_name": "Petr",
+        "company": "TestCo",
+    })
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "authorized"
+    assert body["access_token"]
+    assert body["user"]["email"] == "newuser@example.com"
+    assert body["user"]["first_name"] == "Petr"
+    assert body["tenant"]["role"] == "owner"
+    assert settings.WEBAPP_SESSION_COOKIE_NAME in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_email_register_duplicate_returns_422(web_client: AsyncClient) -> None:
+    payload = {
+        "email": "dup@example.com",
+        "password": "secure_pass_123",
+        "first_name": "User",
+        "company": "Corp",
+    }
+    first = await web_client.post("/auth/register", json=payload)
+    assert first.status_code == 201
+
+    second = await web_client.post("/auth/register", json=payload)
+    assert second.status_code == 422
+    assert second.json()["detail"] == "email_already_registered"
+
+
+@pytest.mark.asyncio
+async def test_email_register_short_password_returns_422(web_client: AsyncClient) -> None:
+    response = await web_client.post("/auth/register", json={
+        "email": "short@example.com",
+        "password": "abc",
+        "first_name": "User",
+        "company": "Corp",
+    })
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_email_login_returns_200_and_tokens(web_client: AsyncClient) -> None:
+    await web_client.post("/auth/register", json={
+        "email": "login@example.com",
+        "password": "secure_pass_123",
+        "first_name": "User",
+        "company": "Corp",
+    })
+
+    response = await web_client.post("/auth/login", json={
+        "email": "login@example.com",
+        "password": "secure_pass_123",
+    })
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "authorized"
+    assert body["access_token"]
+    assert settings.WEBAPP_SESSION_COOKIE_NAME in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_email_login_wrong_password_returns_401(web_client: AsyncClient) -> None:
+    await web_client.post("/auth/register", json={
+        "email": "wrong@example.com",
+        "password": "correct_password",
+        "first_name": "User",
+        "company": "Corp",
+    })
+
+    response = await web_client.post("/auth/login", json={
+        "email": "wrong@example.com",
+        "password": "wrong_password",
+    })
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
+async def test_email_login_nonexistent_returns_401(web_client: AsyncClient) -> None:
+    response = await web_client.post("/auth/login", json={
+        "email": "ghost@example.com",
+        "password": "any_password",
+    })
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "invalid_credentials"
+
+
+@pytest.mark.asyncio
 async def test_refresh_without_cookie_returns_anonymous(web_client: AsyncClient) -> None:
     response = await web_client.post("/auth/refresh")
 

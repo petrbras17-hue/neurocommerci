@@ -1732,7 +1732,10 @@ async def auth_register(payload: EmailRegisterPayload, request: Request) -> JSON
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="registration_failed",
+        )
 
 
 @app.post("/auth/login")
@@ -1764,7 +1767,10 @@ async def auth_login(payload: EmailLoginPayload, request: Request) -> JSONRespon
             request.client.host if request.client else None,
             request.headers.get("user-agent"),
         )
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="login_failed",
+        )
 
 
 @app.post("/auth/telegram/bot-start")
@@ -1795,8 +1801,8 @@ async def auth_telegram_bot_check(code: str, request: Request) -> JSONResponse:
     if not pending.get("confirmed"):
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "pending"})
 
-    # Consume the auth data and create/login the user
-    tg_user = await consume_pending_auth(code)
+    # Extract telegram_user from pending data (do NOT consume/delete yet)
+    tg_user = pending.get("telegram_user")
     if not tg_user:
         return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "expired"})
 
@@ -1812,19 +1818,25 @@ async def auth_telegram_bot_check(code: str, request: Request) -> JSONResponse:
                     user_agent=request.headers.get("user-agent"),
                     ip_address=request.client.host if request.client else None,
                 )
+        # Only consume (delete Redis key) AFTER successful auth
+        await consume_pending_auth(code)
         resp_payload = _auth_bundle_payload(bundle)
         response = JSONResponse(status_code=status.HTTP_200_OK, content=resp_payload)
         if bundle.refresh_token:
             _set_refresh_cookie(response, request, bundle.refresh_token)
         return response
     except TelegramAuthError as exc:
+        log.warning("bot auth telegram error for code=%s: %s", code[:8] if code else "?", exc)
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={"status": "error", "detail": str(exc)},
         )
     except Exception:
         log.exception("bot auth check failed for code=%s", code[:8] if code else "?")
-        raise
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "error", "detail": "auth_failed"},
+        )
 
 
 @app.post("/auth/refresh")
