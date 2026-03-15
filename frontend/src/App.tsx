@@ -7,6 +7,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProfileCompletionPage } from "./pages/ProfileCompletionPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { AccountsPage } from "./pages/AccountsPage";
+import { AccountActivityPage } from "./pages/AccountActivityPage";
 import { AssistantPage } from "./pages/AssistantPage";
 import { ContextPage } from "./pages/ContextPage";
 import { CreativePage } from "./pages/CreativePage";
@@ -65,6 +66,7 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/accounts/:id/activity" element={<AccountActivityPage />} />
             <Route path="/proxies" element={<ProxiesPage />} />
             <Route path="/assistant" element={<AssistantPage />} />
             <Route path="/context" element={<ContextPage />} />

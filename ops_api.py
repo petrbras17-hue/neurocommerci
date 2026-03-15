@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, or_, select, text as sa_text, update
+from sqlalchemy import case, func, or_, select, text as sa_text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings, validate_critical_secrets
@@ -2841,6 +2841,130 @@ async def web_get_account_timeline(
         workspace_id=tenant_context.workspace_id,
         account_id=account_id,
     )
+
+
+@app.get("/v1/accounts/{account_id}/activity")
+async def get_account_activity(
+    account_id: int,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    action_type: Optional[str] = Query(default=None),
+    hours: int = Query(default=48, ge=1, le=720),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Paginated activity log for a specific account."""
+    from datetime import timedelta
+    from storage.models import AccountActivityLog
+    cutoff = utcnow() - timedelta(hours=hours)
+    q = (
+        select(AccountActivityLog)
+        .where(
+            AccountActivityLog.tenant_id == tenant_context.tenant_id,
+            AccountActivityLog.account_id == account_id,
+            AccountActivityLog.created_at >= cutoff,
+        )
+        .order_by(AccountActivityLog.created_at.desc())
+    )
+    if action_type:
+        q = q.where(AccountActivityLog.action_type == action_type)
+    total_q = select(func.count()).select_from(q.subquery())
+    total = (await session.execute(total_q)).scalar() or 0
+    rows = list((await session.execute(q.offset(offset).limit(limit))).scalars().all())
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "action_type": r.action_type,
+                "success": r.success,
+                "duration_ms": r.duration_ms,
+                "error_message": r.error_message,
+                "details": r.details,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/v1/accounts/{account_id}/activity/summary")
+async def get_account_activity_summary(
+    account_id: int,
+    hours: int = Query(default=48, ge=1, le=720),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """48h activity summary: action counts, success rate, top errors."""
+    from datetime import timedelta
+    from storage.models import AccountActivityLog
+    cutoff = utcnow() - timedelta(hours=hours)
+    base = (
+        select(
+            AccountActivityLog.action_type,
+            func.count().label("total"),
+            func.sum(case((AccountActivityLog.success == True, 1), else_=0)).label("success_count"),  # noqa: E712
+            func.sum(case((AccountActivityLog.success == False, 1), else_=0)).label("fail_count"),  # noqa: E712
+            func.avg(AccountActivityLog.duration_ms).label("avg_duration_ms"),
+        )
+        .where(
+            AccountActivityLog.tenant_id == tenant_context.tenant_id,
+            AccountActivityLog.account_id == account_id,
+            AccountActivityLog.created_at >= cutoff,
+        )
+        .group_by(AccountActivityLog.action_type)
+    )
+    rows = (await session.execute(base)).all()
+    actions = {}
+    total_actions = 0
+    total_success = 0
+    total_fail = 0
+    for r in rows:
+        actions[r.action_type] = {
+            "total": r.total,
+            "success": r.success_count,
+            "fail": r.fail_count,
+            "avg_duration_ms": round(r.avg_duration_ms) if r.avg_duration_ms else None,
+        }
+        total_actions += r.total
+        total_success += r.success_count
+        total_fail += r.fail_count
+
+    # Top errors
+    errors_q = (
+        select(
+            AccountActivityLog.action_type,
+            AccountActivityLog.error_message,
+            func.count().label("cnt"),
+        )
+        .where(
+            AccountActivityLog.tenant_id == tenant_context.tenant_id,
+            AccountActivityLog.account_id == account_id,
+            AccountActivityLog.created_at >= cutoff,
+            AccountActivityLog.success == False,  # noqa: E712
+        )
+        .group_by(AccountActivityLog.action_type, AccountActivityLog.error_message)
+        .order_by(func.count().desc())
+        .limit(10)
+    )
+    error_rows = (await session.execute(errors_q)).all()
+    top_errors = [
+        {"action_type": e.action_type, "error": e.error_message, "count": e.cnt}
+        for e in error_rows
+    ]
+
+    return {
+        "account_id": account_id,
+        "hours": hours,
+        "total_actions": total_actions,
+        "total_success": total_success,
+        "total_fail": total_fail,
+        "success_rate": round(total_success / total_actions * 100, 1) if total_actions else 0,
+        "actions_by_type": actions,
+        "top_errors": top_errors,
+    }
 
 
 # ---------------------------------------------------------------------------

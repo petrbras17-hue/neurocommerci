@@ -1083,6 +1083,27 @@ class AccountHealthHistory(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class AccountActivityLog(Base):
+    """Детальный лог каждого действия аккаунта: warmup, comment, reaction, flood_wait и т.д."""
+    __tablename__ = "account_activity_logs"
+    __table_args__ = (
+        Index("ix_account_activity_logs_tenant_id", "tenant_id"),
+        Index("ix_account_activity_logs_account_id", "account_id"),
+        Index("ix_account_activity_logs_action_type", "action_type"),
+        Index("ix_account_activity_logs_created_at", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    action_type = Column(String(64), nullable=False)  # warmup_read, warmup_reaction, comment, flood_wait, spam_block, quarantine, health_check, login, typing_sim, channel_browse, dialog_read, error
+    success = Column(Boolean, nullable=False, default=True)
+    duration_ms = Column(Integer, nullable=True)
+    error_message = Column(String(500), nullable=True)
+    details = Column(JSONType, nullable=True)  # action-specific payload
+    created_at = Column(DateTime, default=utcnow)
+
+
 class ContentTemplate(Base):
     """DB-first контент-шаблоны (посты/комменты)."""
     __tablename__ = "content_templates"
