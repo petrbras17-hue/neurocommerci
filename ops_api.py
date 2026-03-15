@@ -1388,6 +1388,9 @@ async def tenant_session(
             yield session
 
 
+app_state: dict[str, Any] = {}
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     validate_critical_secrets(settings)
@@ -1425,8 +1428,27 @@ async def lifespan(_: FastAPI):
             await _init_bot_auth_redis(settings.REDIS_URL)
         except Exception as exc:  # pragma: no cover
             log.warning(f"bot auth Redis init skipped: {exc}")
+        # ── Start Autonomous Warmup Scheduler ──
+        warmup_scheduler = None
+        try:
+            from core.warmup_scheduler import WarmupScheduler
+            warmup_scheduler = WarmupScheduler(db_session_factory=async_session)
+            await warmup_scheduler.start()
+            app_state["warmup_scheduler"] = warmup_scheduler
+            log.info("Autonomous warmup scheduler started")
+        except Exception as exc:
+            log.warning(f"Warmup scheduler startup skipped: {exc}")
+
         yield
     finally:
+        # ── Stop Warmup Scheduler ──
+        if warmup_scheduler is not None:
+            try:
+                await warmup_scheduler.shutdown()
+                log.info("Warmup scheduler stopped")
+            except Exception as exc:
+                log.warning(f"Warmup scheduler shutdown error: {exc}")
+
         stop_event.set()
         for task in worker_tasks:
             task.cancel()
@@ -14522,6 +14544,298 @@ async def admin_resolve_pattern(request: Request, pattern_id: int):
     if not resolved:
         raise HTTPException(status_code=404, detail="pattern_not_found")
     return {"resolved": True}
+
+
+# ── Autonomous Warmup: Personas ──────────────────────────────────────
+
+@app.post("/v1/personas/generate", status_code=status.HTTP_201_CREATED)
+async def persona_generate(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """AI-генерация персоны для аккаунта."""
+    body = await request.json()
+    account_id = int(body.get("account_id", 0))
+    if not account_id:
+        raise HTTPException(status_code=400, detail="account_id_required")
+    country = str(body.get("country", "RU"))[:4]
+    prompt = body.get("prompt")
+    auto_channels = bool(body.get("auto_channels", True))
+
+    from core.persona_engine import PersonaEngine
+    engine = PersonaEngine()
+    persona = await engine.generate_persona(
+        account_id=account_id,
+        tenant_id=tenant_context.tenant_id,
+        session=session,
+        country=country,
+        prompt=prompt,
+        auto_channels=auto_channels,
+    )
+    await session.commit()
+    return {"id": persona.id, "account_id": persona.account_id, "approved": persona.approved, "source": persona.source}
+
+
+@app.get("/v1/personas/{account_id}")
+async def persona_get(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить персону аккаунта."""
+    from core.persona_engine import PersonaEngine
+    engine = PersonaEngine()
+    persona = await engine.get_persona(account_id, tenant_context.tenant_id, session)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="persona_not_found")
+    return {
+        "id": persona.id, "account_id": persona.account_id,
+        "country": getattr(persona, "country", None), "city": persona.city,
+        "language_primary": persona.language_primary, "language_secondary": persona.language_secondary,
+        "age_range": persona.age_range, "gender": persona.gender, "occupation": persona.occupation,
+        "interests": persona.interests, "personality_traits": persona.personality_traits,
+        "preferred_channels": persona.preferred_channels, "emoji_set": persona.emoji_set,
+        "comment_style": persona.comment_style, "reply_probability": getattr(persona, "reply_probability", 0.15),
+        "timezone_offset": persona.timezone_offset, "wake_hour": persona.wake_hour, "sleep_hour": persona.sleep_hour,
+        "peak_hours": persona.peak_hours, "weekend_activity": getattr(persona, "weekend_activity", 0.6),
+        "source": persona.source, "approved": persona.approved,
+        "approved_at": persona.approved_at.isoformat() if persona.approved_at else None,
+    }
+
+
+@app.put("/v1/personas/{account_id}")
+async def persona_update(
+    account_id: int,
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Ручное редактирование персоны."""
+    body = await request.json()
+    from core.persona_engine import PersonaEngine
+    engine = PersonaEngine()
+    persona = await engine.update_persona(account_id, tenant_context.tenant_id, session, **body)
+    await session.commit()
+    return {"id": persona.id, "updated": True}
+
+
+@app.post("/v1/personas/{account_id}/approve")
+async def persona_approve(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Подтвердить персону."""
+    from core.persona_engine import PersonaEngine
+    engine = PersonaEngine()
+    persona = await engine.approve_persona(account_id, tenant_context.tenant_id, session)
+    await session.commit()
+    return {"id": persona.id, "approved": True, "approved_at": persona.approved_at.isoformat() if persona.approved_at else None}
+
+
+# ── Autonomous Warmup: Packaging Presets ─────────────────────────────
+
+@app.post("/v1/packaging", status_code=status.HTTP_201_CREATED)
+async def packaging_create(
+    request: Request,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Создать packaging preset."""
+    body = await request.json()
+    from storage.models import AccountPackagingPreset
+    preset = AccountPackagingPreset(
+        tenant_id=tenant_context.tenant_id,
+        account_id=body.get("account_id"),
+        display_name=body.get("display_name"),
+        bio=body.get("bio"),
+        avatar_path=body.get("avatar_path"),
+        username=body.get("username"),
+        channel_name=body.get("channel_name"),
+        channel_description=body.get("channel_description"),
+        channel_pin_text=body.get("channel_pin_text"),
+        source=body.get("source", "manual"),
+        status="draft",
+    )
+    session.add(preset)
+    await session.flush()
+    await session.commit()
+    return {"id": preset.id, "status": preset.status}
+
+
+@app.get("/v1/packaging/{account_id}")
+async def packaging_get(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить preset аккаунта."""
+    from storage.models import AccountPackagingPreset
+    stmt = select(AccountPackagingPreset).where(
+        AccountPackagingPreset.account_id == account_id,
+        AccountPackagingPreset.tenant_id == tenant_context.tenant_id,
+    ).order_by(AccountPackagingPreset.created_at.desc()).limit(1)
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="preset_not_found")
+    return {
+        "id": row.id, "account_id": row.account_id,
+        "display_name": row.display_name, "bio": row.bio,
+        "avatar_path": row.avatar_path, "username": row.username,
+        "channel_name": row.channel_name, "channel_description": row.channel_description,
+        "channel_pin_text": row.channel_pin_text,
+        "source": row.source, "status": row.status,
+        "apply_at": row.apply_at.isoformat() if row.apply_at else None,
+        "applied_at": row.applied_at.isoformat() if row.applied_at else None,
+        "apply_log": row.apply_log,
+    }
+
+
+@app.post("/v1/packaging/{preset_id}/approve")
+async def packaging_approve(
+    preset_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Подтвердить preset → status=ready."""
+    from storage.models import AccountPackagingPreset
+    stmt = select(AccountPackagingPreset).where(
+        AccountPackagingPreset.id == preset_id,
+        AccountPackagingPreset.tenant_id == tenant_context.tenant_id,
+    )
+    preset = (await session.execute(stmt)).scalar_one_or_none()
+    if preset is None:
+        raise HTTPException(status_code=404, detail="preset_not_found")
+    preset.status = "ready"
+    await session.commit()
+    return {"id": preset.id, "status": "ready"}
+
+
+# ── Autonomous Warmup: Scheduler Control ─────────────────────────────
+
+@app.get("/v1/scheduler/status")
+async def scheduler_status(
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Статус warmup scheduler."""
+    scheduler = app_state.get("warmup_scheduler")
+    if scheduler is None:
+        return {"running": False, "error": "scheduler_not_initialized"}
+    return scheduler.get_status()
+
+
+@app.post("/v1/scheduler/pause")
+async def scheduler_pause(
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Приостановить scheduler."""
+    scheduler = app_state.get("warmup_scheduler")
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="scheduler_not_initialized")
+    active = await scheduler.pause_all()
+    return {"paused": True, "active_sessions_remaining": active}
+
+
+@app.post("/v1/scheduler/resume")
+async def scheduler_resume(
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Возобновить scheduler."""
+    scheduler = app_state.get("warmup_scheduler")
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="scheduler_not_initialized")
+    await scheduler.resume()
+    return {"resumed": True}
+
+
+@app.post("/v1/scheduler/force/{account_id}")
+async def scheduler_force(
+    account_id: int,
+    _: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Принудительно запустить warmup-сессию для аккаунта."""
+    scheduler = app_state.get("warmup_scheduler")
+    if scheduler is None:
+        raise HTTPException(status_code=503, detail="scheduler_not_initialized")
+    result = await scheduler.force_session(account_id)
+    return result
+
+
+# ── Autonomous Warmup: Phase Management ──────────────────────────────
+
+@app.get("/v1/accounts/{account_id}/phase")
+async def account_phase_get(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Текущая фаза и информация."""
+    acct = (await session.execute(
+        select(Account).where(
+            Account.id == account_id,
+            Account.tenant_id == tenant_context.tenant_id,
+        )
+    )).scalar_one_or_none()
+    if acct is None:
+        raise HTTPException(status_code=404, detail="account_not_found")
+    return {
+        "account_id": acct.id,
+        "phone": acct.phone,
+        "warmup_phase": acct.warmup_phase or "STEALTH",
+        "warmup_day": acct.warmup_day or 0,
+        "next_session_at": acct.next_session_at.isoformat() if acct.next_session_at else None,
+        "health_status": acct.health_status,
+    }
+
+
+@app.get("/v1/accounts/{account_id}/phase/history")
+async def account_phase_history(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Timeline переходов между фазами."""
+    from storage.models import AccountPhaseHistory
+    stmt = select(AccountPhaseHistory).where(
+        AccountPhaseHistory.account_id == account_id,
+        AccountPhaseHistory.tenant_id == tenant_context.tenant_id,
+    ).order_by(AccountPhaseHistory.created_at.desc()).limit(100)
+    rows = (await session.execute(stmt)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "phase_from": r.phase_from,
+                "phase_to": r.phase_to,
+                "reason": r.reason,
+                "health_at_transition": r.health_at_transition,
+                "triggered_by": r.triggered_by,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/v1/accounts/{account_id}/phase/rollback")
+async def account_phase_rollback(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Ручной откат на фазу ниже."""
+    from core.phase_controller import PhaseController
+    pc = PhaseController()
+    result = await pc.handle_incident(
+        account_id=account_id,
+        tenant_id=tenant_context.tenant_id,
+        incident_type="manual_rollback",
+        flood_wait_seconds=None,
+        session=session,
+    )
+    await session.commit()
+    return result
 
 
 if __name__ == "__main__":
