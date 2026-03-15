@@ -220,6 +220,10 @@ class Account(Base):
     warmup_mode = Column(String(20), nullable=True)     # conservative, moderate, aggressive
     created_at = Column(DateTime, default=utcnow)
     last_active_at = Column(DateTime, nullable=True)
+    # Sprint 43: Autonomous warmup phase tracking
+    warmup_phase = Column(String(30), server_default="STEALTH")
+    warmup_day = Column(Integer, server_default="0", default=0)
+    next_session_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="accounts")
     proxy = relationship("Proxy", back_populates="accounts")
@@ -1123,6 +1127,25 @@ class AccountActivityLog(Base):
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(String(500), nullable=True)
     details = Column(JSONType, nullable=True)  # action-specific payload
+    created_at = Column(DateTime, default=utcnow)
+
+
+class AccountPhaseHistory(Base):
+    """История переходов между фазами прогрева аккаунта."""
+    __tablename__ = "account_phase_history"
+    __table_args__ = (
+        Index("ix_phase_history_tenant_id", "tenant_id"),
+        Index("ix_phase_history_account_created", "account_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    phase_from = Column(String(30), nullable=True)
+    phase_to = Column(String(30), nullable=False)
+    reason = Column(String(100), nullable=True)
+    health_at_transition = Column(Integer, nullable=True)
+    triggered_by = Column(String(30), nullable=True)
     created_at = Column(DateTime, default=utcnow)
 
 
@@ -2394,6 +2417,96 @@ class ScalingHistory(Base):
     was_health_gated = Column(Boolean, server_default="false")
     was_antifraud_gated = Column(Boolean, server_default="false")
     recorded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccountPersona(Base):
+    """AI-сгенерированная персона Telegram-аккаунта для автономного прогрева."""
+    __tablename__ = "account_personas"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "account_id", name="uq_account_personas_tenant_account"),
+        Index("ix_account_personas_tenant_id", "tenant_id"),
+        Index("ix_account_personas_account_id", "account_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+
+    # Демографика
+    country = Column(String(4), nullable=True)
+    city = Column(String(128), nullable=True)
+    language_primary = Column(String(10), default="ru")
+    language_secondary = Column(String(10), nullable=True)
+    age_range = Column(String(20), nullable=True)       # "25-34"
+    gender = Column(String(10), nullable=True)           # male, female, neutral
+    occupation = Column(String(200), nullable=True)
+
+    # Интересы и личность
+    interests = Column(JSONType, nullable=True)          # list[str]
+    personality_traits = Column(JSONType, nullable=True) # list[str]
+    emoji_set = Column(JSONType, nullable=True)          # list[str] — 5-7 эмодзи
+
+    # Стиль комментирования
+    comment_style = Column(String(200), nullable=True)
+    reply_probability = Column(Float, default=0.15)      # шанс ответить на чей-то коммент
+
+    # Расписание активности
+    wake_hour = Column(Integer, default=8)               # 0-23
+    sleep_hour = Column(Integer, default=23)             # 0-23
+    peak_hours = Column(JSONType, nullable=True)         # list[int] — 4 часа пиковой активности
+    timezone_offset = Column(Integer, default=3)         # UTC+N
+    weekend_activity = Column(Float, default=0.6)        # множитель активности в выходные
+
+    # Каналы
+    preferred_channels = Column(JSONType, nullable=True) # list[str] — usernames
+
+    # Источник и статус
+    source = Column(String(32), default="ai_generated")  # ai_generated, manual, hybrid
+    generated_by = Column(String(50), nullable=True)     # модель AI
+    persona_prompt = Column(Text, nullable=True)         # промпт для генерации
+    approved = Column(Boolean, default=False)
+    approved_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class AccountPackagingPreset(Base):
+    """Preset для упаковки аккаунта: имя, аватар, bio, канал. Применяется на день 4 warmup."""
+    __tablename__ = "account_packaging_presets"
+    __table_args__ = (
+        Index("ix_packaging_presets_tenant_id", "tenant_id"),
+        Index("ix_packaging_presets_account_status", "account_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+
+    # Профиль
+    display_name = Column(String(70), nullable=True)
+    bio = Column(String(150), nullable=True)
+    avatar_path = Column(String(500), nullable=True)
+    username = Column(String(32), nullable=True)
+
+    # Канал
+    channel_name = Column(String(255), nullable=True)
+    channel_description = Column(Text, nullable=True)
+    channel_pin_text = Column(Text, nullable=True)
+
+    # Мета
+    source = Column(String(20), default="manual")       # manual, ai_generated, template
+    status = Column(String(20), default="draft")         # draft, ready, scheduled, applied, failed
+    apply_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    apply_log = Column(JSONType, nullable=True)          # [{step, scheduled_at, done, done_at, error}]
+
+    # AI генерация
+    persona_prompt = Column(Text, nullable=True)
+    generation_params = Column(JSONType, nullable=True)
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class ModuleThroughput(Base):
