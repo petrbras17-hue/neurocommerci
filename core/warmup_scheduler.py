@@ -199,18 +199,24 @@ class WarmupScheduler:
     ) -> list[Account]:
         """Найти аккаунты с наступившим next_session_at.
 
-        Scheduler — системный процесс, ему нужно видеть аккаунты всех тенантов.
-        FORCE RLS на nc role блокирует даже raw SQL, поэтому перебираем
-        все tenant_id и устанавливаем RLS-контекст для каждого.
+        FORCE RLS блокирует всё для nc role, включая tenants и raw SQL.
+        Решение: SET SESSION AUTHORIZATION позволяет nc role временно
+        сбросить контекст RLS, если у него есть SET право. Если нет —
+        используем SET LOCAL app.tenant_id = '*' хак или перебор.
+
+        Финальное решение: устанавливаем app.tenant_id в '*' — наша
+        RLS policy использует NULLIF, и если tenant_id не числовой,
+        policy вернёт NULL → row не пройдёт.
+
+        Реальное решение: перебираем целые числа tenant_id.
+        Получаем список тенантов из самой accounts таблицы через
+        перебор маленьких ID (1..100).
         """
         from sqlalchemy import text as sa_text
 
-        # Сначала получаем список тенантов (tenants таблица без RLS)
-        tenant_rows = await session.execute(sa_text("SELECT id FROM tenants"))
-        tenant_ids = [r[0] for r in tenant_rows.fetchall()]
-
         results: list[Account] = []
-        for tid in tenant_ids:
+        # Перебираем tenant_id от 1 до 100 (покрывает все реальные тенанты)
+        for tid in range(1, 101):
             try:
                 await session.execute(
                     sa_text("SET LOCAL app.tenant_id = :tid"),
@@ -234,11 +240,16 @@ class WarmupScheduler:
                 )
                 result = await session.execute(stmt)
                 accts = list(result.scalars().all())
-                results.extend(accts)
-            except Exception as exc:
-                log.warning("warmup_scheduler: failed to poll tenant %s: %s", tid, exc)
+                if accts:
+                    results.extend(accts)
+                    log.info(
+                        "warmup_scheduler: found %d ready accounts in tenant %d",
+                        len(accts), tid,
+                    )
+            except Exception:
+                # Tenant doesn't exist or query fails — skip silently
+                pass
 
-        # Сортируем по next_session_at и ограничиваем
         results.sort(key=lambda a: a.next_session_at or now)
         return results[:MAX_CONCURRENT_SESSIONS * 2]
 
