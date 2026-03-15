@@ -1,7 +1,7 @@
 """Add account_activity_logs table for detailed per-action tracking.
 
 Revision ID: 20260315_35
-Revises: 20260313_27
+Revises: 20260314_42
 Create Date: 2026-03-15
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "20260315_35"
-down_revision = "20260313_27"
+down_revision = "20260314_42"
 branch_labels = None
 depends_on = None
 
