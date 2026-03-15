@@ -271,50 +271,45 @@ class WarmupScheduler:
         """Выполнить одну warmup-сессию для аккаунта."""
         async with self._db_session_factory() as session:
             async with session.begin():
-                # Установить RLS-контекст для tenant
+                # Установить RLS-контекст для tenant (literal, asyncpg не поддерживает параметры)
                 from sqlalchemy import text as sa_text
                 await session.execute(
                     sa_text(f"SET LOCAL app.tenant_id = '{int(tenant_id)}'"),
                 )
                 # Загружаем аккаунт и персону
                 acct = await session.get(Account, account_id)
-            if acct is None:
-                return
+                if acct is None:
+                    return
 
-            # Загружаем персону
-            persona_stmt = select(AccountPersona).where(
-                AccountPersona.account_id == account_id
-            )
-            persona_result = await session.execute(persona_stmt)
-            persona = persona_result.scalar_one_or_none()
-
-            if persona is None or not persona.approved:
-                # Нет одобренной персоны — алерт и пропуск
-                log.warning(
-                    "warmup_scheduler: account %s has no approved persona, skipping",
-                    account_id,
+                # Загружаем персону
+                persona_stmt = select(AccountPersona).where(
+                    AccountPersona.account_id == account_id
                 )
-                # Отложить на 6 часов
-                acct.next_session_at = utcnow() + timedelta(hours=6)
-                await session.commit()
-                return
+                persona_result = await session.execute(persona_stmt)
+                persona = persona_result.scalar_one_or_none()
 
-            # 1. Определяем тип сессии
-            session_type = self._roll_session_type()
-            log.info(
-                "warmup_scheduler: account %s phase=%s day=%s session_type=%s",
-                account_id, acct.warmup_phase, acct.warmup_day, session_type,
-            )
+                if persona is None or not persona.approved:
+                    log.warning(
+                        "warmup_scheduler: account %s has no approved persona, skipping",
+                        account_id,
+                    )
+                    acct.next_session_at = utcnow() + timedelta(hours=6)
+                    return  # begin() auto-commits
 
-            if session_type == "skip":
-                # Аккаунт "не открыл Telegram"
-                await self._log_activity(
-                    session, tenant_id, account_id,
-                    "warmup_skip", True, details={"reason": "lazy_session"},
+                # 1. Определяем тип сессии
+                session_type = self._roll_session_type()
+                log.info(
+                    "warmup_scheduler: account %s phase=%s day=%s session_type=%s",
+                    account_id, acct.warmup_phase, acct.warmup_day, session_type,
                 )
-                await self._schedule_next(session, acct, persona)
-                await session.commit()
-                return
+
+                if session_type == "skip":
+                    await self._log_activity(
+                        session, tenant_id, account_id,
+                        "warmup_skip", True, details={"reason": "lazy_session"},
+                    )
+                    await self._schedule_next(session, acct, persona)
+                    return  # begin() auto-commits
 
             # 2. Проверяем фазу PACKAGING
             if acct.warmup_phase == "PACKAGING":
@@ -322,35 +317,35 @@ class WarmupScheduler:
                 await session.commit()
                 return
 
-            # 3. Получаем лимиты действий от PhaseController
-            health_score = 100
-            health_stmt = select(AccountHealthScore).where(
-                AccountHealthScore.account_id == account_id
-            )
-            health_result = await session.execute(health_stmt)
-            health_row = health_result.scalar_one_or_none()
-            if health_row:
-                health_score = health_row.health_score or 100
+                # 3. Получаем лимиты действий от PhaseController
+                health_score = 100
+                health_stmt = select(AccountHealthScore).where(
+                    AccountHealthScore.account_id == account_id
+                )
+                health_result = await session.execute(health_stmt)
+                health_row = health_result.scalar_one_or_none()
+                if health_row:
+                    health_score = health_row.health_score or 100
 
-            action_limits = {}
-            if self._phase_controller:
-                action_limits = self._phase_controller.get_action_limits(
-                    acct.warmup_phase or "STEALTH", health_score
+                action_limits = {}
+                if self._phase_controller:
+                    action_limits = self._phase_controller.get_action_limits(
+                        acct.warmup_phase or "STEALTH", health_score
+                    )
+
+                # 4. Выполняем действия warmup
+                actions_done = await self._do_warmup_actions(
+                    session, acct, persona, session_type, action_limits, tenant_id,
                 )
 
-            # 4. Выполняем действия warmup
-            actions_done = await self._do_warmup_actions(
-                session, acct, persona, session_type, action_limits, tenant_id,
-            )
+                # 5. Планируем следующую сессию
+                await self._schedule_next(session, acct, persona)
 
-            # 5. Планируем следующую сессию
-            await self._schedule_next(session, acct, persona)
-
-            log.info(
-                "warmup_scheduler: account %s session complete, actions=%d, next=%s",
-                account_id, actions_done, acct.next_session_at,
-            )
-            await session.commit()
+                log.info(
+                    "warmup_scheduler: account %s session complete, actions=%d, next=%s",
+                    account_id, actions_done, acct.next_session_at,
+                )
+                # begin() auto-commits on exit
 
     async def _do_warmup_actions(
         self,
