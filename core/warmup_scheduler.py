@@ -217,8 +217,7 @@ class WarmupScheduler:
         for tid in range(1, 101):
             try:
                 await session.execute(
-                    sa_text("SET LOCAL app.tenant_id = :tid"),
-                    {"tid": str(tid)},
+                    sa_text(f"SET LOCAL app.tenant_id = '{int(tid)}'"),
                 )
                 stmt = (
                     select(Account)
@@ -275,8 +274,7 @@ class WarmupScheduler:
                 # Установить RLS-контекст для tenant
                 from sqlalchemy import text as sa_text
                 await session.execute(
-                    sa_text("SET LOCAL app.tenant_id = :tid"),
-                    {"tid": str(tenant_id)},
+                    sa_text(f"SET LOCAL app.tenant_id = '{int(tenant_id)}'"),
                 )
                 # Загружаем аккаунт и персону
                 acct = await session.get(Account, account_id)
