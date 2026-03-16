@@ -1,7 +1,7 @@
 # Sprint 3/4 Live Audit
 
 Date: 2026-03-10  
-Environment: VPS `176.124.221.253`, public domain `https://176-124-221-253.sslip.io`  
+Environment: VPS `176.124.221.253`, public domain `https://neurocommenting.com`  
 Branch: `sprint/3-telegram-first-auth-shell`  
 Latest live-audit commits:
 - `b38bb86` — assistant digest integration
@@ -43,7 +43,7 @@ Public routes return `200`:
 - `/app/context`
 - `/app/creative`
 
-Verified through browser automation on the public `sslip.io` domain.
+Verified through browser automation on the public domain.
 
 ### 2. Telegram-first auth
 

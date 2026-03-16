@@ -19,7 +19,7 @@
 | YooKassa интеграция | Код готов, нужны prod-ключи |
 | Stripe интеграция | Код готов, нужны prod-ключи |
 | Живой аккаунт KZ в автономном прогреве | Активен |
-| Домен | sslip.io (нужен боевой домен) |
+| Домен | neurocommenting.com (нужен боевой домен) |
 
 ### Блокеры до публичного запуска
 
@@ -418,7 +418,7 @@ Trial активация     →  30% конверсия   →  Первый з�
 | Telegram банит аккаунты массово | Высокая | HIGH | Conservative warmup mode по умолчанию, автоматический quarantine, запас аккаунтов x2 |
 | БД переполняется | Низкая | HIGH | Мониторинг disk usage, pg_dump cron бэкап, VACUUM ANALYZE |
 | YooKassa модерация затянется | Средняя | HIGH | Подать заявку за 2 недели, fallback: ручные платежи через бот первые дни |
-| SSL/домен проблемы | Низкая | MEDIUM | Certbot auto-renew, sslip.io как fallback |
+| SSL/домен проблемы | Низкая | MEDIUM | Certbot auto-renew, neurocommenting.com как fallback |
 
 ### Бизнес-риски
 

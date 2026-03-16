@@ -5,8 +5,8 @@ Status: Active execution
 
 ## Site Access
 
-- **Public URL**: https://176-124-221-253.sslip.io/
-- **App URL**: https://176-124-221-253.sslip.io/app
+- **Public URL**: https://neurocommenting.com/
+- **App URL**: https://neurocommenting.com/app
 - **VPS**: 176.124.221.253 (user: deploy, path: /opt/neuro-commenting)
 - **nginx**: SSL via Let's Encrypt, proxies 443 -> 127.0.0.1:8081
 - **Direct port 8081**: NOT accessible externally (127.0.0.1 only)
@@ -25,7 +25,7 @@ Status: Active execution
 **Goal**: Make every feature work perfectly, test on DartVPN bot
 
 Tasks:
-1. Fix Telegram Login Widget (BotFather /setdomain for 176-124-221-253.sslip.io)
+1. Fix Telegram Login Widget (BotFather /setdomain for neurocommenting.com)
 2. Test full auth flow: login -> dashboard -> accounts -> assistant -> creative
 3. Test account upload: .session + .json pair
 4. Test proxy binding
@@ -113,7 +113,7 @@ Tasks:
 
 ### Needed for production:
 - Sentry DSN
-- Custom domain (optional, sslip.io works for now)
+- Custom domain: neurocommenting.com (configured)
 
 ## Architecture Quick Reference
 

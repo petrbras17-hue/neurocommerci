@@ -14,8 +14,8 @@ Comprehensive operations toolkit for the NEURO COMMENTING platform.
 - **VPS Host**: `176.124.221.253`
 - **SSH User**: `deploy`
 - **Project Path**: `/opt/neuro-commenting`
-- **Public URL**: `https://176-124-221-253.sslip.io/`
-- **App URL**: `https://176-124-221-253.sslip.io/app`
+- **Public URL**: `https://neurocommenting.com/`
+- **App URL**: `https://neurocommenting.com/app`
 - **Services**: `db`, `redis`, `ops_api`, `bot`
 - **Branch**: `main`
 - **DB User**: `nc` (NOSUPERUSER, NOBYPASSRLS)
@@ -26,7 +26,7 @@ Comprehensive operations toolkit for the NEURO COMMENTING platform.
 ### 1. VPS Health Check
 
 ```bash
-ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose ps && echo '---' && curl -sk https://176-124-221-253.sslip.io/health"
+ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose ps && echo '---' && curl -sk https://neurocommenting.com/health"
 ```
 
 ### 2. Full Service Status
@@ -118,7 +118,7 @@ ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose exec -T d
 ### Standard Deploy (Pull + Migrate + Restart)
 
 ```bash
-ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && git pull origin main && docker compose exec -T ops_api alembic upgrade head && docker compose restart ops_api && echo '--- HEALTH ---' && sleep 3 && curl -sk https://176-124-221-253.sslip.io/health"
+ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && git pull origin main && docker compose exec -T ops_api alembic upgrade head && docker compose restart ops_api && echo '--- HEALTH ---' && sleep 3 && curl -sk https://neurocommenting.com/health"
 ```
 
 ### Frontend Rebuild + Deploy
@@ -130,7 +130,7 @@ ssh deploy@176.124.221.253 "cd /opt/neuro-commenting/frontend && npm install && 
 ### Full Restart (All Services)
 
 ```bash
-ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose down && docker compose up -d db redis && sleep 5 && docker compose up -d ops_api bot && sleep 3 && docker compose ps && curl -sk https://176-124-221-253.sslip.io/health"
+ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose down && docker compose up -d db redis && sleep 5 && docker compose up -d ops_api bot && sleep 3 && docker compose ps && curl -sk https://neurocommenting.com/health"
 ```
 
 ### Rollback to Specific Commit
@@ -297,7 +297,7 @@ ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose exec -T d
 ### Quick Smoke (Core Endpoints)
 
 ```bash
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 echo "=== Health ===" && curl -sk "$VPS/health" | python3 -m json.tool
 echo "=== Landing ===" && curl -sk -o /dev/null -w "%{http_code}" "$VPS/"
 echo "=== App ===" && curl -sk -o /dev/null -w "%{http_code}" "$VPS/app"
@@ -310,7 +310,7 @@ echo "=== Channel Map ===" && curl -sk -o /dev/null -w "%{http_code}" "$VPS/v1/c
 ```bash
 # First get a token via /auth/login, then:
 TOKEN="<your-jwt>"
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 curl -sk -H "Authorization: Bearer $TOKEN" "$VPS/auth/me" | python3 -m json.tool
 curl -sk -H "Authorization: Bearer $TOKEN" "$VPS/v1/web/accounts" | python3 -m json.tool
 curl -sk -H "Authorization: Bearer $TOKEN" "$VPS/v1/warmup/configs" | python3 -m json.tool

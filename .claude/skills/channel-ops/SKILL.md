@@ -172,7 +172,7 @@ ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && docker compose exec -T d
 ```bash
 # Requires JWT token
 TOKEN="<your-jwt>"
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 curl -sk -X POST "$VPS/v1/parser/channels" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -184,7 +184,7 @@ curl -sk -X POST "$VPS/v1/parser/channels" \
 ```bash
 # Replace JOB_ID with actual job ID
 TOKEN="<your-jwt>"
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 curl -sk "$VPS/v1/parser/jobs/JOB_ID" \
   -H "Authorization: Bearer $TOKEN" | python3 -m json.tool
 ```
@@ -262,7 +262,7 @@ SELECT username FROM channel_map_entries WHERE username IS NOT NULL ORDER BY sub
 ```bash
 # Single channel classification
 TOKEN="<your-jwt>"
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 curl -sk -X POST "$VPS/v1/channel-map/classify" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -273,7 +273,7 @@ curl -sk -X POST "$VPS/v1/channel-map/classify" \
 
 ```bash
 TOKEN="<your-jwt>"
-VPS="https://176-124-221-253.sslip.io"
+VPS="https://neurocommenting.com"
 curl -sk -X POST "$VPS/v1/channel-map/classify/batch" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \

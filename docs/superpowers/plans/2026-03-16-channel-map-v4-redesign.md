@@ -386,7 +386,7 @@ The issue: CategoryAccordion reads from `/v1/channel-map/categories` which retur
 ```bash
 ssh deploy@176.124.221.253 "cd /opt/neuro-commenting && git pull origin main && docker compose build ops_api && docker compose up -d ops_api"
 ```
-- [ ] **Step 4: Verify at https://176-124-221-253.sslip.io/app/channel-map**
+- [ ] **Step 4: Verify at https://neurocommenting.com/app/channel-map**
 - [ ] **Step 5: Take screenshot and compare with before**
 
 ---

@@ -43,7 +43,7 @@ def is_valid_email(email: str) -> bool:
 # HTML template builder helpers
 # ---------------------------------------------------------------------------
 
-_DOMAIN = "176-124-221-253.sslip.io"
+_DOMAIN = "neurocommenting.com"
 
 
 def _html_wrap(subject: str, body_html: str) -> str:

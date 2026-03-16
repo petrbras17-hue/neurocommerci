@@ -7,16 +7,16 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `8686404` |
+| Last committed HEAD | `3b0db09` |
 | VPS safe branch | `main` |
-| VPS safe commit | `8686404` |
+| VPS safe commit | `3b0db09` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 27 (Live Testing + KZ Account Warmup)` |
-| Next planned sprint | `Sprint 28 (Global Channel Map + Parallel Audit)` |
-| Public URL | `https://176-124-221-253.sslip.io/` |
+| Current completed sprint | `Sprint 31 (Referral + Lead Scoring)` |
+| Next planned sprint | `Sprint 32 (Docker rebuild + VPS full sync)` |
+| Public URL | `https://neurocommenting.com/` |
 
 ## Delivery Ledger
 
@@ -88,6 +88,10 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | 2026-03-16 | Sprint 25 Autonomous Warmup | `main` | `c082218` | Autonomous Warmup System | Added 5 new core modules (WarmupScheduler, PhaseController, PersonaEngine, PackagingPipeline, AlertService), Alembic migration 20260316_43, 12 new API endpoints, scheduler lifespan integration, 7 warmup phases, AI persona generation, packaging pipeline, Telegram bot alerts. | Green | Green | Deploy done. |
 
 | 2026-03-16 | Sprint 26 VPS Deploy + Sync | `main` | `1d55d18` | Full VPS sync + DB repair | Pushed all commits to VPS (e0d950a→1d55d18). Fixed billing_payments handler crash. Repaired missing DB columns (warmup_configs: 8 cols, warmup_sessions: 6 cols) and tables (comment_blacklists, comment_whitelists) that were stamp-skipped during mass migration. Applied RLS policies. WarmupScheduler running=true (10 slots, 60s poll). Health OK, warmup/billing/accounts endpoints verified. 509 tests pass, 0 failures. | Green | Green | Upload KZ account session + create persona + start autonomous warmup. |
+
+| 2026-03-16 | Content Factory | `main` | `working-tree` | Multi-platform content repurposing engine | Added core/content_factory.py (ContentFactory class + ContentPack dataclass): трансформирует 1 источник в 6 форматов параллельно (asyncio.gather) — Telegram Markdown, Twitter/X тред 5-10 твитов, LinkedIn 1300-2000 символов, YouTube SEO-описание, 5 идей для Reels/Shorts, Email {subject+body+cta}. 5 голосов бренда (professional/casual/bold/educational/storytelling). Добавлен task_type="content_factory" в DEFAULT_TASK_POLICIES + TASK_MODEL_AFFINITY ai_router.py (worker tier, affinity: claude-haiku, gpt-4.1-mini, gemini-2.5-flash). 2 API эндпоинта: POST /v1/content/generate + GET /v1/content/templates. Все 3 файла компилируются, 13 тестов проходят. | Green | Not deployed | Restart ops_api на VPS (миграции не требуются — нет новых таблиц). |
+
+| 2026-03-16 | Channel Map v4 Chunk 4 | `main` | `working-tree` | Backend optimization — Tasks 10+11 | Fixed /v1/channel-map/categories: теперь возвращает count + display_name (русское название) + color для каждой категории (33 категории, _CATEGORY_DISPLAY_NAMES + _CATEGORY_COLORS словари). Добавлен GET /v1/channel-map/geo-clusters: 3 режима по zoom (2-5 = страны GROUP BY region, 6-9 = город 0.5° сетка, 10+ = индивидуальные каналы LIMIT 500), Redis-кэш 60 сек через CacheService. Улучшен GET /v1/channel-map/viewport: avatar_url, display_name, verified, region в ответе; min_subscribers + min_members (обратная совместимость), limit default 200 (было 10), max 500. Добавлен GET /v1/channel-map/countries: distinct регионы с count + display_name из _REGION_LABELS (55 стран). Rate limiting 60/min/tenant на всех новых эндпоинтах. py_compile OK, 13 тестов pass, 0 failures. | Green | Not deployed | Restart ops_api на VPS (миграции не требуются). |
 
 ## Update Rules
 

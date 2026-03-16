@@ -1363,7 +1363,7 @@ async def cmd_start(message: Message, db_user: User = None):
             message.from_user.first_name,
         )
 
-    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+    domain = settings.PUBLIC_DOMAIN or "neurocommenting.com"
 
     # Build platform inline keyboard (shown in both branches)
     platform_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -1437,7 +1437,7 @@ async def cmd_platform(message: Message, db_user: User = None):
             message.from_user.first_name,
         )
 
-    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+    domain = settings.PUBLIC_DOMAIN or "neurocommenting.com"
 
     # Gather account count for this user
     accounts = await account_mgr.load_accounts(user_id=_tenant_read_scope_user_id(db_user))
@@ -1473,7 +1473,7 @@ async def cmd_platform(message: Message, db_user: User = None):
 @router.message(Command("billing"))
 async def cmd_billing(message: Message, db_user: User = None):
     """Быстрый доступ к оплате и тарифам."""
-    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+    domain = settings.PUBLIC_DOMAIN or "neurocommenting.com"
 
     billing_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Перейти к оплате", url=f"https://{domain}/app/billing")],
@@ -1492,7 +1492,7 @@ async def cmd_billing(message: Message, db_user: User = None):
 async def cb_help_support(callback: CallbackQuery, db_user: User = None):
     """Показать контактную информацию поддержки."""
     await callback.answer()
-    domain = settings.PUBLIC_DOMAIN or "176-124-221-253.sslip.io"
+    domain = settings.PUBLIC_DOMAIN or "neurocommenting.com"
     await callback.message.answer(
         "📞 <b>Поддержка NEURO COMMENTING</b>\n\n"
         "Если у вас возникли вопросы или проблемы:\n\n"

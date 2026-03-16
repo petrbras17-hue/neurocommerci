@@ -12,7 +12,7 @@ Last updated: 2026-03-11
 ## Текущее состояние
 
 - VPS: 176.124.221.253, nginx + Let's Encrypt SSL
-- Домен: https://176-124-221-253.sslip.io/
+- Домен: https://neurocommenting.com/
 - Лендинг `/` — старый GPT-5.4 лендинг (нужно переделать)
 - Платформа `/app` — Dark Terminal дизайн, 15+ страниц React
 - Backend: FastAPI + PostgreSQL + Redis, все миграции применены
@@ -34,7 +34,7 @@ Last updated: 2026-03-11
 **Приоритет**: Сделать платформу рабочей + переделать лендинг
 
 #### 6A: Telegram Login Widget
-- BotFather `/setdomain` для `176-124-221-253.sslip.io`
+- BotFather `/setdomain` для `neurocommenting.com`
 - Проверить что Telegram Login Widget рендерится в `/app/login`
 - Полный auth flow: login → dashboard → /auth/me возвращает данные
 - Если widget не работает — fallback на ручной ввод telegram_id для тестирования
@@ -178,7 +178,7 @@ docker compose exec ops_api python -c "from alembic.config import Config; from a
 - GOOGLE_SHEETS_CREDENTIALS_FILE (проверить наличие)
 
 ### Нужно от основателя
-- [ ] BotFather /setdomain → 176-124-221-253.sslip.io
+- [ ] BotFather /setdomain → neurocommenting.com
 - [ ] Подтвердить что Telegram Login Widget работает
 - [ ] Предоставить текст для нового лендинга (или разрешить AI генерацию)
 - [ ] YooKassa credentials (для Sprint 10, не сейчас)

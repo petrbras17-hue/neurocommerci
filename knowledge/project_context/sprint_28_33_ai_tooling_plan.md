@@ -5,7 +5,7 @@
 Дата создания: 2026-03-16
 Ответственный: Claude Code Scrum Master
 Базовый коммит: `8686404` (main)
-VPS: `https://176-124-221-253.sslip.io/`
+VPS: `https://neurocommenting.com/`
 
 ---
 
@@ -918,7 +918,7 @@ name: vps-e2e
 description: "Run E2E smoke test against live VPS via Playwright"
 ---
 
-Run the E2E smoke test against the live VPS at https://176-124-221-253.sslip.io/
+Run the E2E smoke test against the live VPS at https://neurocommenting.com/
 
 Same as /e2e-smoke but targeting production URL.
 IMPORTANT: Do NOT run write operations (POST/PUT/DELETE) against VPS.

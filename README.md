@@ -111,7 +111,7 @@ Telegram Login Widget note:
 
 - before production use, configure BotFather:
   - `/setdomain`
-  - `176-124-221-253.sslip.io`
+  - `neurocommenting.com`
 - local `127.0.0.1` development falls back to a helpful widget notice instead of rendering the widget iframe
 
 Frontend local development:

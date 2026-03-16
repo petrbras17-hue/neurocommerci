@@ -1,8 +1,8 @@
 # SEO-аудит NEURO COMMENTING
 
 Дата аудита: 2026-03-16
-URL: https://176-124-221-253.sslip.io/
-Текущий домен: sslip.io (временный wildcard DNS)
+URL: https://neurocommenting.com/
+Текущий домен: neurocommenting.com
 
 ---
 
@@ -110,8 +110,8 @@ URL: https://176-124-221-253.sslip.io/
 
 ### 2.1 Домен
 
-**КРИТИЧЕСКАЯ ПРОБЛЕМА:** Сайт работает на `176-124-221-253.sslip.io` -- wildcard DNS-сервис.
-- Поисковые системы не будут индексировать sslip.io-поддомены серьезно
+**КРИТИЧЕСКАЯ ПРОБЛЕМА:** Сайт работает на `neurocommenting.com` -- wildcard DNS-сервис.
+- Поисковые системы ранее не индексировали sslip.io-поддомены (теперь на neurocommenting.com)
 - Нет собственного домена = невозможно строить авторитет
 - Backlinks бесполезны на временном домене
 - Google может расценить как подозрительный сайт
@@ -194,7 +194,7 @@ Sitemap: https://neurocommenting.ru/sitemap.xml
 
 ### 2.6 SSL / HTTPS
 
-- HTTPS через sslip.io wildcard-сертификат -- работает
+- HTTPS через Let's Encrypt / Cloudflare на neurocommenting.com
 - HTTPS-redirect настроен в middleware (`_request_is_secure`)
 - На собственном домене нужен будет Let's Encrypt / Cloudflare
 

@@ -1624,7 +1624,7 @@ app.mount(
 _ALLOWED_HOSTS: set[str] = set()
 if hasattr(settings, "PUBLIC_DOMAIN") and settings.PUBLIC_DOMAIN:
     _ALLOWED_HOSTS.add(settings.PUBLIC_DOMAIN)
-_ALLOWED_HOSTS.update({"localhost", "127.0.0.1", "176-124-221-253.sslip.io"})
+_ALLOWED_HOSTS.update({"localhost", "127.0.0.1", "neurocommenting.com", "www.neurocommenting.com"})
 
 
 def _safe_host(request: Request) -> tuple[str, str]:

@@ -900,7 +900,7 @@ EdTech-проект из Казахстана. 3 аккаунта, Pro план,
 | Переменная | Описание |
 |-----------|----------|
 | `{{name}}` | Имя пользователя |
-| `{{app_url}}` | URL платформы (https://176-124-221-253.sslip.io) |
+| `{{app_url}}` | URL платформы (https://neurocommenting.com) |
 | `{{trial_days_left}}` | Дней до конца trial |
 | `{{total_comments}}` | Всего комментариев за trial |
 | `{{total_channels}}` | Каналов обработано |

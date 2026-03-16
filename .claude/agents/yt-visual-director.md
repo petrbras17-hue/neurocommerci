@@ -36,4 +36,4 @@
 ## Контекст проекта
 
 Dark Terminal дизайн: #0a0a0b bg, #00ff88 accent, Geist Sans + JetBrains Mono.
-Для скриншотов продукта: https://176-124-221-253.sslip.io/app
+Для скриншотов продукта: https://neurocommenting.com/app
