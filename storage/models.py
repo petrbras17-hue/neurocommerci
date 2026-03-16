@@ -1427,6 +1427,36 @@ class ChannelMapEntry(Base):
     lat = Column(Float, nullable=True)                   # Latitude for globe placement
     lng = Column(Float, nullable=True)                   # Longitude for globe placement
     created_at = Column(DateTime, default=utcnow)
+    # Sprint 28 enrichment columns
+    avatar_url = Column(String(500), nullable=True)
+    last_post_content = Column(Text, nullable=True)
+    last_post_date = Column(DateTime, nullable=True)
+    last_post_views = Column(Integer, nullable=True)
+    last_post_media_type = Column(String(50), nullable=True)  # photo, video, document, none
+    growth_rate_7d = Column(Float, nullable=True)        # % change in subscribers over 7 days
+    growth_rate_30d = Column(Float, nullable=True)       # % change in subscribers over 30 days
+
+
+class SubscriberSnapshot(Base):
+    """Ежедневный снимок аудитории канала для отслеживания динамики роста."""
+    __tablename__ = "subscriber_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    channel_id = Column(
+        Integer,
+        ForeignKey("channel_map_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    date = Column(Date, nullable=False)
+    subscriber_count = Column(Integer, nullable=False, default=0)
+    avg_post_reach = Column(Integer, nullable=True)
+    engagement_rate = Column(Float, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("channel_id", "date", name="uq_subscriber_snapshot_channel_date"),
+        Index("ix_ss_channel_date", "channel_id", "date"),
+    )
 
 
 class Campaign(Base):

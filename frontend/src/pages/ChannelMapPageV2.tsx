@@ -201,6 +201,15 @@ export default function ChannelMapPageV2() {
     [data],
   );
 
+  // ── Language/Region filter from DiscoveryPanel ────────────────────────
+  const handleDiscoveryFilterChange = useCallback(
+    (language: string | null, region: string | null) => {
+      data.setSelectedLanguage(language);
+      data.setSelectedRegion(region);
+    },
+    [data],
+  );
+
   const handleChannelSelect = useCallback(
     (id: number, lat?: number, lng?: number) => {
       globe.setSelectedChannelId(id);
@@ -324,7 +333,10 @@ export default function ChannelMapPageV2() {
                 categories={data.categories ?? []}
                 stats={data.stats}
                 selectedCategory={data.selectedCategory}
+                selectedLanguage={data.selectedLanguage}
+                selectedRegion={data.selectedRegion}
                 onCategoryFilter={handleCategoryFilter}
+                onFilterChange={handleDiscoveryFilterChange}
                 onChannelSelect={handleChannelSelect}
                 geoPoints={data.geoPoints}
               />

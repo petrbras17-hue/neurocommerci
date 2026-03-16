@@ -23,6 +23,10 @@ export type UseChannelDataReturn = {
   error: string | null;
   selectedCategory: string | null;
   setSelectedCategory: (cat: string | null) => void;
+  selectedLanguage: string | null;
+  setSelectedLanguage: (lang: string | null) => void;
+  selectedRegion: string | null;
+  setSelectedRegion: (region: string | null) => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   searchResults: ChannelMapEntry[];
@@ -50,6 +54,8 @@ export function useChannelData(): UseChannelDataReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategoryRaw] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguageRaw] = useState<string | null>(null);
+  const [selectedRegion, setSelectedRegionRaw] = useState<string | null>(null);
 
   // Search state
   const [searchQuery, setSearchQueryRaw] = useState("");
@@ -66,7 +72,7 @@ export function useChannelData(): UseChannelDataReturn {
   // ── Primary fetch ──────────────────────────────────────────────────────────
 
   const fetchPrimary = useCallback(
-    async (category: string | null, signal: AbortSignal) => {
+    async (category: string | null, language: string | null, region: string | null, signal: AbortSignal) => {
       if (!token) return;
 
       setLoading(true);
@@ -74,7 +80,7 @@ export function useChannelData(): UseChannelDataReturn {
 
       try {
         const [geoResp, statsResp, catsResp] = await Promise.all([
-          channelMapApi.geo(token, GEO_LIMIT, category ?? undefined),
+          channelMapApi.geo(token, GEO_LIMIT, category ?? undefined, language ?? undefined, region ?? undefined),
           channelMapApi.stats(token),
           channelMapApi.categories(token),
         ]);
@@ -98,19 +104,19 @@ export function useChannelData(): UseChannelDataReturn {
     [token],
   );
 
-  // Trigger primary fetch on mount and when category changes
+  // Trigger primary fetch on mount and when category/language/region changes
   useEffect(() => {
     // Cancel any in-flight request
     primaryAbortRef.current?.abort();
     const controller = new AbortController();
     primaryAbortRef.current = controller;
 
-    fetchPrimary(selectedCategory, controller.signal);
+    fetchPrimary(selectedCategory, selectedLanguage, selectedRegion, controller.signal);
 
     return () => {
       controller.abort();
     };
-  }, [fetchPrimary, selectedCategory]);
+  }, [fetchPrimary, selectedCategory, selectedLanguage, selectedRegion]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -177,6 +183,14 @@ export function useChannelData(): UseChannelDataReturn {
     setSearchQueryRaw("");
   }, []);
 
+  const setSelectedLanguage = useCallback((lang: string | null) => {
+    setSelectedLanguageRaw(lang);
+  }, []);
+
+  const setSelectedRegion = useCallback((region: string | null) => {
+    setSelectedRegionRaw(region);
+  }, []);
+
   const setSearchQuery = useCallback((q: string) => {
     setSearchQueryRaw(q);
   }, []);
@@ -187,8 +201,8 @@ export function useChannelData(): UseChannelDataReturn {
     primaryAbortRef.current?.abort();
     const controller = new AbortController();
     primaryAbortRef.current = controller;
-    fetchPrimary(selectedCategory, controller.signal);
-  }, [fetchPrimary, selectedCategory]);
+    fetchPrimary(selectedCategory, selectedLanguage, selectedRegion, controller.signal);
+  }, [fetchPrimary, selectedCategory, selectedLanguage, selectedRegion]);
 
   // ── getChannelDetail ───────────────────────────────────────────────────────
 
@@ -226,6 +240,10 @@ export function useChannelData(): UseChannelDataReturn {
     error,
     selectedCategory,
     setSelectedCategory,
+    selectedLanguage,
+    setSelectedLanguage,
+    selectedRegion,
+    setSelectedRegion,
     searchQuery,
     setSearchQuery,
     searchResults,

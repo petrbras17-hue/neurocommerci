@@ -5,6 +5,8 @@ interface Props {
   onFilterChange: (filters: FilterState) => void;
   languages: string[];
   regions: string[];
+  initialLanguage?: string | null;
+  initialRegion?: string | null;
 }
 
 export interface FilterState {
@@ -24,10 +26,10 @@ const MEMBER_PRESETS = [
   { label: '100K+', min: 100000, max: null },
 ] as const;
 
-export default function FilterControls({ onFilterChange, languages, regions }: Props) {
+export default function FilterControls({ onFilterChange, languages, regions, initialLanguage, initialRegion }: Props) {
   const [activePreset, setActivePreset] = useState(0);
-  const [language, setLanguage] = useState<string | null>(null);
-  const [region, setRegion] = useState<string | null>(null);
+  const [language, setLanguage] = useState<string | null>(initialLanguage ?? null);
+  const [region, setRegion] = useState<string | null>(initialRegion ?? null);
   const [hasComments, setHasComments] = useState<boolean | null>(null);
 
   const applyFilters = useCallback(

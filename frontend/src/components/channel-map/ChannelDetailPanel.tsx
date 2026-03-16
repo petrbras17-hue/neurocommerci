@@ -2,14 +2,15 @@
 // NEURO COMMENTING — Channel Map: ChannelDetailPanel
 // Slide-in detail panel for channel inspection (380px right side)
 // ═══════════════════════════════════════════════════════════════════════════════
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   X, ExternalLink, Plus, Ban, Database, Bell,
-  ChevronRight, Users, TrendingUp, Clock,
+  ChevronRight, Users, TrendingUp, Clock, AlertTriangle,
 } from "lucide-react";
 import type { ChannelMapEntry } from "../../api";
 import { DESIGN_TOKENS as T, getCategoryMeta, getLangFlag, formatNumber, formatER } from "./constants";
+import { useAuth } from "../../auth";
 
 export type ChannelDetailPanelProps = {
   channel: ChannelMapEntry | null;
@@ -62,6 +63,73 @@ const Stat = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
+// Returns true when last_refreshed_at is null or older than 7 days
+function isDataOutdated(iso: string | null | undefined): boolean {
+  if (!iso) return true;
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  return Date.now() - new Date(iso).getTime() > sevenDaysMs;
+}
+
+function OutdatedBadge({ lastRefreshedAt }: { lastRefreshedAt: string | null | undefined }) {
+  if (!isDataOutdated(lastRefreshedAt)) return null;
+  const label = lastRefreshedAt == null ? "Нет данных" : "Устаревшие данные";
+  const title = lastRefreshedAt == null
+    ? "Канал ещё не обновлялся"
+    : `Последнее обновление: ${new Date(lastRefreshedAt).toLocaleDateString("ru-RU")}`;
+  return (
+    <span
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        marginLeft: 6,
+        padding: "2px 6px",
+        borderRadius: 4,
+        background: "rgba(234,179,8,0.12)",
+        border: "1px solid rgba(234,179,8,0.35)",
+        color: "#eab308",
+        fontSize: 10,
+        fontWeight: 600,
+        verticalAlign: "middle",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <AlertTriangle size={10} />
+      {label}
+    </span>
+  );
+}
+
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+
+interface SparklineProps {
+  data: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+}
+
+function Sparkline({ data, width = 200, height = 40, color = "#00ff88" }: SparklineProps) {
+  if (!data.length) return null;
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data
+    .map((v, i) =>
+      `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * height}`
+    )
+    .join(" ");
+
+  return (
+    <svg width={width} height={height} style={{ display: "block" }}>
+      <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
+    </svg>
+  );
+}
+
+// ─── Actions ─────────────────────────────────────────────────────────────────
+
 type ActionDef = { label: string; Icon: typeof Plus; color: string;
   handler: keyof Pick<ChannelDetailPanelProps, "onAddToFarm" | "onBlacklist" | "onAddToDb" | "onTrack"> };
 const ACTIONS: ActionDef[] = [
@@ -73,6 +141,34 @@ const ACTIONS: ActionDef[] = [
 
 export function ChannelDetailPanel(props: ChannelDetailPanelProps) {
   const { channel, similarChannels, loading, onClose, onSelectSimilar } = props;
+  const { accessToken: token } = useAuth();
+
+  // История подписчиков для sparkline
+  const [history, setHistory] = useState<number[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    if (!channel?.id) {
+      setHistory([]);
+      return;
+    }
+    const ctrl = new AbortController();
+    setHistoryLoading(true);
+    fetch(`/v1/channel-map/${channel.id}/history?days=30`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: ctrl.signal,
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setHistory(data.history?.map((h: { subscribers: number }) => h.subscribers) ?? []);
+      })
+      .catch(() => {
+        // Ошибку игнорируем — sparkline просто не отобразится
+      })
+      .finally(() => setHistoryLoading(false));
+    return () => ctrl.abort();
+  }, [channel?.id, token]);
+
   if (!channel) return null;
   const cat = getCategoryMeta(channel.category);
 
@@ -140,10 +236,48 @@ export function ChannelDetailPanel(props: ChannelDetailPanelProps) {
             <Stat label="Avg Comments" value={formatNumber(channel.avg_comments_per_post)} />
             <Stat label="Source" value={channel.source || "local"} />
             <Stat label="Verified" value={channel.verified ? "\u2713 Да" : "\u2014"} />
-            <Stat label="Indexed" value={relativeDate(channel.last_indexed_at)} />
+            {/* Indexed row — full width when badge is shown */}
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={{ color: T.TEXT_SECONDARY, fontSize: 10, marginBottom: 2 }}>Indexed</div>
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+                <span style={{ color: T.TEXT_PRIMARY, fontSize: 13, fontWeight: 500,
+                  fontFamily: "'JetBrains Mono', monospace" }}>
+                  {relativeDate(channel.last_indexed_at)}
+                </span>
+                <OutdatedBadge lastRefreshedAt={channel.last_refreshed_at} />
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Sparkline — динамика подписчиков за 30 дней */}
+      {(historyLoading || history.length > 0) && (
+        <>
+          <Div />
+          <div>
+            <div style={secHdr}>Динамика подписчиков</div>
+            {historyLoading ? (
+              <Sk w="100%" h={40} />
+            ) : (
+              <div style={{ padding: "4px 0" }}>
+                <div style={{ fontSize: 11, color: T.TEXT_SECONDARY, marginBottom: 6 }}>
+                  Подписчики за 30 дней
+                </div>
+                <Sparkline data={history} width={310} height={40} color={T.ACCENT} />
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  <span style={{ fontSize: 10, color: T.TEXT_SECONDARY }}>
+                    {formatNumber(Math.min(...history))}
+                  </span>
+                  <span style={{ fontSize: 10, color: T.TEXT_SECONDARY }}>
+                    {formatNumber(Math.max(...history))}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Description */}
       {!loading && channel.description && (

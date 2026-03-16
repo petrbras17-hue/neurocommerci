@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { Download } from 'lucide-react';
 import type { GeoPoint, ChannelMapStats } from '../../../api';
 import FilterControls, { type FilterState } from './FilterControls';
 import CategoryAccordion from './CategoryAccordion';
@@ -9,7 +10,10 @@ interface Props {
   categories: string[];
   stats: ChannelMapStats | null;
   selectedCategory: string | null;
+  selectedLanguage: string | null;
+  selectedRegion: string | null;
   onCategoryFilter: (cat: string | null) => void;
+  onFilterChange: (language: string | null, region: string | null) => void;
   onChannelSelect: (id: number, lat?: number, lng?: number) => void;
   geoPoints: GeoPoint[];
 }
@@ -18,17 +22,28 @@ export function DiscoveryPanel({
   categories,
   stats,
   selectedCategory,
+  selectedLanguage,
+  selectedRegion,
   onCategoryFilter,
+  onFilterChange,
   onChannelSelect,
   geoPoints,
 }: Props) {
   const handleFilterChange = useCallback(
-    (_filters: FilterState) => {
-      // TODO: wire up filter state to data layer in Sprint 1.4
-      // For now, filters visually render but only category filtering is active
+    (filters: FilterState) => {
+      onFilterChange(filters.language, filters.region);
     },
-    [],
+    [onFilterChange],
   );
+
+  const handleExport = useCallback(() => {
+    const params = new URLSearchParams();
+    if (selectedCategory) params.set('category', selectedCategory);
+    if (selectedLanguage) params.set('language', selectedLanguage);
+    if (selectedRegion) params.set('region', selectedRegion);
+    const qs = params.toString();
+    window.open(`/v1/channel-map/export${qs ? `?${qs}` : ''}`, '_blank');
+  }, [selectedCategory, selectedLanguage, selectedRegion]);
 
   const languages = stats ? Object.keys(stats.by_language).sort() : [];
   const regions = stats ? Object.keys(stats.by_region).sort() : [];
@@ -47,12 +62,48 @@ export function DiscoveryPanel({
         borderBottom: `1px solid ${T.BORDER_SUBTLE}`,
       }}>
         <div style={{
-          fontSize: 14,
-          fontWeight: 600,
-          color: T.TEXT_PRIMARY,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           marginBottom: 2,
         }}>
-          Discovery
+          <div style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: T.TEXT_PRIMARY,
+          }}>
+            Discovery
+          </div>
+          {/* Export CSV button */}
+          <button
+            onClick={handleExport}
+            title="Экспортировать каналы в CSV"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 10px',
+              borderRadius: 5,
+              border: `1px solid ${T.ACCENT}40`,
+              background: 'transparent',
+              color: T.ACCENT,
+              fontSize: 11,
+              fontWeight: 600,
+              fontFamily: "'JetBrains Mono', monospace",
+              cursor: 'pointer',
+              transition: 'background 0.15s ease',
+              letterSpacing: 0.3,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = T.ACCENT_DIM;
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            }}
+          >
+            <Download size={12} />
+            CSV
+          </button>
         </div>
         <div style={{
           fontSize: 11,
@@ -67,6 +118,8 @@ export function DiscoveryPanel({
         onFilterChange={handleFilterChange}
         languages={languages}
         regions={regions}
+        initialLanguage={selectedLanguage}
+        initialRegion={selectedRegion}
       />
 
       {/* Categories */}
