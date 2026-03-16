@@ -384,14 +384,29 @@ class WarmupScheduler:
         # Определяем количество каналов для чтения
         max_channels = {"quick_glance": 1, "normal": 3, "deep_dive": 5}.get(session_type, 2)
 
-        # Выбираем каналы из персоны
+        # Каналы по тематике: VPN, обход блокировок, нейросети, технологии
+        DEFAULT_CHANNELS = [
+            "@durov", "@telegram", "@tginfo",
+            # VPN / обход блокировок
+            "@vpngen", "@ntc_party", "@roskomsvoboda",
+            "@digitalresistance", "@zatelecom", "@antifilter_chat",
+            "@thedailyprophet", "@netstalkers",
+            # Нейросети / AI / технологии
+            "@ai_machinelearning_big_data", "@neurohive",
+            "@deep_learning", "@aibusiness", "@futureinsider",
+            "@theaiinsider", "@techinsider", "@habr_com",
+            "@itsecfeed", "@kod_ru",
+            # Казахстан / СНГ tech
+            "@astana_life", "@digitalkz", "@techkz",
+        ]
+        # Выбираем каналы из персоны или дефолтные
         channels = []
         if persona.preferred_channels:
             channels = list(persona.preferred_channels)
-            random.shuffle(channels)
-            channels = channels[:max_channels]
         if not channels:
-            channels = ["@durov", "@telegram"][:max_channels]
+            channels = list(DEFAULT_CHANNELS)
+        random.shuffle(channels)
+        channels = channels[:max_channels]
 
         # Логируем начало сессии
         await self._log_activity(
@@ -523,14 +538,15 @@ class WarmupScheduler:
         phase = acct.warmup_phase or "STEALTH"
 
         # Базовые интервалы по фазам (часы)
+        # STEALTH/EXPLORER: 3-5 сессий в день (каждые 3-5 часов)
         phase_intervals = {
-            "STEALTH": (8, 14),
-            "EXPLORER": (6, 10),
+            "STEALTH": (3, 5),
+            "EXPLORER": (2.5, 4),
             "PACKAGING": (2, 4),
-            "COMMENTER_LIGHT": (5, 8),
-            "COMMENTER_GROWING": (4, 7),
-            "ACTIVE": (4, 6),
-            "VETERAN": (3, 6),
+            "COMMENTER_LIGHT": (2, 4),
+            "COMMENTER_GROWING": (1.5, 3),
+            "ACTIVE": (1, 2.5),
+            "VETERAN": (1, 2),
         }
 
         min_h, max_h = phase_intervals.get(phase, (6, 10))
@@ -594,18 +610,25 @@ class WarmupScheduler:
             return "deep_dive"
 
     def _is_awake(self, acct: Account, now: datetime) -> bool:
-        """Проверить: сейчас 'день' для аккаунта по его персоне."""
-        # Без персоны — считаем что день (UTC 7-23)
-        local_hour = now.hour + 3  # default UTC+3
-        return 7 <= (local_hour % 24) < 23
+        """Проверить: сейчас 'день' для аккаунта по GMT+3 (Москва)."""
+        MSK_OFFSET = 3
+        local_hour = (now.hour + MSK_OFFSET) % 24
+        # Активные часы: 08:00-23:00 по МСК
+        return 8 <= local_hour < 23
 
     async def _defer_to_morning(
         self, session: AsyncSession, acct: Account
     ) -> None:
-        """Отложить сессию на утро."""
-        # Примерно 7:00 UTC+3 = 4:00 UTC + jitter
-        tomorrow_morning = utcnow().replace(hour=4, minute=0, second=0) + timedelta(
-            days=1, minutes=random.randint(0, 90)
+        """Отложить сессию на утро по МСК (GMT+3)."""
+        # 08:00-09:30 МСК = 05:00-06:30 UTC + случайные минуты
+        now = utcnow()
+        tomorrow_morning = now.replace(hour=5, minute=0, second=0, microsecond=0)
+        if tomorrow_morning <= now:
+            tomorrow_morning += timedelta(days=1)
+        # Случайный сдвиг 0-90 мин чтобы не в ровное время
+        tomorrow_morning += timedelta(
+            minutes=random.randint(0, 90),
+            seconds=random.randint(0, 59),
         )
         acct.next_session_at = tomorrow_morning
 
