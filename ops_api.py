@@ -1431,35 +1431,37 @@ async def lifespan(_: FastAPI):
             log.warning("bot auth Redis init timed out after 10s — skipping")
         except Exception as exc:  # pragma: no cover
             log.warning(f"bot auth Redis init skipped: {exc}")
-        # ── Start Autonomous Warmup Scheduler ──
-        warmup_scheduler = None
-        try:
-            from core.warmup_scheduler import WarmupScheduler
-            log.info("Initializing WarmupScheduler with db_session_factory=%r", async_session)
-            warmup_scheduler = WarmupScheduler(db_session_factory=async_session)
-            await warmup_scheduler.start()
-            app_state["warmup_scheduler"] = warmup_scheduler
-            log.info(
-                "WarmupScheduler started successfully: running=%s, active_sessions=%d",
-                warmup_scheduler.is_running,
-                warmup_scheduler.active_count,
-            )
-        except Exception as exc:
-            log.error(
-                "WarmupScheduler startup FAILED — autonomous warmup will not run: %s",
-                exc,
-                exc_info=True,
-            )
+        # ── Start Autonomous Warmup Scheduler (deferred to avoid lifespan blocking) ──
+        async def _deferred_scheduler_start():
+            """Start scheduler after a short delay to ensure lifespan completes."""
+            await asyncio.sleep(3)
+            try:
+                from core.warmup_scheduler import WarmupScheduler
+                log.info("WarmupScheduler: deferred init starting...")
+                ws = WarmupScheduler(db_session_factory=async_session)
+                await ws.start()
+                app_state["warmup_scheduler"] = ws
+                log.info(
+                    "WarmupScheduler started: running=%s, active=%d",
+                    ws.is_running, ws.active_count,
+                )
+            except Exception as exc:
+                log.error("WarmupScheduler startup FAILED: %s", exc, exc_info=True)
+
+        scheduler_launch_task = asyncio.create_task(_deferred_scheduler_start())
 
         yield
     finally:
         # ── Stop Warmup Scheduler ──
-        if warmup_scheduler is not None:
+        ws = app_state.get("warmup_scheduler")
+        if ws is not None:
             try:
-                await warmup_scheduler.shutdown()
+                await ws.shutdown()
                 log.info("Warmup scheduler stopped")
             except Exception as exc:
                 log.warning(f"Warmup scheduler shutdown error: {exc}")
+        if scheduler_launch_task and not scheduler_launch_task.done():
+            scheduler_launch_task.cancel()
 
         stop_event.set()
         for task in worker_tasks:
