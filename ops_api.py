@@ -1511,18 +1511,25 @@ async def _lazy_scheduler_boot(request: Request, call_next):
 
 async def _do_scheduler_boot():
     """Actually start the scheduler (runs once via middleware guard)."""
-    import sys
+    _log_file = "/tmp/scheduler_boot.log"
+    def _flog(msg):
+        with open(_log_file, "a") as f:
+            from datetime import datetime
+            f.write(f"{datetime.utcnow().isoformat()} {msg}\n")
     try:
+        _flog("boot triggered")
         from core.warmup_scheduler import WarmupScheduler
-        print("[SCHEDULER] lazy boot triggered", file=sys.stderr, flush=True)
+        _flog("import OK")
         ws = WarmupScheduler(db_session_factory=async_session)
+        _flog("instance created")
         await ws.start()
+        _flog(f"started: running={ws.is_running}, active={ws.active_count}")
         app_state["warmup_scheduler"] = ws
-        print(f"[SCHEDULER] RUNNING: {ws.is_running}, active={ws.active_count}", file=sys.stderr, flush=True)
+        log.info("WarmupScheduler RUNNING via lazy boot")
     except Exception as exc:
         import traceback
-        print(f"[SCHEDULER] FAILED: {exc}", file=sys.stderr, flush=True)
-        traceback.print_exc(file=sys.stderr)
+        _flog(f"FAILED: {exc}\n{traceback.format_exc()}")
+        log.error("WarmupScheduler boot FAILED: %s", exc, exc_info=True)
 
 
 @app.middleware("http")
