@@ -93,12 +93,10 @@ function MapEvents({ onBoundsChange, mapRef }: MapEventsProps) {
 function FixLeafletIcons() {
   useEffect(() => {
     // Leaflet пытается загрузить иконки через URL, которые Vite не разрешает.
-    // Импортируем напрямую через Leaflet API.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const L = require('leaflet') as typeof import('leaflet');
-    // Удаляем prototype._getIconUrl, который ищет иконки через публичный путь
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    // Используем import (уже загружен) вместо require.
+    import('leaflet').then((L) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
       iconRetinaUrl: new URL(
         'leaflet/dist/images/marker-icon-2x.png',
@@ -112,6 +110,7 @@ function FixLeafletIcons() {
         'leaflet/dist/images/marker-shadow.png',
         import.meta.url,
       ).href,
+    });
     });
   }, []);
   return null;

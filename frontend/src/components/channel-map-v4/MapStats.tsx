@@ -12,7 +12,7 @@ import {
   formatSubscribers,
   getCategoryLabel,
 } from "./constants";
-import type { MapFilters } from "./constants";
+import type { MapFilters } from "./hooks/useMapData";
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
 
