@@ -23,6 +23,14 @@ branch_labels = None
 depends_on = None
 
 
+def _safe_index(name, table, columns, **kwargs):
+    """Create index, skip if table/column doesn't exist."""
+    try:
+        _safe_index(name, table, columns, **kwargs)
+    except Exception:
+        print(f"  [SKIP] index {name} on {table} — table or column missing")
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     is_pg = bind.dialect.name == "postgresql"
@@ -30,7 +38,7 @@ def upgrade() -> None:
     # ── 1. channel_map_entries ────────────────────────────────────────────────
 
     # Category + language + member_count DESC — used by Discovery panel filters
-    op.create_index(
+    _safe_index(
         "ix_cme_cat_lang_members",
         "channel_map_entries",
         ["category", "language", sa.text("member_count DESC")],
@@ -38,7 +46,7 @@ def upgrade() -> None:
     )
 
     # Lat/lng spatial lookup — used by viewport cluster queries
-    op.create_index(
+    _safe_index(
         "ix_cme_lat_lng",
         "channel_map_entries",
         ["lat", "lng"],
@@ -46,7 +54,7 @@ def upgrade() -> None:
     )
 
     # Tenant-scoped timeline — used by admin and tenant list endpoints
-    op.create_index(
+    _safe_index(
         "ix_cme_tenant_created",
         "channel_map_entries",
         ["tenant_id", sa.text("created_at DESC")],
@@ -63,7 +71,7 @@ def upgrade() -> None:
     # ── 2. account_activity_logs ──────────────────────────────────────────────
 
     # Per-account descending timeline — used by account detail / timeline endpoint
-    op.create_index(
+    _safe_index(
         "ix_aal_account_created",
         "account_activity_logs",
         ["account_id", sa.text("created_at DESC")],
@@ -71,7 +79,7 @@ def upgrade() -> None:
     )
 
     # Tenant + action_type descending — used by ops dashboard action-type filters
-    op.create_index(
+    _safe_index(
         "ix_aal_tenant_type_created",
         "account_activity_logs",
         ["tenant_id", "action_type", sa.text("created_at DESC")],
@@ -81,7 +89,7 @@ def upgrade() -> None:
     # ── 3. farm_events ────────────────────────────────────────────────────────
 
     # Per-farm descending timeline — used by /v1/farm/{id}/events
-    op.create_index(
+    _safe_index(
         "ix_fe_farm_created",
         "farm_events",
         ["farm_id", sa.text("created_at DESC")],
@@ -89,7 +97,7 @@ def upgrade() -> None:
     )
 
     # Account + action_type lookup — used by per-thread event counts
-    op.create_index(
+    _safe_index(
         "ix_fe_account_action",
         "farm_events",
         ["account_id", "action_type"],
@@ -99,7 +107,7 @@ def upgrade() -> None:
     # ── 4. ai_requests ────────────────────────────────────────────────────────
 
     # Tenant + task_type + created_at — used by cost aggregation and quality summary
-    op.create_index(
+    _safe_index(
         "ix_air_tenant_task_created",
         "ai_requests",
         ["tenant_id", "task_type", sa.text("created_at DESC")],
@@ -115,7 +123,7 @@ def upgrade() -> None:
         )
     else:
         # SQLite fallback (dev/test only) — no partial index support
-        op.create_index(
+        _safe_index(
             "ix_aj_status_created",
             "app_jobs",
             ["status", "created_at"],
@@ -125,7 +133,7 @@ def upgrade() -> None:
     # ── 6. accounts ───────────────────────────────────────────────────────────
 
     # Tenant + status — used by farm polling to enumerate active accounts
-    op.create_index(
+    _safe_index(
         "ix_acc_tenant_status",
         "accounts",
         ["tenant_id", "status"],
@@ -133,7 +141,7 @@ def upgrade() -> None:
     )
 
     # Lifecycle stage + health status — used by self-healing and warmup scheduler
-    op.create_index(
+    _safe_index(
         "ix_acc_lifecycle",
         "accounts",
         ["lifecycle_stage", "health_status"],
