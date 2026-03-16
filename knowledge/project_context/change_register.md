@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `c082218` |
+| Last committed HEAD | `1d55d18` |
 | VPS safe branch | `main` |
-| VPS safe commit | `bdd258e` |
+| VPS safe commit | `1d55d18` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 25 (Autonomous Warmup "Living Account")` |
-| Next planned sprint | `Sprint 26 (VPS Deploy + Live Testing)` |
+| Current completed sprint | `Sprint 26 (VPS Deploy + Full Sync)` |
+| Next planned sprint | `Sprint 27 (Live Testing + KZ Account Warmup)` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger
@@ -85,7 +85,9 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 
 | 2026-03-14 | Sprints 17-24 | `main` | `199414e` | Admin Panel + Full GramGPT Parity | 8 sprints in one commit: S17 Admin Panel (onboarding wizard, proxy manager, ops log), S18 Account Packaging (AI profiles, avatars, channel creation), S19 Warmup v2 (story viewing, channel joining, WebSocket live logs), S20 Neurocommenting v2 (blacklist/whitelist, comment-as-channel, auto-DM, presets), S21 Chatting v2 (semantic matching, unified DM inbox, AI auto-responder), S22 Parsing v2 (group parser, message parser, AI keywords, 6 templates), S23 Reactions v2 (monitoring mode, real-time dashboard, throughput metrics), S24 Farm Launch (scaling curves, anti-fraud scoring, pattern detection, Gaussian delays). 8 migrations (35-42), 11 new core modules, ~100 admin API endpoints, 14 new frontend pages, 78 tests passing. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`, smoke-test admin endpoints. |
 
-| 2026-03-16 | Sprint 25 Autonomous Warmup | `main` | `c082218` | Autonomous Warmup System | Added 5 new core modules (WarmupScheduler, PhaseController, PersonaEngine, PackagingPipeline, AlertService), Alembic migration 20260316_43, 12 new API endpoints (/v1/warmup/scheduler/*, /v1/warmup/phases/*, /v1/warmup/personas/*, /v1/warmup/packaging/*, /v1/warmup/alerts/*), scheduler lifespan integration into FastAPI startup/shutdown, 7 warmup phases (seed→social→content→engagement→trust→active→veteran), AI persona generation via route_ai_task, packaging pipeline for account bundles, and Telegram bot alerts for phase transitions and health events. | Green | Not deployed | Run `alembic upgrade head` on VPS, restart `ops_api`, create persona + preset for KZ account (77076294082) via API. |
+| 2026-03-16 | Sprint 25 Autonomous Warmup | `main` | `c082218` | Autonomous Warmup System | Added 5 new core modules (WarmupScheduler, PhaseController, PersonaEngine, PackagingPipeline, AlertService), Alembic migration 20260316_43, 12 new API endpoints, scheduler lifespan integration, 7 warmup phases, AI persona generation, packaging pipeline, Telegram bot alerts. | Green | Green | Deploy done. |
+
+| 2026-03-16 | Sprint 26 VPS Deploy + Sync | `main` | `1d55d18` | Full VPS sync + DB repair | Pushed all commits to VPS (e0d950a→1d55d18). Fixed billing_payments handler crash. Repaired missing DB columns (warmup_configs: 8 cols, warmup_sessions: 6 cols) and tables (comment_blacklists, comment_whitelists) that were stamp-skipped during mass migration. Applied RLS policies. WarmupScheduler running=true (10 slots, 60s poll). Health OK, warmup/billing/accounts endpoints verified. 509 tests pass, 0 failures. | Green | Green | Upload KZ account session + create persona + start autonomous warmup. |
 
 ## Update Rules
 

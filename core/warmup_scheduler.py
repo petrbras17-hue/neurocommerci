@@ -311,11 +311,10 @@ class WarmupScheduler:
                     await self._schedule_next(session, acct, persona)
                     return  # begin() auto-commits
 
-            # 2. Проверяем фазу PACKAGING
-            if acct.warmup_phase == "PACKAGING":
-                await self._handle_packaging(session, acct, tenant_id)
-                await session.commit()
-                return
+                # 2. Проверяем фазу PACKAGING
+                if acct.warmup_phase == "PACKAGING":
+                    await self._handle_packaging(session, acct, tenant_id)
+                    return  # begin() auto-commits
 
                 # 3. Получаем лимиты действий от PhaseController
                 health_score = 100
@@ -627,52 +626,55 @@ class WarmupScheduler:
 
         log.info("warmup_scheduler: hourly maintenance starting")
         try:
-            async with self._db_session_factory() as session:
-                # Авто-поднятие карантина
-                now = utcnow()
-                stmt = (
-                    update(Account)
-                    .where(
-                        and_(
-                            Account.quarantined_until.isnot(None),
-                            Account.quarantined_until <= now,
+            for tenant_id in range(1, MAX_TENANT_SCAN + 1):
+                async with self._db_session_factory() as session:
+                    async with session.begin():
+                        await session.execute(
+                            text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
                         )
-                    )
-                    .values(quarantined_until=None)
-                )
-                result = await session.execute(stmt)
-                if result.rowcount > 0:
-                    log.info(
-                        "warmup_scheduler: lifted quarantine for %d accounts",
-                        result.rowcount,
-                    )
-
-                # Проверка переходов фаз
-                if self._phase_controller:
-                    accts_stmt = select(Account).where(
-                        and_(
-                            Account.next_session_at.isnot(None),
-                            Account.health_status.notin_(["dead", "frozen", "banned"]),
-                        )
-                    ).limit(200)
-                    accts_result = await session.execute(accts_stmt)
-                    for acct in accts_result.scalars():
-                        try:
-                            new_phase = await self._phase_controller.check_transition(
-                                acct.id, acct.tenant_id, session
-                            )
-                            if new_phase:
-                                log.info(
-                                    "warmup_scheduler: account %s transitioned to %s",
-                                    acct.id, new_phase,
+                        # Авто-поднятие карантина
+                        now = utcnow()
+                        stmt = (
+                            update(Account)
+                            .where(
+                                and_(
+                                    Account.quarantined_until.isnot(None),
+                                    Account.quarantined_until <= now,
                                 )
-                        except Exception as exc:
-                            log.warning(
-                                "warmup_scheduler: phase check failed for %s: %s",
-                                acct.id, exc,
+                            )
+                            .values(quarantined_until=None)
+                        )
+                        result = await session.execute(stmt)
+                        if result.rowcount > 0:
+                            log.info(
+                                "warmup_scheduler: lifted quarantine for %d accounts (tenant %d)",
+                                result.rowcount, tenant_id,
                             )
 
-                await session.commit()
+                        # Проверка переходов фаз
+                        if self._phase_controller:
+                            accts_stmt = select(Account).where(
+                                and_(
+                                    Account.next_session_at.isnot(None),
+                                    Account.health_status.notin_(["dead", "frozen", "banned"]),
+                                )
+                            ).limit(200)
+                            accts_result = await session.execute(accts_stmt)
+                            for acct in accts_result.scalars():
+                                try:
+                                    new_phase = await self._phase_controller.check_transition(
+                                        acct.id, tenant_id, session
+                                    )
+                                    if new_phase:
+                                        log.info(
+                                            "warmup_scheduler: account %s transitioned to %s",
+                                            acct.id, new_phase,
+                                        )
+                                except Exception as exc:
+                                    log.warning(
+                                        "warmup_scheduler: phase check failed for %s: %s",
+                                        acct.id, exc,
+                                    )
         except Exception as exc:
             log.error("warmup_scheduler: hourly maintenance failed: %s", exc)
 
@@ -683,88 +685,75 @@ class WarmupScheduler:
 
         log.info("warmup_scheduler: sending daily digest")
         try:
-            async with self._db_session_factory() as session:
-                # Считаем статистику за 24 часа
-                since = utcnow() - timedelta(hours=24)
+            # Aggregate across all tenants
+            all_accts: list = []
+            actions: list = []
+            since = utcnow() - timedelta(hours=24)
 
-                # Активные аккаунты
-                accts_stmt = select(Account).where(
-                    Account.next_session_at.isnot(None)
-                ).limit(100)
-                accts_result = await session.execute(accts_stmt)
-                all_accts = list(accts_result.scalars())
+            for tenant_id in range(1, MAX_TENANT_SCAN + 1):
+                async with self._db_session_factory() as session:
+                    async with session.begin():
+                        await session.execute(
+                            text(f"SET LOCAL app.tenant_id = '{tenant_id}'")
+                        )
+                        accts_stmt = select(Account).where(
+                            Account.next_session_at.isnot(None)
+                        ).limit(100)
+                        accts_result = await session.execute(accts_stmt)
+                        tenant_accts = list(accts_result.scalars())
+                        all_accts.extend(tenant_accts)
 
-                # Действия за 24ч
-                actions_stmt = select(AccountActivityLog).where(
-                    AccountActivityLog.created_at >= since
-                ).limit(5000)
-                actions_result = await session.execute(actions_stmt)
-                actions = list(actions_result.scalars())
+                        actions_stmt = select(AccountActivityLog).where(
+                            AccountActivityLog.created_at >= since
+                        ).limit(5000)
+                        actions_result = await session.execute(actions_stmt)
+                        actions.extend(list(actions_result.scalars()))
 
-                active_ids = {a.account_id for a in actions}
-                success_count = sum(1 for a in actions if a.success)
-                skip_count = sum(
-                    1 for a in actions if a.action_type == "warmup_skip"
-                )
+            active_ids = {a.account_id for a in actions}
+            success_count = sum(1 for a in actions if a.success)
+            skip_count = sum(
+                1 for a in actions if a.action_type == "warmup_skip"
+            )
+            session_starts = [
+                a for a in actions if a.action_type == "warmup_session_start"
+            ]
+            flood_count = sum(1 for a in actions if a.action_type == "flood_wait")
+            spam_count = sum(1 for a in actions if a.action_type == "spam_block")
+            frozen_count = sum(1 for a in actions if a.action_type == "frozen")
 
-                # Сессии
-                session_starts = [
-                    a for a in actions if a.action_type == "warmup_session_start"
+            account_stats = []
+            for acct in all_accts:
+                acct_actions = [a for a in actions if a.account_id == acct.id]
+                acct_sessions = [
+                    a for a in acct_actions
+                    if a.action_type == "warmup_session_start"
                 ]
+                account_stats.append({
+                    "phone": acct.phone,
+                    "name": ".",
+                    "phase": acct.warmup_phase or "STEALTH",
+                    "day": acct.warmup_day or 0,
+                    "health": 0,
+                    "sessions": len(acct_sessions),
+                })
 
-                # Ошибки
-                flood_count = sum(
-                    1 for a in actions if a.action_type == "flood_wait"
-                )
-                spam_count = sum(
-                    1 for a in actions if a.action_type == "spam_block"
-                )
-                frozen_count = sum(
-                    1 for a in actions if a.action_type == "frozen"
-                )
+            stats = {
+                "active_count": len(active_ids),
+                "total_count": len(all_accts),
+                "sessions_24h": len(session_starts),
+                "actions_24h": len(actions),
+                "success_count": success_count,
+                "skip_count": skip_count,
+                "accounts": account_stats,
+                "errors": {
+                    "flood": flood_count,
+                    "spam": spam_count,
+                    "frozen": frozen_count,
+                },
+                "next_packaging": [],
+            }
 
-                # Сборка per-account stats
-                account_stats = []
-                for acct in all_accts:
-                    acct_actions = [a for a in actions if a.account_id == acct.id]
-                    acct_sessions = [
-                        a for a in acct_actions
-                        if a.action_type == "warmup_session_start"
-                    ]
-
-                    # Health score
-                    hs_stmt = select(AccountHealthScore).where(
-                        AccountHealthScore.account_id == acct.id
-                    )
-                    hs_result = await session.execute(hs_stmt)
-                    hs = hs_result.scalar_one_or_none()
-
-                    account_stats.append({
-                        "phone": acct.phone,
-                        "name": ".",
-                        "phase": acct.warmup_phase or "STEALTH",
-                        "day": acct.warmup_day or 0,
-                        "health": hs.health_score if hs else 0,
-                        "sessions": len(acct_sessions),
-                    })
-
-                stats = {
-                    "active_count": len(active_ids),
-                    "total_count": len(all_accts),
-                    "sessions_24h": len(session_starts),
-                    "actions_24h": len(actions),
-                    "success_count": success_count,
-                    "skip_count": skip_count,
-                    "accounts": account_stats,
-                    "errors": {
-                        "flood": flood_count,
-                        "spam": spam_count,
-                        "frozen": frozen_count,
-                    },
-                    "next_packaging": [],
-                }
-
-                await self._alert_service.send_daily_digest(stats)
+            await self._alert_service.send_daily_digest(stats)
 
         except Exception as exc:
             log.error("warmup_scheduler: daily digest failed: %s", exc)
@@ -779,11 +768,18 @@ class WarmupScheduler:
         if self._db_session_factory is None:
             return {"status": "error", "message": "no db session factory"}
 
-        async with self._db_session_factory() as session:
-            acct = await session.get(Account, account_id)
-            if not acct:
-                return {"status": "error", "message": "account not found"}
-            tenant_id = acct.tenant_id
+        # Find account's tenant by iterating RLS contexts
+        tenant_id = None
+        for tid in range(1, MAX_TENANT_SCAN + 1):
+            async with self._db_session_factory() as session:
+                async with session.begin():
+                    await session.execute(text(f"SET LOCAL app.tenant_id = '{tid}'"))
+                    acct = await session.get(Account, account_id)
+                    if acct:
+                        tenant_id = tid
+                        break
+        if tenant_id is None:
+            return {"status": "error", "message": "account not found"}
 
         task = asyncio.create_task(self._guarded_session(account_id, tenant_id))
         self._active_sessions[account_id] = task

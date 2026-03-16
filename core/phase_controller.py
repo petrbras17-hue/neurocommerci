@@ -235,10 +235,9 @@ class PhaseController:
 
     @staticmethod
     async def _set_rls(session: AsyncSession, tenant_id: int) -> None:
-        """Устанавливает RLS-контекст для текущей транзакции."""
+        """Устанавливает RLS-контекст для текущей транзакции (asyncpg требует literal)."""
         await session.execute(
-            text("SET LOCAL \"app.tenant_id\" = :tid"),
-            {"tid": str(tenant_id)},
+            text(f"SET LOCAL app.tenant_id = '{int(tenant_id)}'"),
         )
 
     async def check_transition(

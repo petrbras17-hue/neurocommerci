@@ -14655,15 +14655,23 @@ async def packaging_create(
 ) -> dict[str, Any]:
     """Создать packaging preset."""
     body = await request.json()
+    # Validate avatar_path — prevent path traversal
+    avatar_path = body.get("avatar_path")
+    if avatar_path:
+        import os
+        normalized = os.path.normpath(avatar_path)
+        if ".." in normalized or normalized.startswith("/"):
+            raise HTTPException(status_code=400, detail="invalid_avatar_path")
+        avatar_path = normalized
     from storage.models import AccountPackagingPreset
     preset = AccountPackagingPreset(
         tenant_id=tenant_context.tenant_id,
         account_id=body.get("account_id"),
-        display_name=body.get("display_name"),
-        bio=body.get("bio"),
-        avatar_path=body.get("avatar_path"),
-        username=body.get("username"),
-        channel_name=body.get("channel_name"),
+        display_name=body.get("display_name", "")[:70] if body.get("display_name") else None,
+        bio=body.get("bio", "")[:150] if body.get("bio") else None,
+        avatar_path=avatar_path,
+        username=body.get("username", "")[:32] if body.get("username") else None,
+        channel_name=body.get("channel_name", "")[:255] if body.get("channel_name") else None,
         channel_description=body.get("channel_description"),
         channel_pin_text=body.get("channel_pin_text"),
         source=body.get("source", "manual"),
