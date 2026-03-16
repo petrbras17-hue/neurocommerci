@@ -6785,23 +6785,111 @@ async def channel_map_search(
     return {"items": [_serialize_channel_map_entry(r) for r in rows], "total": len(rows)}
 
 
+_CATEGORY_DISPLAY_NAMES: dict[str, str] = {
+    "tech": "Технологии",
+    "crypto": "Крипто",
+    "news": "Новости",
+    "entertainment": "Развлечения",
+    "education": "Образование",
+    "business": "Бизнес",
+    "lifestyle": "Лайфстайл",
+    "politics": "Политика",
+    "gaming": "Игры",
+    "science": "Наука",
+    "sports": "Спорт",
+    "travel": "Путешествия",
+    "food": "Еда",
+    "health": "Здоровье",
+    "finance": "Финансы",
+    "marketing": "Маркетинг",
+    "art": "Искусство",
+    "music": "Музыка",
+    "fashion": "Мода",
+    "dating": "Знакомства",
+    "humor": "Юмор",
+    "religion": "Религия",
+    "animals": "Животные",
+    "cars": "Авто",
+    "real_estate": "Недвижимость",
+    "legal": "Право",
+    "hr": "HR",
+    "psychology": "Психология",
+    "language": "Языки",
+    "design": "Дизайн",
+    "cinema": "Кино",
+    "books": "Книги",
+    "other": "Другое",
+}
+
+_CATEGORY_COLORS: dict[str, str] = {
+    "tech": "#00ff88",
+    "crypto": "#f7931a",
+    "news": "#3b82f6",
+    "entertainment": "#ec4899",
+    "education": "#8b5cf6",
+    "business": "#f59e0b",
+    "lifestyle": "#06b6d4",
+    "politics": "#ef4444",
+    "gaming": "#10b981",
+    "science": "#6366f1",
+    "sports": "#f97316",
+    "travel": "#0ea5e9",
+    "food": "#84cc16",
+    "health": "#14b8a6",
+    "finance": "#eab308",
+    "marketing": "#a855f7",
+    "art": "#e879f9",
+    "music": "#c026d3",
+    "fashion": "#f43f5e",
+    "dating": "#fb7185",
+    "humor": "#facc15",
+    "religion": "#d97706",
+    "animals": "#65a30d",
+    "cars": "#64748b",
+    "real_estate": "#78716c",
+    "legal": "#94a3b8",
+    "hr": "#60a5fa",
+    "psychology": "#a78bfa",
+    "language": "#34d399",
+    "design": "#f472b6",
+    "cinema": "#c084fc",
+    "books": "#a3e635",
+    "other": "#6b7280",
+}
+
+
 @app.get("/v1/channel-map/categories")
 async def channel_map_categories(
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    from sqlalchemy import distinct
+    """Return categories with counts, Russian display names, and colors.
 
+    Previously returned only a list of raw category strings — which caused
+    the frontend CategoryAccordion to show everything as 'Другое'. Now
+    returns structured objects with display_name and color.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     tf = _channel_map_tenant_filter(tenant_context.tenant_id)
     rows = (
         await session.execute(
-            select(distinct(ChannelMapEntry.category))
+            select(ChannelMapEntry.category, func.count(ChannelMapEntry.id).label("cnt"))
             .where(tf, ChannelMapEntry.category.isnot(None))
-            .order_by(ChannelMapEntry.category)
-            .limit(1000)
+            .group_by(ChannelMapEntry.category)
+            .order_by(func.count(ChannelMapEntry.id).desc())
+            .limit(200)
         )
-    ).scalars().all()
-    return {"categories": list(rows)}
+    ).all()
+    categories = []
+    for category, cnt in rows:
+        cat_key = (category or "other").lower()
+        categories.append({
+            "category": category,
+            "display_name": _CATEGORY_DISPLAY_NAMES.get(cat_key, category),
+            "count": cnt,
+            "color": _CATEGORY_COLORS.get(cat_key, "#6b7280"),
+        })
+    return {"categories": categories}
 
 
 @app.get("/v1/channel-map/stats")
@@ -7711,13 +7799,22 @@ async def channel_map_viewport(
     ne_lng: float = Query(..., ge=-180, le=180),
     category: Optional[str] = Query(None),
     language: Optional[str] = Query(None),
-    min_members: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
+    region: Optional[str] = Query(None),
+    min_subscribers: int = Query(0, ge=0, description="Min subscriber count (preferred param name)"),
+    min_members: int = Query(0, ge=0, description="Alias for min_subscribers — kept for backwards compat"),
+    limit: int = Query(200, ge=1, le=500),
     tenant_context: TenantContext = Depends(get_tenant_context),
     session: AsyncSession = Depends(tenant_session),
 ) -> dict[str, Any]:
-    """Return top channels within a bounding box (for viewport list)."""
+    """Return top channels within a bounding box (for viewport list).
+
+    Optimised for the v4 2D map: returns avatar_url and more fields.
+    Default limit raised from 10 to 200.
+    min_subscribers and min_members are both accepted (min_members kept for
+    backwards compatibility with older frontend code).
+    """
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    effective_min = max(min_subscribers, min_members)
     tf = _channel_map_tenant_filter(tenant_context.tenant_id)
     q = (
         select(ChannelMapEntry)
@@ -7729,7 +7826,7 @@ async def channel_map_viewport(
             ChannelMapEntry.lat <= ne_lat,
             ChannelMapEntry.lng >= sw_lng,
             ChannelMapEntry.lng <= ne_lng,
-            ChannelMapEntry.member_count >= min_members,
+            ChannelMapEntry.member_count >= effective_min,
         )
         .order_by(ChannelMapEntry.member_count.desc())
         .limit(limit)
@@ -7738,6 +7835,8 @@ async def channel_map_viewport(
         q = q.where(ChannelMapEntry.category == category)
     if language:
         q = q.where(ChannelMapEntry.language == language)
+    if region:
+        q = q.where(ChannelMapEntry.region == region)
     rows = (await session.execute(q)).scalars().all()
     return {
         "items": [
@@ -7746,11 +7845,15 @@ async def channel_map_viewport(
                 "title": r.title,
                 "username": r.username,
                 "category": r.category,
+                "display_name": _CATEGORY_DISPLAY_NAMES.get((r.category or "other").lower(), r.category or "Другое"),
                 "member_count": r.member_count,
                 "engagement_rate": r.engagement_rate,
                 "language": r.language,
+                "region": getattr(r, "region", None),
                 "lat": r.lat,
                 "lng": r.lng,
+                "avatar_url": getattr(r, "avatar_url", None),
+                "verified": getattr(r, "verified", False),
             }
             for r in rows
         ],
@@ -7830,6 +7933,311 @@ async def channel_map_clusters(
         })
 
     return {"clusters": result, "zoom": zoom, "total_channels": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# Channel Map v4 — optimised geo-clusters + countries endpoints
+# ---------------------------------------------------------------------------
+
+# Region-to-label mapping for geo-cluster country view.  Keys must match the
+# ``region`` column values stored during Kaggle / TGStat imports.
+_REGION_LABELS: dict[str, str] = {
+    "russia": "Россия",
+    "ukraine": "Украина",
+    "belarus": "Беларусь",
+    "kazakhstan": "Казахстан",
+    "uzbekistan": "Узбекистан",
+    "georgia": "Грузия",
+    "armenia": "Армения",
+    "azerbaijan": "Азербайджан",
+    "moldova": "Молдова",
+    "kyrgyzstan": "Кыргызстан",
+    "tajikistan": "Таджикистан",
+    "turkmenistan": "Туркменистан",
+    "latvia": "Латвия",
+    "lithuania": "Литва",
+    "estonia": "Эстония",
+    "germany": "Германия",
+    "usa": "США",
+    "united states": "США",
+    "uk": "Великобритания",
+    "united kingdom": "Великобритания",
+    "france": "Франция",
+    "india": "Индия",
+    "turkey": "Турция",
+    "iran": "Иран",
+    "china": "Китай",
+    "brazil": "Бразилия",
+    "indonesia": "Индонезия",
+    "pakistan": "Пакистан",
+    "nigeria": "Нигерия",
+    "egypt": "Египет",
+    "israel": "Израиль",
+    "uae": "ОАЭ",
+    "saudi arabia": "Саудовская Аравия",
+    "poland": "Польша",
+    "netherlands": "Нидерланды",
+    "spain": "Испания",
+    "italy": "Италия",
+    "canada": "Канада",
+    "australia": "Австралия",
+    "japan": "Япония",
+    "south korea": "Южная Корея",
+    "thailand": "Таиланд",
+    "malaysia": "Малайзия",
+    "vietnam": "Вьетнам",
+    "philippines": "Филиппины",
+    "argentina": "Аргентина",
+    "mexico": "Мексика",
+    "colombia": "Колумбия",
+    "other": "Другое",
+}
+
+
+@app.get("/v1/channel-map/geo-clusters")
+async def channel_map_geo_clusters(
+    zoom: int = Query(default=3, ge=2, le=18),
+    sw_lat: float = Query(default=-90, ge=-90, le=90),
+    sw_lng: float = Query(default=-180, ge=-180, le=180),
+    ne_lat: float = Query(default=90, ge=-90, le=90),
+    ne_lng: float = Query(default=180, ge=-180, le=180),
+    category: Optional[str] = Query(default=None),
+    language: Optional[str] = Query(default=None),
+    region: Optional[str] = Query(default=None),
+    min_subscribers: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Server-side clustering optimised for the v4 2D Leaflet map.
+
+    Behaviour by zoom level:
+    - zoom 2-5  (world view): GROUP BY region — returns country-level clusters
+      with count, total_subscribers, dominant_category, and centroid lat/lng.
+    - zoom 6-9  (region view): GROUP BY rounded lat/lng (0.5° grid) — city-level
+      clusters.
+    - zoom 10+  (detail view): individual channels inside the bounding box,
+      ordered by member_count DESC, LIMIT 500.
+
+    All cluster responses include a ``channels`` key (empty list at zoom < 10).
+    The detail response includes a ``clusters`` key (empty list at zoom >= 10).
+
+    Results for zoom <= 9 are cached in Redis for 60 s.
+    """
+    from core.cache_service import CacheService
+    import math
+
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+
+    # ------------------------------------------------------------------
+    # Zoom 10+: individual channels in bounding box (no cache — dynamic)
+    # ------------------------------------------------------------------
+    if zoom >= 10:
+        q = (
+            select(ChannelMapEntry)
+            .where(
+                tf,
+                ChannelMapEntry.lat.isnot(None),
+                ChannelMapEntry.lng.isnot(None),
+                ChannelMapEntry.lat >= sw_lat,
+                ChannelMapEntry.lat <= ne_lat,
+                ChannelMapEntry.lng >= sw_lng,
+                ChannelMapEntry.lng <= ne_lng,
+                ChannelMapEntry.member_count >= min_subscribers,
+            )
+            .order_by(ChannelMapEntry.member_count.desc())
+            .limit(500)
+        )
+        if category:
+            q = q.where(ChannelMapEntry.category == category)
+        if language:
+            q = q.where(ChannelMapEntry.language == language)
+        if region:
+            q = q.where(ChannelMapEntry.region == region)
+        rows = (await session.execute(q)).scalars().all()
+        channels = [
+            {
+                "id": r.id,
+                "title": r.title,
+                "username": r.username,
+                "category": r.category,
+                "display_name": _CATEGORY_DISPLAY_NAMES.get((r.category or "other").lower(), r.category or "Другое"),
+                "member_count": r.member_count,
+                "engagement_rate": r.engagement_rate,
+                "language": r.language,
+                "region": getattr(r, "region", None),
+                "lat": r.lat,
+                "lng": r.lng,
+                "avatar_url": getattr(r, "avatar_url", None),
+                "verified": getattr(r, "verified", False),
+                "color": _CATEGORY_COLORS.get((r.category or "other").lower(), "#6b7280"),
+            }
+            for r in rows
+        ]
+        return {"zoom": zoom, "clusters": [], "channels": channels}
+
+    # ------------------------------------------------------------------
+    # Zoom 2-9: clustered view — check Redis cache first
+    # ------------------------------------------------------------------
+    cache_key = f"geo_clusters:{zoom}:{category or ''}:{language or ''}:{region or ''}:{min_subscribers}"
+    try:
+        cache = CacheService(task_queue)
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            return cached
+    except Exception:
+        cached = None
+
+    # Build base query — fetch only columns needed for clustering
+    q = select(
+        ChannelMapEntry.lat,
+        ChannelMapEntry.lng,
+        ChannelMapEntry.category,
+        ChannelMapEntry.member_count,
+        ChannelMapEntry.region,
+    ).where(
+        tf,
+        ChannelMapEntry.lat.isnot(None),
+        ChannelMapEntry.lng.isnot(None),
+        ChannelMapEntry.member_count >= min_subscribers,
+    )
+    if category:
+        q = q.where(ChannelMapEntry.category == category)
+    if language:
+        q = q.where(ChannelMapEntry.language == language)
+    if region:
+        q = q.where(ChannelMapEntry.region == region)
+
+    rows = (await session.execute(q)).all()
+
+    if zoom <= 5:
+        # ------------------------------------------------------------------
+        # Zoom 2-5: GROUP BY region (country-level clusters)
+        # ------------------------------------------------------------------
+        country_clusters: dict[str, dict] = {}
+        for lat, lng, cat, members, rgn in rows:
+            key = (rgn or "other").lower()
+            if key not in country_clusters:
+                country_clusters[key] = {
+                    "lat_sum": 0.0,
+                    "lng_sum": 0.0,
+                    "count": 0,
+                    "total_subscribers": 0,
+                    "categories": {},
+                    "region_raw": rgn or "other",
+                }
+            c = country_clusters[key]
+            c["lat_sum"] += lat
+            c["lng_sum"] += lng
+            c["count"] += 1
+            c["total_subscribers"] += members or 0
+            if cat:
+                c["categories"][cat] = c["categories"].get(cat, 0) + 1
+
+        result_clusters = []
+        for rgn_key, c in sorted(country_clusters.items(), key=lambda x: x[1]["count"], reverse=True):
+            n = c["count"]
+            dominant = max(c["categories"], key=c["categories"].get) if c["categories"] else None
+            result_clusters.append({
+                "lat": round(c["lat_sum"] / n, 2),
+                "lng": round(c["lng_sum"] / n, 2),
+                "count": n,
+                "total_subscribers": c["total_subscribers"],
+                "dominant_category": dominant,
+                "dominant_color": _CATEGORY_COLORS.get((dominant or "other").lower(), "#6b7280"),
+                "label": _REGION_LABELS.get(rgn_key, c["region_raw"]),
+                "region": c["region_raw"],
+            })
+    else:
+        # ------------------------------------------------------------------
+        # Zoom 6-9: GROUP BY rounded lat/lng (0.5° grid = city-level)
+        # ------------------------------------------------------------------
+        grid_clusters: dict[tuple[int, int], dict] = {}
+        for lat, lng, cat, members, rgn in rows:
+            cell_lat = int(math.floor(lat / 0.5))
+            cell_lng = int(math.floor(lng / 0.5))
+            key = (cell_lat, cell_lng)
+            if key not in grid_clusters:
+                grid_clusters[key] = {
+                    "lat_sum": 0.0,
+                    "lng_sum": 0.0,
+                    "count": 0,
+                    "total_subscribers": 0,
+                    "categories": {},
+                }
+            c = grid_clusters[key]
+            c["lat_sum"] += lat
+            c["lng_sum"] += lng
+            c["count"] += 1
+            c["total_subscribers"] += members or 0
+            if cat:
+                c["categories"][cat] = c["categories"].get(cat, 0) + 1
+
+        result_clusters = []
+        for _key, c in sorted(grid_clusters.items(), key=lambda x: x[1]["count"], reverse=True)[:500]:
+            n = c["count"]
+            dominant = max(c["categories"], key=c["categories"].get) if c["categories"] else None
+            result_clusters.append({
+                "lat": round(c["lat_sum"] / n, 3),
+                "lng": round(c["lng_sum"] / n, 3),
+                "count": n,
+                "total_subscribers": c["total_subscribers"],
+                "dominant_category": dominant,
+                "dominant_color": _CATEGORY_COLORS.get((dominant or "other").lower(), "#6b7280"),
+                "label": None,
+                "region": None,
+            })
+
+    response: dict[str, Any] = {
+        "zoom": zoom,
+        "clusters": result_clusters,
+        "channels": [],
+    }
+
+    # Store in Redis cache (60 s TTL)
+    try:
+        await cache.set(cache_key, response, ttl_seconds=60)
+    except Exception:
+        pass
+
+    return response
+
+
+@app.get("/v1/channel-map/countries")
+async def channel_map_countries(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return distinct regions (countries) with channel counts.
+
+    Used by the region filter dropdown in the v4 map UI.  Regions with NULL
+    or empty values are grouped under 'other'.  Sorted by count descending.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    tf = _channel_map_tenant_filter(tenant_context.tenant_id)
+    rows = (
+        await session.execute(
+            select(
+                func.coalesce(func.nullif(ChannelMapEntry.region, ""), "other").label("region"),
+                func.count(ChannelMapEntry.id).label("cnt"),
+            )
+            .where(tf)
+            .group_by(func.coalesce(func.nullif(ChannelMapEntry.region, ""), "other"))
+            .order_by(func.count(ChannelMapEntry.id).desc())
+            .limit(200)
+        )
+    ).all()
+
+    countries = []
+    for rgn, cnt in rows:
+        rgn_key = (rgn or "other").lower()
+        countries.append({
+            "region": rgn,
+            "display_name": _REGION_LABELS.get(rgn_key, rgn),
+            "count": cnt,
+        })
+    return {"countries": countries, "total": len(countries)}
 
 
 # ---------------------------------------------------------------------------

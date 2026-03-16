@@ -53,7 +53,10 @@ import { AntifraudPage } from "./pages/admin/AntifraudPage";
 import OfflinePage from "./pages/OfflinePage";
 import { PWAInstallPrompt } from "./components/PWAInstallPrompt";
 
-const ChannelMapPage = React.lazy(() => import("./pages/ChannelMapPageV2"));
+// Channel Map v4 (новый, 2D Leaflet) — основной маршрут
+const ChannelMapPage = React.lazy(() => import("./pages/ChannelMapPage"));
+// Channel Map v2 (старый 3D глобус) — доступен для сравнения
+const ChannelMapPageV2 = React.lazy(() => import("./pages/ChannelMapPageV2"));
 
 function ProtectedRoute() {
   const auth = useAuth();
@@ -96,6 +99,7 @@ export default function App() {
             <Route path="/user-parser" element={<UserParserPage />} />
             <Route path="/folders" element={<FoldersPage />} />
             <Route path="/channel-map" element={<Suspense fallback={<div className="loading-screen">Загружаем Channel Map…</div>}><ChannelMapPage /></Suspense>} />
+            <Route path="/channel-map-globe" element={<Suspense fallback={<div className="loading-screen">Загружаем Channel Map v2…</div>}><ChannelMapPageV2 /></Suspense>} />
             <Route path="/parser" element={<ParserPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="/campaigns" element={<CampaignsPage />} />
