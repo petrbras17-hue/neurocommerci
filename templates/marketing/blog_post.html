@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ post.title }} — NEURO COMMENTING</title>
+  <meta name="description" content="{{ post.description }}">
+  <link rel="canonical" href="{{ base_url }}/blog/{{ post.slug }}">
+  <meta property="og:title" content="{{ post.title }}">
+  <meta property="og:description" content="{{ post.description }}">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="{{ base_url }}/blog/{{ post.slug }}">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="NEURO COMMENTING">
+  <meta property="article:published_time" content="{{ post.date }}">
+  {% for tag in post.tags %}
+  <meta property="article:tag" content="{{ tag }}">
+  {% endfor %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    "headline": "{{ post.title }}",
+    "description": "{{ post.description }}",
+    "datePublished": "{{ post.date }}",
+    "dateModified": "{{ post.date }}",
+    "author": {
+      "@type": "Organization",
+      "name": "NEURO COMMENTING",
+      "url": "{{ base_url }}"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "NEURO COMMENTING",
+      "url": "{{ base_url }}"
+    },
+    "mainEntityOfPage": {
+      "@type": "WebPage",
+      "@id": "{{ base_url }}/blog/{{ post.slug }}"
+    },
+    "keywords": "{{ post.tags | join(', ') }}",
+    "inLanguage": "ru",
+    "wordCount": "{{ post.raw_markdown.split() | length }}"
+  }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static_css_url }}">
+  <style>
+    .blog-article-hero { padding: 80px 0 24px; }
+    .blog-article-hero h1 { font-size: 2.2rem; margin-bottom: 12px; line-height: 1.3; }
+    .blog-article-meta {
+      font-size: 0.85rem;
+      color: var(--text-secondary, #888);
+      font-family: 'JetBrains Mono', monospace;
+      margin-bottom: 8px;
+    }
+    .blog-back {
+      display: inline-block;
+      color: var(--accent, #00ff88);
+      text-decoration: none;
+      font-size: 0.9rem;
+      margin-bottom: 20px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .blog-back:hover { text-decoration: underline; }
+    .blog-content {
+      max-width: 720px;
+      padding-bottom: 80px;
+      line-height: 1.75;
+      font-size: 1.05rem;
+      color: var(--text-primary, #ddd);
+    }
+    .blog-content h1, .blog-content h2, .blog-content h3 {
+      margin-top: 2em;
+      margin-bottom: 0.6em;
+      color: var(--text-primary, #eee);
+    }
+    .blog-content h2 { font-size: 1.5rem; }
+    .blog-content h3 { font-size: 1.2rem; }
+    .blog-content p { margin-bottom: 1.2em; }
+    .blog-content ul, .blog-content ol {
+      margin-bottom: 1.2em;
+      padding-left: 1.5em;
+    }
+    .blog-content li { margin-bottom: 0.4em; }
+    .blog-content strong { color: var(--accent, #00ff88); font-weight: 600; }
+    .blog-content a { color: var(--accent, #00ff88); text-decoration: underline; }
+    .blog-content code {
+      background: var(--surface, #1a1a1b);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9em;
+    }
+    .blog-content pre {
+      background: var(--surface, #1a1a1b);
+      border: 1px solid var(--border, #222);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin-bottom: 1.2em;
+    }
+    .blog-content pre code {
+      background: none;
+      padding: 0;
+    }
+    .blog-content blockquote {
+      border-left: 3px solid var(--accent, #00ff88);
+      margin: 1.5em 0;
+      padding: 0.5em 1.2em;
+      color: var(--text-secondary, #aaa);
+    }
+    .blog-tags-footer { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border, #222); }
+    .blog-tag {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border, #333);
+      color: var(--accent, #00ff88);
+      font-family: 'JetBrains Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+<div class="site-backdrop"></div>
+
+<header>
+  <div class="page-shell">
+    <nav class="top-nav">
+      <a href="/" class="brand">
+        <span class="brand-mark">NC</span>
+        <span>NEURO COMMENTING</span>
+      </a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/blog">Блог</a>
+        <a href="/pricing">Тарифы</a>
+      </div>
+      <a href="/pricing" class="nav-cta">Получить демо</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+        <span></span><span></span><span></span>
+      </button>
+    </nav>
+    <nav class="mobile-nav" id="mobile-nav">
+      <a href="/">Главная</a>
+      <a href="/blog">Блог</a>
+      <a href="/pricing">Тарифы</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-shell blog-article-hero">
+    <a href="/blog" class="blog-back">&larr; Все статьи</a>
+    <div class="blog-article-meta">{{ post.date }} &middot; {{ post.reading_minutes }} мин. чтения</div>
+    <h1>{{ post.title }}</h1>
+  </section>
+
+  <section class="page-shell blog-content">
+    {{ post.html | safe }}
+
+    {% if post.tags %}
+    <div class="blog-tags-footer">
+      {% for tag in post.tags %}
+      <span class="blog-tag">{{ tag }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+</main>
+
+<footer>
+  <div class="page-shell">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
+        NEURO COMMENTING &copy; 2026
+      </div>
+      <div class="footer-links">
+        <a href="/">Главная</a>
+        <a href="/blog">Блог</a>
+        <a href="/pricing">Тарифы</a>
+      </div>
+    </div>
+    <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary);">
+      <span>NEURO COMMENTING — Telegram Growth OS</span>
+      <span>support@neurocommenting.ru</span>
+    </div>
+    <div class="footer-inner" style="margin-top:10px; gap:16px; font-size:0.8rem; color:var(--text-secondary);">
+      <a href="/terms" style="color:var(--text-secondary);">Пользовательское соглашение</a>
+      <a href="/privacy" style="color:var(--text-secondary);">Политика конфиденциальности</a>
+      <a href="/refund" style="color:var(--text-secondary);">Возврат средств</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", () => { mobileNav.classList.toggle("open"); });
+  mobileNav.querySelectorAll("a").forEach(function(link) {
+    link.addEventListener("click", function() { mobileNav.classList.remove("open"); });
+  });
+</script>
+</body>
+</html>

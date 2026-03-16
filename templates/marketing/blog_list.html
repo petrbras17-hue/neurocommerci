@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Блог — NEURO COMMENTING</title>
+  <meta name="description" content="Блог о нейрокомментинге, росте в Telegram, AI-автоматизации и стратегиях для брендов.">
+  <link rel="canonical" href="{{ base_url }}/blog">
+  <meta property="og:title" content="Блог — NEURO COMMENTING">
+  <meta property="og:description" content="Блог о нейрокомментинге, росте в Telegram, AI-автоматизации и стратегиях для брендов.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ base_url }}/blog">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="NEURO COMMENTING">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static_css_url }}">
+  <style>
+    .blog-hero { padding: 80px 0 40px; }
+    .blog-hero h1 { font-size: 2.4rem; margin-bottom: 12px; }
+    .blog-hero p { color: var(--text-secondary, #888); font-size: 1.1rem; }
+    .blog-grid { display: grid; gap: 24px; padding-bottom: 80px; }
+    .blog-card {
+      background: var(--surface, #111);
+      border: 1px solid var(--border, #222);
+      border-radius: 12px;
+      padding: 28px 32px;
+      transition: border-color 0.2s;
+      text-decoration: none;
+      display: block;
+      color: inherit;
+    }
+    .blog-card:hover { border-color: var(--accent, #00ff88); }
+    .blog-card h2 {
+      font-size: 1.35rem;
+      margin: 0 0 8px;
+      color: var(--text-primary, #eee);
+    }
+    .blog-card .blog-meta {
+      font-size: 0.85rem;
+      color: var(--text-secondary, #888);
+      margin-bottom: 10px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .blog-card .blog-desc {
+      color: var(--text-secondary, #aaa);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .blog-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .blog-tag {
+      font-size: 0.75rem;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border, #333);
+      color: var(--accent, #00ff88);
+      font-family: 'JetBrains Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+<div class="site-backdrop"></div>
+
+<header>
+  <div class="page-shell">
+    <nav class="top-nav">
+      <a href="/" class="brand">
+        <span class="brand-mark">NC</span>
+        <span>NEURO COMMENTING</span>
+      </a>
+      <div class="nav-links">
+        <a href="/">Главная</a>
+        <a href="/blog">Блог</a>
+        <a href="/pricing">Тарифы</a>
+      </div>
+      <a href="/pricing" class="nav-cta">Получить демо</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+        <span></span><span></span><span></span>
+      </button>
+    </nav>
+    <nav class="mobile-nav" id="mobile-nav">
+      <a href="/">Главная</a>
+      <a href="/blog">Блог</a>
+      <a href="/pricing">Тарифы</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="page-shell blog-hero">
+    <p class="eyebrow">Блог</p>
+    <h1>Telegram Growth OS: знания и стратегии</h1>
+    <p>Нейрокомментинг, парсинг каналов, AI-автоматизация и рост для брендов.</p>
+  </section>
+
+  <section class="page-shell blog-grid">
+    {% for post in posts %}
+    <a href="/blog/{{ post.slug }}" class="blog-card">
+      <div class="blog-meta">{{ post.date }} &middot; {{ post.reading_minutes }} мин. чтения</div>
+      <h2>{{ post.title }}</h2>
+      <p class="blog-desc">{{ post.description }}</p>
+      {% if post.tags %}
+      <div class="blog-tags">
+        {% for tag in post.tags %}
+        <span class="blog-tag">{{ tag }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </a>
+    {% endfor %}
+
+    {% if not posts %}
+    <p style="color: var(--text-secondary, #888);">Статьи скоро появятся.</p>
+    {% endif %}
+  </section>
+</main>
+
+<footer>
+  <div class="page-shell">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
+        NEURO COMMENTING &copy; 2026
+      </div>
+      <div class="footer-links">
+        <a href="/">Главная</a>
+        <a href="/blog">Блог</a>
+        <a href="/pricing">Тарифы</a>
+      </div>
+    </div>
+    <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary);">
+      <span>NEURO COMMENTING — Telegram Growth OS</span>
+      <span>support@neurocommenting.ru</span>
+    </div>
+    <div class="footer-inner" style="margin-top:10px; gap:16px; font-size:0.8rem; color:var(--text-secondary);">
+      <a href="/terms" style="color:var(--text-secondary);">Пользовательское соглашение</a>
+      <a href="/privacy" style="color:var(--text-secondary);">Политика конфиденциальности</a>
+      <a href="/refund" style="color:var(--text-secondary);">Возврат средств</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  const hamburgerBtn = document.getElementById("hamburger-btn");
+  const mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", () => { mobileNav.classList.toggle("open"); });
+  mobileNav.querySelectorAll("a").forEach(function(link) {
+    link.addEventListener("click", function() { mobileNav.classList.remove("open"); });
+  });
+</script>
+</body>
+</html>

@@ -103,6 +103,7 @@ from core.web_auth import (
     revoke_session_by_id,
     verify_telegram_login,
 )
+from core.blog_engine import get_all_posts, get_post as get_blog_post
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
 from core.telegram_bot_auth import (
     close_redis as _close_bot_auth_redis,
@@ -2108,6 +2109,42 @@ async def me_team(
     )
 
 
+@app.get("/blog", response_class=HTMLResponse)
+async def blog_list(request: Request) -> HTMLResponse:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    posts = get_all_posts()
+    return templates.TemplateResponse(
+        request,
+        "marketing/blog_list.html",
+        {
+            "request": request,
+            "posts": posts,
+            "base_url": base_url,
+            "static_css_url": f"{base_url}/static/marketing.css",
+        },
+    )
+
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+async def blog_post_page(request: Request, slug: str) -> HTMLResponse:
+    post = get_blog_post(slug)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    return templates.TemplateResponse(
+        request,
+        "marketing/blog_post.html",
+        {
+            "request": request,
+            "post": post,
+            "base_url": base_url,
+            "static_css_url": f"{base_url}/static/marketing.css",
+        },
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def landing_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "marketing/landing.html", _page_context(request, MARKETING_PAGES["home"]))
@@ -2235,12 +2272,14 @@ async def robots_txt(request: Request) -> str:
         "Allow: /terms\n"
         "Allow: /privacy\n"
         "Allow: /refund\n"
+        "Allow: /blog\n"
         "Disallow: /app\n"
         "Disallow: /auth\n"
         "Disallow: /v1\n"
         "Disallow: /api\n"
         "Disallow: /health\n"
         f"Sitemap: {base_url}/sitemap.xml\n"
+        f"Sitemap: {base_url}/feed.xml\n"
     )
 
 
@@ -2264,7 +2303,14 @@ async def sitemap_xml(request: Request) -> Response:
         {"path": "/terms", "priority": "0.3", "changefreq": "yearly"},
         {"path": "/privacy", "priority": "0.3", "changefreq": "yearly"},
         {"path": "/refund", "priority": "0.3", "changefreq": "yearly"},
+        {"path": "/blog", "priority": "0.7", "changefreq": "weekly"},
+        {"path": "/feed.xml", "priority": "0.5", "changefreq": "weekly"},
     ]
+    # Add individual blog post URLs
+    for post in get_all_posts():
+        _sitemap_pages.append(
+            {"path": f"/blog/{post.slug}", "priority": "0.6", "changefreq": "monthly"}
+        )
     urls = "\n".join(
         f"  <url>\n"
         f"    <loc>{base_url}{p['path']}</loc>\n"
@@ -2281,6 +2327,72 @@ async def sitemap_xml(request: Request) -> Response:
         "</urlset>\n"
     )
     return Response(content=body, media_type="application/xml")
+
+
+@app.get("/feed.xml")
+async def rss_feed(request: Request) -> Response:
+    from datetime import datetime as _dt
+
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+
+    # Hardcoded seed articles until blog engine is wired
+    _articles = [
+        {
+            "title": "Что такое нейрокомментинг и зачем он нужен бизнесу",
+            "slug": "what-is-neurocommenting",
+            "description": (
+                "Разбираем механику нейрокомментинга: как AI-генерация комментариев "
+                "в Telegram-каналах помогает брендам растить охваты и вовлечённость."
+            ),
+            "pub_date": "Sun, 10 Mar 2026 10:00:00 +0300",
+        },
+        {
+            "title": "Парсинг Telegram-каналов: как собрать базу для продвижения",
+            "slug": "telegram-channel-parsing",
+            "description": (
+                "Пошаговый гайд по парсингу каналов: ключевые слова, фильтры, "
+                "категории, и как использовать карту каналов NEURO COMMENTING."
+            ),
+            "pub_date": "Wed, 13 Mar 2026 12:00:00 +0300",
+        },
+        {
+            "title": "AI-контент для Telegram: от идеи до публикации за 60 секунд",
+            "slug": "ai-content-telegram",
+            "description": (
+                "Как Content Factory превращает одну идею в 6 форматов: "
+                "Telegram-пост, Twitter-тред, LinkedIn-статья, YouTube-описание, "
+                "Reels-идеи и email-рассылка."
+            ),
+            "pub_date": "Sun, 16 Mar 2026 09:00:00 +0300",
+        },
+    ]
+
+    items = "\n".join(
+        f"    <item>\n"
+        f"      <title>{a['title']}</title>\n"
+        f"      <link>{base_url}/blog/{a['slug']}</link>\n"
+        f"      <description>{a['description']}</description>\n"
+        f"      <pubDate>{a['pub_date']}</pubDate>\n"
+        f"      <guid isPermaLink=\"true\">{base_url}/blog/{a['slug']}</guid>\n"
+        f"    </item>"
+        for a in _articles
+    )
+
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n'
+        "<channel>\n"
+        "  <title>NEURO COMMENTING Blog</title>\n"
+        f"  <link>{base_url}/blog</link>\n"
+        "  <description>Telegram Growth OS — нейрокомментинг, парсинг каналов, AI-контент</description>\n"
+        "  <language>ru</language>\n"
+        f'  <atom:link href="{base_url}/feed.xml" rel="self" type="application/rss+xml"/>\n'
+        f"{items}\n"
+        "</channel>\n"
+        "</rss>\n"
+    )
+    return Response(content=body, media_type="application/rss+xml")
 
 
 @app.get("/v1/accounts")
