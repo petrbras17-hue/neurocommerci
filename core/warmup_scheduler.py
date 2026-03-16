@@ -92,11 +92,33 @@ class WarmupScheduler:
     async def start(self) -> None:
         """Запустить scheduler loop."""
         if self._running:
-            log.warning("warmup_scheduler: already running")
+            log.warning("warmup_scheduler: already running, skipping duplicate start")
             return
+        log.info(
+            "warmup_scheduler: starting (max_slots=%d, poll_interval=%ds, anti_ban_delay=%ds)",
+            MAX_CONCURRENT_SESSIONS,
+            POLL_INTERVAL_SEC,
+            ANTI_BAN_DELAY_SEC,
+        )
         self._running = True
         self._task = asyncio.create_task(self._run_forever())
-        log.info("warmup_scheduler: started")
+        self._task.add_done_callback(self._on_task_done)
+        log.info("warmup_scheduler: background task created, scheduler is active")
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Callback: логирует завершение background task (в т.ч. аварийное)."""
+        self._running = False  # сбрасываем флаг, чтобы restart был возможен
+        if task.cancelled():
+            log.info("warmup_scheduler: background task cancelled (normal shutdown)")
+        elif task.exception():
+            exc = task.exception()
+            log.error(
+                "warmup_scheduler: background task crashed unexpectedly: %s",
+                exc,
+                exc_info=exc,
+            )
+        else:
+            log.info("warmup_scheduler: background task finished normally")
 
     async def shutdown(self) -> None:
         """Остановить scheduler и все активные сессии."""

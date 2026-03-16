@@ -22,9 +22,63 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from storage.models import AdminAccount, AdminOperationLog
 
 logger = logging.getLogger(__name__)
+
+
+# ── 2FA encryption helpers ─────────────────────────────────────────
+
+
+def _get_fernet():
+    """Return a Fernet instance using TWOFA_ENCRYPTION_KEY, or None if key is not set."""
+    key = (settings.TWOFA_ENCRYPTION_KEY or "").strip()
+    if not key:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+        return Fernet(key.encode())
+    except Exception as exc:
+        logger.warning("TWOFA_ENCRYPTION_KEY is invalid, 2FA encryption disabled: %s", exc)
+        return None
+
+
+def encrypt_2fa(plaintext: str) -> str:
+    """
+    Encrypt a 2FA password with Fernet (AES-128-CBC + HMAC-SHA256).
+    Returns the ciphertext as a base64 string prefixed with 'fernet:'.
+    Falls back to plaintext storage with a warning when TWOFA_ENCRYPTION_KEY is not set.
+    """
+    fernet = _get_fernet()
+    if fernet is None:
+        logger.warning(
+            "TWOFA_ENCRYPTION_KEY is not set — storing 2FA password in plaintext. "
+            "Set this env var to enable encryption at rest."
+        )
+        return plaintext
+    token = fernet.encrypt(plaintext.encode()).decode()
+    return f"fernet:{token}"
+
+
+def decrypt_2fa(ciphertext: str) -> str:
+    """
+    Decrypt a Fernet-encrypted 2FA password.
+    Handles both encrypted ('fernet:...' prefix) and legacy plaintext values transparently.
+    Returns the plaintext password.
+    """
+    if not ciphertext or not ciphertext.startswith("fernet:"):
+        # Legacy plaintext value — return as-is for backward compatibility.
+        return ciphertext
+    fernet = _get_fernet()
+    if fernet is None:
+        logger.warning(
+            "TWOFA_ENCRYPTION_KEY is not set — cannot decrypt 2FA password. "
+            "Returning raw ciphertext; set TWOFA_ENCRYPTION_KEY to fix this."
+        )
+        return ciphertext
+    token = ciphertext[len("fernet:"):]
+    return fernet.decrypt(token.encode()).decode()
 
 # ── Storage paths ──────────────────────────────────────────────────
 
@@ -449,8 +503,7 @@ async def harden_account(
             hint = f"nc-{account.phone[-4:]}"
             try:
                 await client.edit_2fa(new_password=password, hint=hint)
-                # TODO: encrypt 2FA password at rest instead of storing plaintext
-                account.two_fa_password = password
+                account.two_fa_password = encrypt_2fa(password)
                 result["two_fa_set"] = True
 
                 # Update metadata.json

@@ -148,6 +148,7 @@ class Settings(BaseSettings):
     ACCOUNT_SLEEP_START_HOUR: int = Field(default=23)    # Начало "сна" (UTC)
     ACCOUNT_SLEEP_END_HOUR: int = Field(default=7)       # Конец "сна" (UTC)
     SESSION_BACKUP_KEY: str = Field(default="")          # Fernet key для шифрования бэкапов
+    TWOFA_ENCRYPTION_KEY: str = Field(default="")        # Fernet key для шифрования 2FA паролей в БД
 
     # --- Monitoring ---
     MONITOR_POLL_INTERVAL_SEC: int = Field(default=180)  # 3 мин

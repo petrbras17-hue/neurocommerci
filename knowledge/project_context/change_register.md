@@ -7,15 +7,15 @@ This is the human-readable delivery ledger. Update it after each sprint or meani
 | Field | Value |
 |---|---|
 | Current local branch | `main` |
-| Last committed HEAD | `1d55d18` |
+| Last committed HEAD | `8686404` |
 | VPS safe branch | `main` |
-| VPS safe commit | `1d55d18` |
+| VPS safe commit | `8686404` |
 | VPS deploy path | `/opt/neuro-commenting` |
 | VPS deploy mode | `git checkout` via nginx+Docker |
 | Safe baseline services | `db`, `redis`, `ops_api`, `bot` |
 | Paused outside safe baseline | `packager`, `worker_a`, `worker_b` |
-| Current completed sprint | `Sprint 26 (VPS Deploy + Full Sync)` |
-| Next planned sprint | `Sprint 27 (Live Testing + KZ Account Warmup)` |
+| Current completed sprint | `Sprint 27 (Live Testing + KZ Account Warmup)` |
+| Next planned sprint | `Sprint 28 (Global Channel Map + Parallel Audit)` |
 | Public URL | `https://176-124-221-253.sslip.io/` |
 
 ## Delivery Ledger

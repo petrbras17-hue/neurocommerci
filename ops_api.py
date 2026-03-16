@@ -1432,12 +1432,21 @@ async def lifespan(_: FastAPI):
         warmup_scheduler = None
         try:
             from core.warmup_scheduler import WarmupScheduler
+            log.info("Initializing WarmupScheduler with db_session_factory=%r", async_session)
             warmup_scheduler = WarmupScheduler(db_session_factory=async_session)
             await warmup_scheduler.start()
             app_state["warmup_scheduler"] = warmup_scheduler
-            log.info("Autonomous warmup scheduler started")
+            log.info(
+                "WarmupScheduler started successfully: running=%s, active_sessions=%d",
+                warmup_scheduler.is_running,
+                warmup_scheduler.active_count,
+            )
         except Exception as exc:
-            log.warning(f"Warmup scheduler startup skipped: {exc}")
+            log.error(
+                "WarmupScheduler startup FAILED — autonomous warmup will not run: %s",
+                exc,
+                exc_info=True,
+            )
 
         yield
     finally:
@@ -1652,10 +1661,25 @@ async def health_check() -> JSONResponse:
     except Exception as exc:
         log.warning("health: redis probe failed: %s", exc)
 
+    # Warmup scheduler probe
+    scheduler_running = False
+    scheduler_active_sessions = 0
+    ws = app_state.get("warmup_scheduler")
+    if ws is not None:
+        scheduler_running = ws.is_running
+        scheduler_active_sessions = ws.active_count
+
     overall = "ok" if (db_ok and redis_ok) else "degraded"
     return JSONResponse(
         status_code=status.HTTP_200_OK if overall == "ok" else status.HTTP_503_SERVICE_UNAVAILABLE,
-        content={"status": overall, "db": db_ok, "redis": redis_ok, "version": "sprint-4"},
+        content={
+            "status": overall,
+            "db": db_ok,
+            "redis": redis_ok,
+            "warmup_scheduler": scheduler_running,
+            "warmup_scheduler_active_sessions": scheduler_active_sessions,
+            "version": "sprint-4",
+        },
     )
 
 

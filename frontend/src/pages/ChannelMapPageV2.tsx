@@ -28,6 +28,7 @@ import {
   useSearchShortcut,
 } from "../components/channel-map/SearchOverlay";
 import { DiscoveryPanel } from "../components/channel-map/discovery/DiscoveryPanel";
+import GlobeErrorBoundary from "../components/channel-map/GlobeErrorBoundary";
 import { useChannelData } from "../components/channel-map/hooks/useChannelData";
 import { useGlobeInteraction } from "../components/channel-map/hooks/useGlobeInteraction";
 import { useMapMode } from "../components/channel-map/hooks/useMapMode";
@@ -195,7 +196,7 @@ export default function ChannelMapPageV2() {
   // ── Category filter from left panel ──────────────────────────────────
   const handleCategoryFilter = useCallback(
     (cat: string | null) => {
-      data.setSelectedCategory(cat ?? '');
+      data.setSelectedCategory(cat);
     },
     [data],
   );
@@ -381,21 +382,23 @@ export default function ChannelMapPageV2() {
               Загрузка карты каналов...
             </div>
           ) : (
-            <GlobeView
-              geoPoints={data.geoPoints}
-              selectedCategory={data.selectedCategory}
-              selectedChannelId={globe.selectedChannelId}
-              onChannelClick={handleChannelClick}
-              onHexClick={handleHexClick}
-              onBackgroundClick={handleBackgroundClick}
-              globeCenter={globe.globeCenter}
-              displayMode={globe.displayMode}
-              hudMode={mode}
-              isMobile={globe.isMobile}
-              ringsData={ringsData}
-              clusterData={globe.displayMode === "hex" ? clusters : undefined}
-              onClusterClick={handleClusterClick}
-            />
+            <GlobeErrorBoundary>
+              <GlobeView
+                geoPoints={data.geoPoints}
+                selectedCategory={data.selectedCategory}
+                selectedChannelId={globe.selectedChannelId}
+                onChannelClick={handleChannelClick}
+                onHexClick={handleHexClick}
+                onBackgroundClick={handleBackgroundClick}
+                globeCenter={globe.globeCenter}
+                displayMode={globe.displayMode}
+                hudMode={mode}
+                isMobile={globe.isMobile}
+                ringsData={ringsData}
+                clusterData={globe.displayMode === "hex" ? clusters : undefined}
+                onClusterClick={handleClusterClick}
+              />
+            </GlobeErrorBoundary>
           )}
         </div>
 
