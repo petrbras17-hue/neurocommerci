@@ -1498,15 +1498,7 @@ app.add_middleware(
 )
 
 
-_scheduler_boot_task = None
-
-@app.middleware("http")
-async def _lazy_scheduler_boot(request: Request, call_next):
-    """Boot WarmupScheduler on first HTTP request (guaranteed after DB/Redis init)."""
-    global _scheduler_boot_task
-    if _scheduler_boot_task is None:
-        _scheduler_boot_task = asyncio.create_task(_do_scheduler_boot())
-    return await call_next(request)
+_scheduler_boot_done = False
 
 
 async def _do_scheduler_boot():
@@ -1688,7 +1680,12 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/health")
 async def health_check() -> JSONResponse:
-    """Detailed health check — verifies DB and Redis connectivity."""
+    """Detailed health check — verifies DB and Redis connectivity. Also lazy-boots scheduler."""
+    global _scheduler_boot_done
+    if not _scheduler_boot_done:
+        _scheduler_boot_done = True
+        asyncio.create_task(_do_scheduler_boot())
+
     db_ok = False
     redis_ok = False
 
