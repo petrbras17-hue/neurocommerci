@@ -1498,6 +1498,20 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def _start_warmup_scheduler():
+    """Start WarmupScheduler independently of lifespan (which may be blocked by other init)."""
+    await asyncio.sleep(5)  # wait for DB/Redis to init
+    try:
+        from core.warmup_scheduler import WarmupScheduler
+        ws = WarmupScheduler(db_session_factory=async_session)
+        await ws.start()
+        app_state["warmup_scheduler"] = ws
+        log.info("WarmupScheduler started via on_event: running=%s", ws.is_running)
+    except Exception as exc:
+        log.error("WarmupScheduler on_event startup FAILED: %s", exc, exc_info=True)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
