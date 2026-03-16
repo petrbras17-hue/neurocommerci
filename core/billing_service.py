@@ -518,18 +518,21 @@ async def list_payments(
     """List payment history for a tenant from the payment_events table."""
     from sqlalchemy import text
 
-    result = await session.execute(
-        text("""
-            SELECT id, tenant_id, subscription_id, event_type, amount_rub, payment_provider,
-                   external_payment_id, metadata, created_at
-            FROM payment_events
-            WHERE tenant_id = :tenant_id
-            ORDER BY created_at DESC
-            LIMIT :limit OFFSET :offset
-        """),
-        {"tenant_id": tenant_id, "limit": limit, "offset": offset},
-    )
-    rows = result.fetchall()
+    try:
+        result = await session.execute(
+            text("""
+                SELECT id, tenant_id, subscription_id, event_type, amount_rub, payment_provider,
+                       external_payment_id, metadata, created_at
+                FROM payment_events
+                WHERE tenant_id = :tenant_id
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """),
+            {"tenant_id": tenant_id, "limit": limit, "offset": offset},
+        )
+        rows = result.fetchall()
+    except Exception:
+        return []
     return [
         {
             "id": r[0],
