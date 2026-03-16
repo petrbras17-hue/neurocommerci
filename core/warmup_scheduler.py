@@ -32,6 +32,7 @@ MAX_CONCURRENT_SESSIONS = 10    # макс параллельных Telethon-п�
 ANTI_BAN_DELAY_SEC = 5          # задержка между подключениями
 HOURLY_MAINTENANCE_INTERVAL = 3600
 DAILY_DIGEST_INTERVAL = 86400
+MAX_TENANT_SCAN = 100               # макс tenant_id для brute-force итерации
 
 
 class WarmupScheduler:
