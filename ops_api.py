@@ -14975,5 +14975,120 @@ async def account_phase_rollback(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Content Factory endpoints
+# ---------------------------------------------------------------------------
+
+class ContentGenerateRequest(BaseModel):
+    source_text: str
+    topic: str
+    target_audience: str
+    brand_voice: str = "professional"
+
+
+@app.post("/v1/content/generate")
+async def content_generate(
+    payload: ContentGenerateRequest,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Трансформирует один источник контента в посты для 6 платформ.
+
+    Паттерн Велса: Telegram + Twitter/X + LinkedIn + YouTube + Reels/Shorts + Email.
+    Генерация параллельная — все платформы одновременно через asyncio.gather.
+    """
+    from core.content_factory import BRAND_VOICE_OPTIONS, ContentFactory
+
+    if payload.brand_voice not in BRAND_VOICE_OPTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Недопустимый голос бренда. Доступные значения: {BRAND_VOICE_OPTIONS}",
+        )
+
+    if not payload.source_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="source_text не может быть пустым",
+        )
+
+    if len(payload.source_text) > 20_000:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="source_text слишком длинный (максимум 20 000 символов)",
+        )
+
+    factory = ContentFactory()
+    pack = await factory.generate_all(
+        session,
+        source_text=payload.source_text,
+        topic=payload.topic,
+        target_audience=payload.target_audience,
+        brand_voice=payload.brand_voice,
+        tenant_id=tenant_context.tenant_id,
+        workspace_id=tenant_context.workspace_id,
+        user_id=tenant_context.user_id,
+    )
+    return pack.to_dict()
+
+
+@app.get("/v1/content/templates")
+async def content_templates(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """Возвращает список доступных голосов бренда с описаниями."""
+    from core.content_factory import BRAND_VOICES
+
+    return {
+        "brand_voices": [
+            {"key": key, "description": desc}
+            for key, desc in BRAND_VOICES.items()
+        ],
+        "platforms": [
+            {
+                "key": "telegram",
+                "name": "Telegram",
+                "max_length": "500-1500 символов",
+                "format": "Markdown, эмодзи-заголовки",
+                "tone": "Разговорный, прямой",
+            },
+            {
+                "key": "twitter_thread",
+                "name": "Twitter/X Thread",
+                "max_length": "5-10 твитов по 280 символов",
+                "format": "Короткие удары, нумерация",
+                "tone": "Смелый, провокационный",
+            },
+            {
+                "key": "linkedin",
+                "name": "LinkedIn",
+                "max_length": "1300-2000 символов",
+                "format": "Абзацы, хэштеги",
+                "tone": "Профессиональный, экспертный",
+            },
+            {
+                "key": "youtube_description",
+                "name": "YouTube Description",
+                "max_length": "500-2000 символов",
+                "format": "SEO-ключевые слова, таймкоды",
+                "tone": "Информационный, CTA",
+            },
+            {
+                "key": "reels_ideas",
+                "name": "Reels/Shorts Ideas",
+                "max_length": "5 идей по 15-60 секунд",
+                "format": "Хук → Ценность → CTA",
+                "tone": "Энергичный, визуальный",
+            },
+            {
+                "key": "email",
+                "name": "Email Newsletter",
+                "max_length": "300-800 символов",
+                "format": "Тема + тело + CTA",
+                "tone": "Личный, тёплый",
+            },
+        ],
+    }
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8081)

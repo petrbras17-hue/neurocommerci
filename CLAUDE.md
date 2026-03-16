@@ -47,6 +47,81 @@ Start here on every session:
 - Prefer the project agents in `.claude/agents/` for sprint delivery, QA, and VPS audits.
 - Prefer the project skill `.claude/skills/sprint-context/` when the task is about loading or refreshing sprint context.
 
+## Project Skills
+
+The project includes custom Claude Code skills in `.claude/skills/`. Use `/skill-name` to invoke them directly.
+
+### Built-in Project Skills
+
+| Skill | Path | Purpose |
+|-------|------|---------|
+| `/sprint-context` | `.claude/skills/sprint-context/` | Load Scrum, sprint, VPS, and ledger context before any work. |
+| `/neuro-ops` | `.claude/skills/neuro-ops/` | VPS operations: deploy, monitor, troubleshoot, query DB, view logs, check health. |
+| `/channel-ops` | `.claude/skills/channel-ops/` | Channel map: parse, enrich, refresh, export, import channels. |
+| `/check-status` | `.claude/skills/check-status/` | Quick account and system status check. |
+| `/compile-all` | `.claude/skills/compile-all/` | Compile-check all Python and TypeScript. |
+| `/vps-deploy` | `.claude/skills/vps-deploy/` | VPS deployment workflow. |
+| `/account-lifecycle` | `.claude/skills/account-lifecycle/` | Account lifecycle management. |
+| `/proxy-management` | `.claude/skills/proxy-management/` | Proxy health and rotation. |
+| `/telegram-parser` | `.claude/skills/telegram-parser/` | Telegram channel parsing. |
+| `/social-parser` | `.claude/skills/social-parser/` | Social media parsing. |
+| `/web-parser` | `.claude/skills/web-parser/` | Web content parsing. |
+
+### Recommended External Skills (install via `npx skills add`)
+
+These community and official skills complement the project stack:
+
+```bash
+# Security audit (Trail of Bits — static analysis, code auditing)
+npx skills add trailofbits/skills
+
+# PostgreSQL best practices (Supabase)
+npx skills add supabase/agent-skills
+
+# React/frontend patterns (Vercel)
+npx skills add vercel-labs/agent-skills
+
+# Web app testing via Playwright (Anthropic official)
+npx skills add anthropics/skills --skill webapp-testing
+
+# Frontend design (Anthropic official)
+npx skills add anthropics/skills --skill frontend-design
+
+# Docker validation & security
+npx skills add jezweb/claude-skills
+
+# Code review + FastAPI + React patterns (Beagle)
+npx skills add existential-birds/beagle
+
+# Superpowers skills library (20+ battle-tested skills)
+npx skills add obra/superpowers
+```
+
+### Recommended MCP Servers
+
+```bash
+# Playwright browser automation (already configured)
+claude mcp add playwright -- npx @anthropic-ai/mcp-playwright
+
+# Telegram Bot MCP (send messages, manage chats)
+claude mcp add telegram -- npx @anthropic-ai/mcp-telegram
+
+# Context7 — version-accurate docs lookup
+claude mcp add context7 -- npx @anthropic-ai/mcp-context7
+
+# Hound — supply chain security scanning
+claude mcp add hound -- npx @anthropic-ai/mcp-hound
+```
+
+### Skill Installation Notes
+
+- Personal skills: `~/.claude/skills/<name>/SKILL.md` (all projects)
+- Project skills: `.claude/skills/<name>/SKILL.md` (this project only)
+- External skills install to project `.claude/skills/` by default
+- Use `npx skills add <repo> -g` for global install
+- Use `npx skills add <repo> --list` to preview before installing
+- Always review external skill code before installing
+
 ## Legacy Note
 - Older project files and some existing `.claude/agents/` entries describe the historical Telegram runtime.
 - For SaaS sprints, prefer the new Scrum and Sprint files imported above.

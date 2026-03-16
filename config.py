@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     FARM_THREAD_STOP_TIMEOUT_SEC: int = Field(default=30)
     FARM_EVENTS_RETENTION_DAYS: int = Field(default=30)
     FARM_HEALTH_RECALC_INTERVAL_SEC: int = Field(default=300)  # 5 min
+    FARM_QUALITY_GATE_ENABLED: bool = Field(default=True)  # DO-Framework self-check
 
     # --- Warm-up (14-дневный прогрев новых аккаунтов) ---
     WARMUP_LIGHT_LIMIT: int = Field(default=3)      # Дни 5-7: 1-3 коммента
@@ -245,6 +246,17 @@ class Settings(BaseSettings):
     SMTP_USER: str = Field(default="")
     SMTP_PASSWORD: str = Field(default="")
     SMTP_FROM_EMAIL: str = Field(default="")  # Defaults to SMTP_USER if empty
+
+    # --- Competitor Intelligence ---
+    # YouTube competitor video analysis via Supadata API + AI.
+    # Get your key at https://api.supadata.ai
+    SUPADATA_API_KEY: str = Field(default="")
+
+    # --- AI Comment Quality ---
+    # Двухэтапная генерация: LLM улучшает промпт перед финальной генерацией.
+    # Паттерн из Vels n8n Nano Banana Bot.
+    # Значения: "true" | "false"
+    AI_PROMPT_IMPROVEMENT_ENABLED: str = Field(default="false")
 
     # --- Observability ---
     SENTRY_DSN: str = Field(default="")

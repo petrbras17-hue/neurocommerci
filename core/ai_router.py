@@ -163,6 +163,15 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
+    # --- Prompt Improvement (двухэтапная генерация) ---
+    "prompt_improvement": TaskPolicy(
+        task_type="prompt_improvement",
+        agent_name="Prompt Improvement Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="json_object",
+        allow_downgrade=True,
+        approval_required=False,
+    ),
     # --- Farm & Commenting ---
     "farm_comment": TaskPolicy(
         task_type="farm_comment",
@@ -376,6 +385,22 @@ DEFAULT_TASK_POLICIES: dict[str, TaskPolicy] = {
         requested_model_tier=TIER_WORKER,
         output_contract_type="json_object",
     ),
+    # --- Competitor Intelligence (YouTube transcript analysis) ---
+    "competitor_analysis": TaskPolicy(
+        task_type="competitor_analysis",
+        agent_name="Competitor Intelligence Agent",
+        requested_model_tier=TIER_MANAGER,
+        output_contract_type="json_object",
+        allow_downgrade=True,
+        approval_required=False,
+    ),
+    # --- Content Factory (multi-platform content repurposing) ---
+    "content_factory": TaskPolicy(
+        task_type="content_factory",
+        agent_name="Content Factory Agent",
+        requested_model_tier=TIER_WORKER,
+        output_contract_type="text",
+    ),
 }
 
 
@@ -419,6 +444,7 @@ OPENROUTER_MODEL_CATALOG: dict[str, dict] = {
 
 # Task-to-model affinity: some tasks work better with specific models
 TASK_MODEL_AFFINITY: dict[str, list[str]] = {
+    "prompt_improvement": ["openai/gpt-4.1-mini", "anthropic/claude-haiku-4.5", "deepseek/deepseek-chat-v3-0324:free"],
     "farm_comment": ["openai/gpt-4.1-mini", "anthropic/claude-haiku-4.5", "deepseek/deepseek-chat-v3-0324:free"],
     "farm_comment_hater": ["openai/gpt-4.1-mini", "moonshotai/kimi-k2.5", "deepseek/deepseek-chat-v3-0324"],
     "farm_comment_expert": ["anthropic/claude-sonnet-4.6", "openai/gpt-4.1", "deepseek/deepseek-r1"],
@@ -432,6 +458,7 @@ TASK_MODEL_AFFINITY: dict[str, list[str]] = {
     "campaign_strategy_summary": ["openai/gpt-5.4", "anthropic/claude-opus-4.6"],
     "competitor_analysis": ["openai/gpt-5.4", "anthropic/claude-opus-4.6"],
     "content_generation": ["anthropic/claude-sonnet-4.6", "openai/gpt-4.1"],
+    "content_factory": ["anthropic/claude-haiku-4.5", "openai/gpt-4.1-mini", "google/gemini-2.5-flash"],
 }
 
 

@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional
 from sqlalchemy import Integer as sa_Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from core.ai_router import route_ai_task
 from storage.models import CommentABResult, CommentStyleTemplate, FarmEvent
 from storage.sqlite_db import apply_session_rls_context, async_session
@@ -477,6 +478,187 @@ class CommentGenerator:
 
 
 # ---------------------------------------------------------------------------
+# PromptImprover
+# ---------------------------------------------------------------------------
+
+class PromptImprover:
+    """
+    Двухэтапная генерация: улучшаем промпт перед финальной генерацией комментария.
+
+    Паттерн из Vels (n8n Nano Banana Bot):
+    Шаг 1: LLM анализирует пост + контекст и создаёт УЛУЧШЕННЫЙ промпт.
+    Шаг 2: CommentGenerator использует улучшенный промпт для генерации комментария.
+
+    Результат: более качественные, релевантные и естественные комментарии.
+
+    Включается флагом AI_PROMPT_IMPROVEMENT_ENABLED="true" в конфиге.
+    При ошибке на шаге 1 автоматически падает на прямую генерацию.
+    """
+
+    _META_SYSTEM = (
+        "Ты эксперт по Telegram-маркетингу и написанию вирусных комментариев. "
+        "Твоя задача — создать улучшенный промпт для генерации комментария. "
+        "Верни JSON: {\"improved_prompt\": \"<текст улучшенного промпта>\"}."
+    )
+
+    async def improve_prompt(
+        self,
+        post_analysis: "PostAnalysis",
+        style: str,
+        context: "CommentContext",
+        tenant_id: int,
+        original_custom_prompt: str = "",
+    ) -> Optional[str]:
+        """
+        Шаг 1: создаёт улучшенный промпт на основе анализа поста.
+
+        Args:
+            post_analysis:         результат анализа поста (PostAnalysis)
+            style:                 выбранный стиль комментирования
+            context:               анализ существующих комментариев
+            tenant_id:             для RLS
+            original_custom_prompt: оригинальные инструкции оператора (если есть)
+
+        Returns:
+            Строка улучшенного промпта или None при ошибке.
+        """
+        key_points_text = "; ".join(post_analysis.key_points) if post_analysis.key_points else "нет"
+        gaps_text = "; ".join(context.gaps[:2]) if context.gaps else "нет"
+        existing_themes_text = ", ".join(context.top_themes[:3]) if context.top_themes else "нет"
+
+        meta_prompt = (
+            "Ты эксперт по написанию комментариев в Telegram.\n"
+            "Проанализируй пост и создай УЛУЧШЕННЫЙ промпт для генерации комментария.\n\n"
+            f"Тема поста: {post_analysis.topic}\n"
+            f"Тональность поста: {post_analysis.sentiment}\n"
+            f"Ключевые тезисы: {key_points_text}\n"
+            f"Рекомендованный угол: {post_analysis.suggested_angle}\n"
+            f"Язык поста: {post_analysis.language}\n"
+            f"Стиль комментария: {style}\n"
+            f"Темы чужих комментариев: {existing_themes_text}\n"
+            f"Пробелы в дискуссии: {gaps_text}\n"
+            f"Оценка возможности: {context.opportunity_score:.2f}\n"
+            + (f"Базовые инструкции оператора: {original_custom_prompt}\n" if original_custom_prompt else "")
+            + "\nСоздай промпт который:\n"
+            "1. Учитывает контекст и тональность поста\n"
+            "2. Добавляет конкретику вместо общих фраз\n"
+            "3. Включает релевантный вопрос или наблюдение\n"
+            "4. Избегает шаблонных AI-фраз\n"
+            "5. Указывает конкретный угол для данного поста\n\n"
+            "Верни JSON: {\"improved_prompt\": \"<улучшенный промпт на языке поста>\"}"
+        )
+
+        try:
+            async with async_session() as sess:
+                async with sess.begin():
+                    await apply_session_rls_context(sess, tenant_id=tenant_id)
+                    result = await route_ai_task(
+                        sess,
+                        task_type="prompt_improvement",
+                        prompt=meta_prompt,
+                        system_instruction=self._META_SYSTEM,
+                        tenant_id=tenant_id,
+                        max_output_tokens=300,
+                        temperature=0.6,
+                        surface="prompt_improver",
+                    )
+
+            if result.ok and result.parsed:
+                improved = (result.parsed or {}).get("improved_prompt", "")
+                improved = improved.strip()
+                if improved:
+                    log.debug(
+                        f"PromptImprover: улучшенный промпт получен "
+                        f"({len(improved)} симв., модель={result.model_name})"
+                    )
+                    return improved
+
+            log.debug(
+                f"PromptImprover.improve_prompt: AI вернул пустой результат "
+                f"(ok={result.ok}, parsed={result.parsed})"
+            )
+        except Exception as exc:
+            log.warning(f"PromptImprover.improve_prompt: {exc}")
+
+        return None
+
+    async def generate_with_improvement(
+        self,
+        post_analysis: "PostAnalysis",
+        comment_context: "CommentContext",
+        style: str,
+        tone: str,
+        language: str,
+        tenant_id: int,
+        original_custom_prompt: str = "",
+    ) -> Optional[str]:
+        """
+        Двухэтапная генерация: улучшить промпт → сгенерировать комментарий.
+
+        Шаг 1: PromptImprover.improve_prompt() → улучшенный промпт.
+        Шаг 2: CommentGenerator.generate_viral_comment() с улучшенным промптом.
+        Fallback: при ошибке шага 1 используем прямую генерацию без улучшения.
+
+        Args:
+            post_analysis:         результат анализа поста
+            comment_context:       анализ существующих комментариев
+            style:                 выбранный стиль
+            tone:                  тональность
+            language:              язык ('auto' или ISO-код)
+            tenant_id:             для RLS
+            original_custom_prompt: оригинальные инструкции оператора
+
+        Returns:
+            Текст комментария или None при ошибке обоих шагов.
+        """
+        generator = CommentGenerator()
+
+        # Шаг 1: улучшение промпта
+        improved_prompt = await self.improve_prompt(
+            post_analysis=post_analysis,
+            style=style,
+            context=comment_context,
+            tenant_id=tenant_id,
+            original_custom_prompt=original_custom_prompt,
+        )
+
+        if improved_prompt:
+            # Шаг 2а: генерация с улучшенным промптом
+            log.debug("PromptImprover: генерация с улучшенным промптом (шаг 2)")
+            result = await generator.generate_viral_comment(
+                post_analysis=post_analysis,
+                comment_context=comment_context,
+                tone=tone,
+                language=language,
+                tenant_id=tenant_id,
+                custom_prompt=improved_prompt,
+            )
+            if result:
+                return result
+            # Улучшенный промпт был, но генерация не дала текст — пробуем fallback
+            log.debug(
+                "PromptImprover: генерация с улучшенным промптом не дала текст, "
+                "fallback на прямую генерацию"
+            )
+
+        else:
+            log.debug(
+                "PromptImprover: шаг 1 не дал промпт (ошибка/пустой ответ), "
+                "fallback на прямую генерацию"
+            )
+
+        # Шаг 2б (fallback): прямая генерация без улучшения промпта
+        return await generator.generate_viral_comment(
+            post_analysis=post_analysis,
+            comment_context=comment_context,
+            tone=tone,
+            language=language,
+            tenant_id=tenant_id,
+            custom_prompt=original_custom_prompt,
+        )
+
+
+# ---------------------------------------------------------------------------
 # CommentStrategy
 # ---------------------------------------------------------------------------
 
@@ -633,6 +815,7 @@ class CommentOrchestrator:
         self._analyzer = PostAnalyzer()
         self._generator = CommentGenerator()
         self._strategy = CommentStrategy()
+        self._improver = PromptImprover()
 
         # Внутренние счётчики для rate-limiting
         self._hour_bucket: tuple[int, int] = (0, 0)   # (utc_hour, count)
@@ -730,20 +913,42 @@ class CommentOrchestrator:
         ).strip()
 
         # 7. Генерация комментария
-        comment_text = await self._generator.generate_viral_comment(
-            post_analysis=post_analysis,
-            comment_context=comment_context,
-            tone=tone,
-            language=self.config.language,
-            tenant_id=self.tenant_id,
-            custom_prompt=augmented_prompt,
+        # Если AI_PROMPT_IMPROVEMENT_ENABLED="true" — двухэтапная генерация через
+        # PromptImprover (шаг 1: улучшить промпт, шаг 2: сгенерировать комментарий).
+        # Иначе — прямая генерация (поведение до этого изменения).
+        _improvement_enabled = (
+            settings.AI_PROMPT_IMPROVEMENT_ENABLED.strip().lower() == "true"
         )
+
+        if _improvement_enabled:
+            log.debug(
+                "CommentOrchestrator: используем двухэтапную генерацию (PromptImprover)"
+            )
+            comment_text = await self._improver.generate_with_improvement(
+                post_analysis=post_analysis,
+                comment_context=comment_context,
+                style=style,
+                tone=tone,
+                language=self.config.language,
+                tenant_id=self.tenant_id,
+                original_custom_prompt=augmented_prompt,
+            )
+        else:
+            comment_text = await self._generator.generate_viral_comment(
+                post_analysis=post_analysis,
+                comment_context=comment_context,
+                tone=tone,
+                language=self.config.language,
+                tenant_id=self.tenant_id,
+                custom_prompt=augmented_prompt,
+            )
 
         if not comment_text:
             await self._log_event(
                 event_type="comment_failed",
                 message="AI returned no comment text",
                 severity="warn",
+                metadata={"prompt_improvement_enabled": _improvement_enabled},
             )
             return None, decision
 
@@ -760,6 +965,7 @@ class CommentOrchestrator:
             severity="info",
             metadata={
                 "tone": tone,
+                "prompt_improvement_enabled": _improvement_enabled,
                 "style": style,
                 "opportunity_score": comment_context.opportunity_score,
                 "comment_preview": comment_text[:80],

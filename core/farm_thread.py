@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from storage.models import FarmThread as FarmThreadModel, FarmConfig, Account
 from utils.helpers import utcnow
 from utils.logger import log
+from core.quality_gate import QualityGate, get_quality_gate
 
 # ------------------------------------------------------------------
 # State constants
@@ -146,6 +147,16 @@ class FarmThread:
         self._comments_failed: int = 0
         self._reactions_sent: int = 0
         self._stats_dirty: int = 0  # increments since last flush
+
+        # QualityGate — DO-Framework self-check; respects FARM_QUALITY_GATE_ENABLED
+        self._quality_gate: QualityGate = get_quality_gate()
+        try:
+            from config import settings as _cfg
+            self._quality_gate_enabled: bool = bool(
+                getattr(_cfg, "FARM_QUALITY_GATE_ENABLED", True)
+            )
+        except Exception:
+            self._quality_gate_enabled = True
 
     # ------------------------------------------------------------------
     # Public interface
@@ -405,6 +416,15 @@ class FarmThread:
 
                         # SmartCommenter pipeline: analyze → decide → generate
                         comment_text, decision = await self._smart_comment_pipeline(post)
+
+                        # QualityGate: DO-Framework self-check + auto-retry
+                        if comment_text:
+                            _style = getattr(decision, "style", None) or "casual"
+                            comment_text = await self._apply_quality_gate(
+                                comment_text=comment_text,
+                                post=post,
+                                style=_style,
+                            )
 
                         if comment_text:
                             client = self._get_client()
@@ -745,6 +765,119 @@ class FarmThread:
             return []
         finally:
             self._release_client()
+
+    # ------------------------------------------------------------------
+    # QualityGate — DO-Framework self-check + auto-retry
+    # ------------------------------------------------------------------
+
+    async def _apply_quality_gate(
+        self,
+        comment_text: str,
+        post: dict,
+        style: str,
+    ) -> Optional[str]:
+        """
+        Запустить QualityGate (4 уровня) на уже сгенерированном комментарии.
+
+        Если проверка провалилась — запустить auto_retry с деградацией стиля
+        до 3 попыток (оригинальный → casual → emoji_first).
+
+        Возвращает прошедший проверку текст или лучший из провальных.
+        Если gate отключён через FARM_QUALITY_GATE_ENABLED=false — возвращает
+        comment_text без изменений.
+
+        Результат проверки всегда публикуется в лог активности потока.
+        """
+        if not self._quality_gate_enabled:
+            return comment_text
+
+        post_text = post.get("text", "") or ""
+
+        # Быстрая проверка уже готового комментария
+        result = self._quality_gate.run_all_checks(
+            comment=comment_text,
+            post_text=post_text,
+            style=style,
+        )
+
+        if result.passed:
+            await self._publish(
+                "quality_gate_pass",
+                f"QualityGate PASS score={result.score:.2f}",
+                severity="info",
+                metadata={"score": result.score, "style": style, "attempts": 1},
+            )
+            return comment_text
+
+        # Провал — публикуем и запускаем auto_retry
+        log.info(
+            "Thread %s: QualityGate FAIL level=%d score=%.2f, starting auto-retry",
+            self.thread_id,
+            result.level,
+            result.score,
+        )
+        await self._publish(
+            "quality_gate_fail",
+            f"QualityGate FAIL level={result.level} score={result.score:.2f}; "
+            f"issues: {result.issues[:3]}",
+            severity="warn",
+            metadata={
+                "level": result.level,
+                "score": result.score,
+                "issues": result.issues[:5],
+                "style": style,
+            },
+        )
+
+        # Оборачиваем orchestrator.generate в сигнатуру (style) -> Optional[str]
+        async def _generate(*, style: str) -> Optional[str]:
+            if self._orchestrator is None:
+                return None
+            try:
+                # Передаём style как tone_override через вспомогательный метод
+                gen_text, _ = await self._orchestrator.process_post(
+                    post={**post, "_style_override": style},
+                    existing_comments=[],
+                    channel_info={
+                        "title": post.get("channel_title", ""),
+                        "username": post.get("channel_username", ""),
+                    },
+                )
+                return gen_text
+            except Exception as exc:
+                log.debug("Thread %s: QualityGate generate failed: %s", self.thread_id, exc)
+                return None
+
+        best, attempts = await self._quality_gate.auto_retry(
+            generate_fn=_generate,
+            post_text=post_text,
+            style=style,
+            max_attempts=3,
+        )
+
+        if best:
+            # Финальная проверка лучшего варианта для лога
+            final_result = self._quality_gate.run_all_checks(best, post_text, style)
+            await self._publish(
+                "quality_gate_retry_done",
+                f"QualityGate retry done: attempts={attempts} "
+                f"passed={final_result.passed} score={final_result.score:.2f}",
+                severity="info" if final_result.passed else "warn",
+                metadata={
+                    "attempts": attempts,
+                    "passed": final_result.passed,
+                    "score": final_result.score,
+                    "style": style,
+                },
+            )
+            return best
+
+        # Все попытки не дали результата — вернуть оригинальный (уже провальный)
+        log.warning(
+            "Thread %s: QualityGate: all retry attempts produced None, using original",
+            self.thread_id,
+        )
+        return comment_text
 
     # ------------------------------------------------------------------
     # Comment generation (legacy fallback — used if orchestrator not ready)
