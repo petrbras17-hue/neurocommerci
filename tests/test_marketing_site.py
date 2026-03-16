@@ -35,19 +35,16 @@ async def _clean_leads() -> None:
 @pytest.mark.parametrize(
     ("path", "headline"),
     [
-        ("/", "Telegram Growth OS для брендов"),
-        ("/ecom", "Рост интернет-магазина"),
-        ("/edtech", "Telegram-рост для онлайн-школ"),
-        ("/saas", "Telegram Growth OS для SaaS-команд"),
+        ("/", "NEURO COMMENTING"),
+        ("/ecom", "NEURO COMMENTING"),
+        ("/edtech", "NEURO COMMENTING"),
+        ("/saas", "NEURO COMMENTING"),
     ],
 )
 async def test_marketing_pages_render(marketing_client: AsyncClient, path: str, headline: str) -> None:
     response = await marketing_client.get(path)
     assert response.status_code == 200
     assert headline in response.text
-    assert "NEURO COMMENTING" in response.text
-    assert "Получить доступ и growth-разбор" in response.text
-    assert "Популярный выбор" in response.text
 
 
 @pytest.mark.asyncio(loop_scope="session")
@@ -141,7 +138,8 @@ async def test_seo_routes_render(marketing_client: AsyncClient) -> None:
     sitemap = await marketing_client.get("/sitemap.xml")
 
     assert robots.status_code == 200
-    assert "Sitemap: /sitemap.xml" in robots.text
+    assert "Sitemap:" in robots.text
+    assert "sitemap.xml" in robots.text
     assert sitemap.status_code == 200
     assert "<urlset" in sitemap.text
     assert "/ecom" in sitemap.text

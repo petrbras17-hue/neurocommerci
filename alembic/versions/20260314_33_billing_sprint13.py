@@ -90,6 +90,10 @@ def upgrade() -> None:
 
     # -- Re-seed plans with Sprint 13 data --
     # Upsert all 5 canonical plans using ON CONFLICT on slug.
+    # Prices aligned with pricing_strategy.md (2026-03-16):
+    # Starter 4990, Growth 12990, Pro 29990, Agency 79990 RUB/mo
+    # Annual = monthly * 12 * 0.8 (20% discount)
+    # price_rub = price_monthly_rub * 100 (kopecks for payment providers)
     op.execute(sa.text("""
         INSERT INTO plans
             (slug, name, display_name, price_monthly_rub, price_yearly_rub,
@@ -97,30 +101,30 @@ def upgrade() -> None:
              comments_per_day, max_campaigns, max_farms, ai_tier,
              features, is_active, sort_order, created_at)
         VALUES
-            ('starter', 'Стартовый', 'Starter', 5990, 59900,
-             599000, 6500, 5, 20, 100,
-             100, 3, 5, 'worker',
-             '{"ai_assistant": true, "analytics": true, "profiles": false}'::jsonb,
+            ('starter', 'Starter', 'Starter', 4990, 47900,
+             499000, 55, 5, 50, 100,
+             100, 3, 1, 'worker',
+             '{"ai_assistant": true, "analytics": true, "smart_commenter": true, "parser": true, "warmup": true, "warmup_phases": 3, "comment_styles": 3}'::jsonb,
              true, 1, NOW()),
-            ('growth', 'Рост', 'Growth', 14990, 149900,
-             1499000, 16500, 20, 50, 500,
-             500, 10, 10, 'manager',
-             '{"ai_assistant": true, "analytics": true, "profiles": true, "chatting": true}'::jsonb,
+            ('growth', 'Growth', 'Growth', 12990, 124700,
+             1299000, 140, 20, 200, 500,
+             500, 10, 3, 'manager',
+             '{"ai_assistant": true, "analytics": true, "smart_commenter": true, "parser": true, "warmup": true, "warmup_phases": 7, "comment_styles": 7, "comment_ab": true, "farm": true, "channel_map": true, "channel_map_ai": true, "content_factory": true, "content_factory_formats": 3, "mass_reactions": true, "user_parser": true, "folders": true, "weekly_reports": true}'::jsonb,
              true, 2, NOW()),
-            ('pro', 'Про', 'Pro', 29990, 299900,
-             2999000, 32500, 50, 100, 1500,
-             1500, 30, 20, 'manager',
-             '{"ai_assistant": true, "analytics": true, "profiles": true, "chatting": true, "reactions": true}'::jsonb,
+            ('pro', 'Pro', 'Pro', 29990, 287900,
+             2999000, 330, 50, 500, 1500,
+             1500, 30, 10, 'manager',
+             '{"ai_assistant": true, "analytics": true, "smart_commenter": true, "parser": true, "warmup": true, "warmup_phases": 7, "comment_styles": 10, "comment_ab": true, "farm": true, "channel_map": true, "channel_map_ai": true, "content_factory": true, "content_factory_formats": 6, "mass_reactions": true, "user_parser": true, "folders": true, "weekly_reports": true, "neuro_chatting": true, "neuro_dialogs": true, "api_access": "read", "priority_support": true, "self_healing": true, "custom_styles": 3}'::jsonb,
              true, 3, NOW()),
-            ('agency', 'Агентство', 'Agency', 79990, 799900,
-             7999000, 87500, 100, 300, 5000,
+            ('agency', 'Agency', 'Agency', 79990, 767900,
+             7999000, 880, 200, 2000, 5000,
              5000, 100, 50, 'boss',
-             '{"ai_assistant": true, "analytics": true, "profiles": true, "chatting": true, "reactions": true, "priority_support": true, "white_label": true}'::jsonb,
+             '{"ai_assistant": true, "analytics": true, "smart_commenter": true, "parser": true, "warmup": true, "warmup_phases": 7, "comment_styles": 10, "comment_ab": true, "farm": true, "channel_map": true, "channel_map_ai": true, "content_factory": true, "content_factory_formats": 6, "mass_reactions": true, "user_parser": true, "folders": true, "weekly_reports": true, "neuro_chatting": true, "neuro_dialogs": true, "api_access": "full", "priority_support": true, "self_healing": true, "auto_purchase": true, "custom_styles": -1, "white_label": true, "multi_client": true, "max_client_workspaces": 50, "revenue_share": true}'::jsonb,
              true, 4, NOW()),
-            ('enterprise', 'Энтерпрайз', 'Enterprise', 0, 0,
+            ('enterprise', 'Enterprise', 'Enterprise', 0, 0,
              0, 0, 999999, 999999, 999999,
              999999, 999999, 999999, 'boss',
-             '{"ai_assistant": true, "analytics": true, "profiles": true, "chatting": true, "reactions": true, "priority_support": true, "white_label": true, "custom_sla": true}'::jsonb,
+             '{"ai_assistant": true, "analytics": true, "smart_commenter": true, "parser": true, "warmup": true, "warmup_phases": 7, "comment_styles": 10, "comment_ab": true, "farm": true, "channel_map": true, "channel_map_ai": true, "content_factory": true, "content_factory_formats": 6, "mass_reactions": true, "user_parser": true, "folders": true, "weekly_reports": true, "neuro_chatting": true, "neuro_dialogs": true, "api_access": "full", "priority_support": true, "self_healing": true, "auto_purchase": true, "custom_styles": -1, "white_label": true, "multi_client": true, "revenue_share": true, "custom_sla": true, "dedicated_vps": true}'::jsonb,
              true, 5, NOW())
         ON CONFLICT (slug) DO UPDATE SET
             name = EXCLUDED.name,

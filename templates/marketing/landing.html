@@ -5,11 +5,46 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page.title }}</title>
   <meta name="description" content="{{ page.description }}">
+  <link rel="canonical" href="{{ base_url }}{{ request.url.path }}">
+  <link rel="alternate" hreflang="ru" href="{{ base_url }}{{ request.url.path }}">
   <meta property="og:title" content="{{ page.title }}">
   <meta property="og:description" content="{{ page.description }}">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="{{ og_image }}">
   <meta property="og:url" content="{{ base_url }}{{ request.url.path }}">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="NEURO COMMENTING">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ page.title }}">
+  <meta name="twitter:description" content="{{ page.description }}">
+  {% if page.slug == 'home' %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "NEURO COMMENTING",
+    "applicationCategory": "BusinessApplication",
+    "operatingSystem": "Web",
+    "description": "Telegram Growth OS — AI-нейрокомментинг, парсинг каналов, контент-фабрика для RU/CIS брендов",
+    "offers": {
+      "@type": "AggregateOffer",
+      "priceCurrency": "RUB",
+      "lowPrice": "4990",
+      "highPrice": "79990",
+      "offerCount": "4"
+    }
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "NEURO COMMENTING",
+    "url": "{{ base_url }}",
+    "description": "SaaS-платформа для автоматизации роста в Telegram: нейрокомментинг, парсинг каналов, AI-генерация контента",
+    "email": "support@neurocommenting.ru"
+  }
+  </script>
+  {% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -76,7 +111,7 @@
         </ul>
 
         <div class="hero-actions">
-          <a href="#lead-form" class="primary-cta">Получить демо</a>
+          <a href="#lead-form" class="primary-cta">{{ page.cta|default('Запустить бесплатный пилот') }}</a>
           <a href="/pricing" class="secondary-cta">Тарифы</a>
         </div>
 
@@ -101,8 +136,8 @@
 
         <div class="form-panel" id="lead-form">
           <p class="eyebrow">Waitlist</p>
-          <h2>Получить доступ и growth-разбор</h2>
-          <p class="panel-copy">Оставьте контакты — ответим за 48 часов и покажем продукт под ваш сценарий роста.</p>
+          <h2>{{ page.cta|default('Запустить бесплатный пилот') }}</h2>
+          <p class="panel-copy">Оставьте контакты — покажем продукт под ваш сценарий роста и дадим 14 дней Pro бесплатно.</p>
           <form class="lead-form" id="lead-form-el">
             <input type="text" name="name" placeholder="Имя" required>
             <input type="email" name="email" placeholder="Email" required>
@@ -145,7 +180,7 @@
   <section class="section-grid page-shell">
     <div class="section-head">
       <p class="eyebrow">Что внутри</p>
-      <h2>Один контур для discovery, кампаний и роста</h2>
+      <h2>Весь growth-стек в одном dark terminal</h2>
     </div>
     <div class="feature-grid">
       {% for item in features %}
@@ -157,11 +192,45 @@
     </div>
   </section>
 
+  <!-- SOCIAL PROOF -->
+  <section class="section-grid page-shell">
+    <div class="section-head">
+      <p class="eyebrow">Платформа в цифрах</p>
+      <h2>Не обещания, а инженерия</h2>
+    </div>
+    <div class="metrics-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:24px; margin-top:32px;">
+      <article class="metric-card">
+        <span class="metric-value">10</span>
+        <span class="metric-label">стилей AI-комментариев с A/B-тестами</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-value">50</span>
+        <span class="metric-label">потоков на ферму одновременно</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-value">7</span>
+        <span class="metric-label">фаз автономного прогрева</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-value">6</span>
+        <span class="metric-label">форматов контента за 30 секунд</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-value">100K+</span>
+        <span class="metric-label">каналов на глобальной карте</span>
+      </article>
+      <article class="metric-card">
+        <span class="metric-value">200+</span>
+        <span class="metric-label">API-эндпоинтов для интеграций</span>
+      </article>
+    </div>
+  </section>
+
   <!-- PRICING -->
   <section class="section-grid page-shell" id="pricing">
     <div class="section-head">
       <p class="eyebrow">Тарифы</p>
-      <h2>Три уровня для запуска и масштабирования growth-команды</h2>
+      <h2>Прозрачные цены для каждого этапа роста</h2>
     </div>
     <div class="pricing-grid">
       {% for plan in pricing %}
@@ -187,7 +256,7 @@
   <section class="section-grid faq-grid page-shell">
     <div class="section-head">
       <p class="eyebrow">FAQ</p>
-      <h2>Частые вопросы перед внедрением</h2>
+      <h2>Частые вопросы</h2>
     </div>
     <div class="faq-list">
       {% for question, answer in faq %}
@@ -204,7 +273,7 @@
     <div class="cta-banner">
       <div>
         <p class="eyebrow">Следующий шаг</p>
-        <h2>Соберите Telegram growth machine, а не набор разрозненных действий</h2>
+        <h2>{{ page.final_cta|default('Твой Telegram на автопилоте. Запусти бесплатный пилот.') }}</h2>
         <p>{{ success_message }}</p>
       </div>
       <a href="#lead-form" class="cta-link">Оставить заявку</a>
@@ -231,7 +300,7 @@
       </div>
     </div>
     <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary); flex-wrap:wrap; gap:8px;">
-      <span>[ИП/ООО название], ИНН: [указать], ОГРН: [указать]</span>
+      <span>NEURO COMMENTING — Telegram Growth OS</span>
       <span>support@neurocommenting.ru</span>
     </div>
     <div class="footer-inner" style="margin-top:10px; gap:16px; font-size:0.8rem; color:var(--text-secondary);">

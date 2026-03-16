@@ -1102,160 +1102,187 @@ MARKETING_PAGES = {
     "home": {
         "path": "/",
         "slug": "home",
-        "title": "Telegram Growth OS для брендов — автоматизируй рост в Telegram",
-        "description": "NEURO COMMENTING помогает growth-командам находить релевантные Telegram-каналы, запускать кампании и собирать лиды в одном premium workflow.",
-        "headline": "Telegram Growth OS для брендов — автоматизируй рост в Telegram",
-        "subheadline": "Discovery, кампании, AI-черновики и аналитика в одном рабочем контуре для growth-команды.",
+        "title": "Telegram Growth OS — твой Telegram на автопилоте",
+        "description": "AI-комментинг, парсинг каналов, прогрев аккаунтов и контент-фабрика в одном терминале. 50 потоков, 0 банов.",
+        "headline": "Твой Telegram на автопилоте. 50 потоков, 0 банов.",
+        "subheadline": "AI-комментинг, парсинг каналов, прогрев аккаунтов и контент-фабрика — в одном терминале. Конкуренты платят $130/мес за половину этого.",
         "bullets": [
-            "Находите каналы и сообщества, где уже есть спрос на ваш продукт.",
-            "Переходите от discovery к кампании без ручной путаницы между таблицами и чатами.",
-            "Получайте AI-черновики, approvals и growth-аналитику в одном месте.",
+            "Нейрокомментинг в 10 стилях с A/B-тестами — модераторы не отличат от живого человека.",
+            "7-фазный автопрогрев: от stealth-чтения до боевого комментинга без банов.",
+            "Глобальная карта 100K+ каналов, контент-фабрика на 6 платформ, агентский пакет с white label.",
         ],
-        "segment_title": "Для growth-команд, которые хотят видеть Telegram как полноценный revenue-канал",
+        "segment_title": "Один контур вместо десяти инструментов",
         "segment_points": [
-            "Быстрое исследование ниш и конкурентных площадок.",
-            "Кампании и направления без потери контроля и контекста.",
-            "От lead capture до операционного follow-up внутри одного процесса.",
+            "Discovery, кампании, AI-черновики и аналитика — в одном рабочем контуре для growth-команды.",
+            "AI генерирует черновики, но решения принимает человек. 10 стилей, approval gate, полный контроль.",
+            "Масштабируйтесь от 1 аккаунта до полноценной фермы за минуты — без потери аккаунтов.",
         ],
     },
     "ecom": {
         "path": "/ecom",
         "slug": "ecom",
-        "title": "Telegram Growth OS для интернет-магазинов",
-        "description": "Для ecom-команд: поиск нишевых Telegram-каналов, кампании, подборки и AI-assisted growth workflow.",
-        "headline": "Рост интернет-магазина в Telegram без хаоса",
-        "subheadline": "Для брендов, которые хотят собирать спрос, находить площадки и быстро запускать Telegram-кампании.",
+        "title": "Telegram-трафик для интернет-магазинов — AI-комментинг в каналах шоппинга | NEURO COMMENTING",
+        "description": "Органический трафик из Telegram для e-commerce: AI-комментинг в каналах скидок и шоппинга, парсинг аудитории покупателей, контент для продуктовых постов. Бесплатный пилот 14 дней.",
+        "headline": "Telegram-трафик для интернет-магазинов",
+        "subheadline": "AI-комментинг в каналах шоппинга и скидок. Органический трафик из Telegram вместо дорогой рекламы на маркетплейсах — одна платформа для discovery, кампаний и аналитики.",
         "bullets": [
-            "Находите каналы и чаты, где уже обсуждают товары, скидки и тематические подборки.",
-            "Собирайте кампании под сезонные акции, новые линейки и товарные дропы.",
-            "Держите площадки, черновики и follow-up в одном кабинете.",
+            "Находите каналы скидок, обзоров и подборок, где уже обсуждают товары вашей ниши.",
+            "Запускайте AI-комментинг под продуктовые посты — 10 стилей, от экспертного обзора до отзыва покупателя.",
+            "Парсите аудиторию шопперов по категориям: fashion, электроника, косметика, товары для дома — 33 ниши на Channel Map.",
         ],
-        "segment_title": "Что особенно важно для ecom",
+        "segment_title": "Почему e-commerce теряет деньги без Telegram",
         "segment_points": [
-            "Товарный спрос и каталоги по нишам.",
-            "Сезонные предложения, промо и подборки.",
-            "Ускоренный путь от discovery до первых лидов.",
+            "Конкуренция на маркетплейсах растёт, а стоимость клика в рекламе — вместе с ней. Telegram-каналы скидок и обзоров дают органический трафик с высоким intent покупки.",
+            "Нулевая лояльность на маркетплейсах: покупатель выбирает по цене. В Telegram-каналах бренд строит узнаваемость через экспертные комментарии и присутствие в обсуждениях.",
+            "Ручной посев в каналах занимает дни и не масштабируется. NC автоматизирует весь pipeline: от поиска площадок до AI-комментариев с A/B-тестами стилей.",
         ],
     },
     "edtech": {
         "path": "/edtech",
         "slug": "edtech",
-        "title": "Telegram Growth OS для онлайн-школ",
-        "description": "Для edtech-команд: Telegram discovery, AI-черновики, кампании и аналитика для воронок набора.",
-        "headline": "Telegram-рост для онлайн-школ и образовательных продуктов",
-        "subheadline": "От исследования ниши до запуска кампаний под наборы и вебинары — без потери контекста между маркетингом и операционкой.",
+        "title": "Студенты из Telegram для онлайн-школ — AI-комментинг в образовательных каналах | NEURO COMMENTING",
+        "description": "Органические лиды для онлайн-школ из Telegram: AI-комментинг в образовательных каналах, парсинг аудитории студентов, контент для обучающих постов, ферма в каналах саморазвития. Бесплатный пилот 14 дней.",
+        "headline": "Студенты из Telegram. AI-комментинг в образовательных каналах.",
+        "subheadline": "Дорогой трафик на курсы, низкая конверсия вебинаров, нет органики — знакомо? Органические лиды из Telegram через AI-комментирование в образовательных каналах. Без таргета, без посевов, без ручной работы.",
         "bullets": [
-            "Находите площадки, где обсуждают карьеру, навыки, переобучение и апгрейд профессии.",
-            "Планируйте кампании под вебинары, наборы и evergreen-продукты.",
-            "Получайте AI-черновики и активационную аналитику в одной системе.",
+            "Парсинг каналов по нишам обучения: IT-курсы, маркетинг, дизайн, языки, саморазвитие, карьера.",
+            "AI-комментинг в экспертном стиле под обучающие посты — 2-3 новых лида в день из комментариев.",
+            "Ферма в каналах саморазвития и переобучения — там, где ваша аудитория уже ищет решения.",
+            "Контент-фабрика: один вебинарный анонс превращается в 6 форматов за 30 секунд.",
         ],
-        "segment_title": "Что особенно важно для edtech",
+        "cta": "Запустить бесплатный пилот для онлайн-школы",
+        "final_cta": "Студенты уже в Telegram. Запустите бесплатный пилот для онлайн-школы.",
+        "segment_title": "Почему EdTech-командам нужен нейрокомментинг",
         "segment_points": [
-            "Площадки с аудиторией, готовой к обучению.",
-            "Наборы, вебинары и evergreen-воронки в одном pipeline.",
-            "Понятный follow-up по лидам и интересу к продукту.",
+            "Таргет в Telegram дорожает, а CPL на курсы растет каждый квартал. Нейрокомментинг дает органический трафик из каналов, где аудитория уже обсуждает обучение и карьеру.",
+            "Вебинарные воронки конвертируют 2-5% холодного трафика. Экспертный комментарий в канале про IT-переобучение конвертирует в 3-4 раза лучше — потому что это не реклама, а ответ на запрос.",
+            "Парсер находит 80+ образовательных каналов за 15 минут. Вручную маркетолог собирает столько же за неделю. Освободите команду от рутины — пусть занимается продуктом.",
         ],
     },
     "saas": {
         "path": "/saas",
         "slug": "saas",
-        "title": "Telegram Growth OS для SaaS-продуктов",
-        "description": "Для SaaS-команд: канальный ресерч, AI-черновики, кампании и операционная аналитика роста в Telegram.",
-        "headline": "Telegram Growth OS для SaaS-команд",
-        "subheadline": "Сводите discovery, кампании, AI-черновики и аналитику в один управляемый pipeline роста.",
+        "title": "B2B-лиды из Telegram для SaaS — AI-комментинг в бизнес-каналах | NEURO COMMENTING",
+        "description": "Thought leadership через AI-комментирование в Telegram: экспертные комментарии в нишевых B2B-каналах, парсинг аудитории стартапов и cloud-сервисов, контент для brand awareness. Бесплатный пилот.",
+        "headline": "B2B-лиды из Telegram. AI-комментинг в нишевых бизнес-каналах.",
+        "subheadline": "Дорогой CAC, длинный цикл продажи, нулевой brand awareness в Telegram \u2014 знакомо? Thought leadership через AI-комментирование: доверие \u2192 лиды \u2192 демо.",
         "bullets": [
-            "Ищите комьюнити и каналы, где обсуждают ваш use case, боли и конкурентов.",
-            "Разводите спрос по сегментам: SMB, agency, startup, product teams.",
-            "Управляйте ростом как продуктовой функцией, а не набором хаотичных действий.",
+            "Комментируйте экспертно в каналах про стартапы, технологии, венчур и cloud \u2014 там, где принимают решения ваши ICP.",
+            "Парсите B2B-аудиторию: каналы фаундеров, продакт-менеджеров, CTO и growth-лидов по ключевым словам и нишам.",
+            "Генерируйте thought leadership контент: от экспертного комментария до LinkedIn-статьи и email за 30 секунд.",
         ],
-        "segment_title": "Что особенно важно для SaaS",
+        "segment_title": "Почему SaaS-командам нужен Telegram Growth OS",
         "segment_points": [
-            "B2B discovery по нишам и use cases.",
-            "Повторяемые кампании и pipeline approvals.",
-            "Прозрачная аналитика по лидам, площадкам и активности.",
+            "Ваши конкуренты уже строят присутствие в Telegram-каналах про технологии и стартапы. Каждый день без thought leadership в нише \u2014 это лиды, которые уходят к ним.",
+            "CAC в контекстной рекламе для B2B растёт каждый квартал. Экспертный комментинг в 10 стилях \u2014 от аналитика до визионера \u2014 строит доверие органически: без бюджета на клик, без холодных писем.",
+            "Один pipeline от discovery каналов до демо-запроса: парсер находит площадки, AI пишет в tone of voice вашего бренда, аналитика показывает, какие каналы конвертируют в переходы и лиды.",
         ],
     },
 }
 
 TRUST_STRIP = [
-    "Discovery",
-    "Campaign orchestration",
-    "AI drafts",
-    "Lead capture",
-    "Analytics",
+    "Smart Commenter",
+    "Farm Orchestrator",
+    "Channel Map",
+    "Warmup Engine",
+    "Content Factory",
 ]
 
 PROOF_METRICS = [
-    {"value": "24/7", "label": "контроль роста и discovery"},
-    {"value": "<48ч", "label": "реакция на новые заявки"},
-    {"value": "1 OS", "label": "для parser, drafts и campaigns"},
+    {"value": "10", "label": "стилей комментариев"},
+    {"value": "50", "label": "потоков фермы"},
+    {"value": "7", "label": "фаз прогрева"},
+    {"value": "6", "label": "форматов контента"},
 ]
 
 FEATURES = [
     {
-        "title": "Discovery Engine",
-        "body": "Находите релевантные Telegram-каналы, обсуждения и комьюнити по нишам и сценариям роста.",
+        "title": "Smart Commenter",
+        "body": "Нейрокомментинг в 10 стилях \u2014 от экспертного до провокационного. A/B-тесты стилей, emoji-first трюк для попадания в топ. AI пишет так, что модераторы не отличат от живого человека.",
     },
     {
-        "title": "Campaign Control",
-        "body": "Управляйте направлениями, approvals, safety rings и кампанийным pipeline в одном рабочем слое.",
+        "title": "Farm Orchestrator",
+        "body": "До 50 потоков на ферму. Автораспределение каналов, пауза при FloodWait, карантин проблемных аккаунтов. Redis pub-sub для событий в реальном времени.",
     },
     {
-        "title": "AI Draft Studio",
-        "body": "Готовьте черновики комментариев, ответов и кампанийного контента без потери tone of voice.",
+        "title": "Channel Map",
+        "body": "Глобальная карта 100K+ Telegram-каналов на интерактивном 3D-глобусе. H3-кластеризация, фильтры по 33 нишам, drill-down до конкретного канала.",
     },
     {
-        "title": "Lead Funnel",
-        "body": "Собирайте лиды с лендинга, дублируйте их в Sheets и получайте Telegram-уведомления без ручной рутины.",
+        "title": "Warmup Engine",
+        "body": "Автономный 7-фазный прогрев: от stealth-чтения каналов до полноценного комментинга. AI-персоны, Гауссовы задержки. Аккаунт сам проходит путь от покупки до боевого состояния.",
     },
     {
-        "title": "Analytics Layer",
-        "body": "Видите кампании, находки, активность и usage в одном growth dashboard, а не по кускам.",
+        "title": "Content Factory",
+        "body": "Один источник \u2014 шесть форматов за 30 секунд. Telegram-пост, Twitter/X-тред, LinkedIn-статья, YouTube-описание, идеи для Reels/Shorts, email-рассылка. 5 голосов бренда.",
+    },
+    {
+        "title": "Parser",
+        "body": "Парсинг каналов по ключевым словам, языку, гео и размеру аудитории. Прогресс-бар в реальном времени, отмена на лету, пакетный импорт.",
+    },
+    {
+        "title": "Profile Factory",
+        "body": "AI генерирует профили для аккаунтов: имя, био, аватар, личный канал с закрепом. Массовая генерация для всей фермы.",
+    },
+    {
+        "title": "Billing и Agency Package",
+        "body": "Stripe + ЮKassa, 54-ФЗ чеки, 14-дневный trial. Агентский пакет: white label, управление клиентами, revenue share.",
     },
 ]
 
 PRICING = [
     {
-        "name": "Pro",
-        "price": "$499/mo",
-        "note": "Для первых growth-команд",
+        "name": "Starter",
+        "price": "4 990 \u20bd/\u043c\u0435\u0441",
+        "note": "Фрилансеры и solo-маркетологи",
         "featured": False,
         "bullets": [
-            "Discovery и parser workflow",
-            "AI-черновики и lead capture",
-            "Стартовый campaign control",
+            "5 аккаунтов, 3 потока",
+            "Smart Commenter (3 стиля)",
+            "Парсер каналов (500 каналов/мес)",
+            "Базовый прогрев (conservative)",
+            "Channel Map (Discovery режим)",
         ],
     },
     {
-        "name": "Scale",
-        "price": "$1 499/mo",
-        "note": "Для команд, которым нужен repeatable growth",
+        "name": "Pro",
+        "price": "14 990 \u20bd/\u043c\u0435\u0441",
+        "note": "Growth-команды и SMM-агентства",
         "featured": True,
         "bullets": [
-            "Несколько workspaces и больше каналов",
-            "Управляемые approvals и campaign pipeline",
-            "Расширенные usage и activation метрики",
+            "25 аккаунтов, 15 потоков",
+            "Smart Commenter (все 10 стилей + A/B)",
+            "Автономный прогрев (все режимы)",
+            "Content Factory (6 форматов)",
+            "Profile Factory + API-доступ",
         ],
     },
     {
-        "name": "Business",
-        "price": "$4 999/mo",
-        "note": "Для управляемых команд и агентств",
+        "name": "Agency",
+        "price": "49 990 \u20bd/\u043c\u0435\u0441",
+        "note": "Агентства и команды с клиентами",
         "featured": False,
         "bullets": [
-            "Высокие лимиты и multi-tenant ops",
-            "Глубокий parser + drafts workflow",
-            "Подготовка к agency и enterprise motion",
+            "100 аккаунтов, 50 потоков",
+            "Все модули без ограничений",
+            "White Label + клиенты + revenue share",
+            "Custom AI-стили под бренды клиентов",
+            "Приоритетная поддержка, ответ за 1 час",
         ],
     },
 ]
 
 FAQ = [
-    ("Что такое Telegram Growth OS?", "Это единая операционная система для discovery, кампаний, AI-черновиков, аналитики и growth-команд в Telegram."),
-    ("Для кого продукт?", "Для брендов и growth-команд RU/CIS mid-market, которые используют Telegram как acquisition и community-канал."),
-    ("Что я получу после заявки?", "Мы свяжемся с вами, уточним ваш use case и покажем, как построить Telegram growth workflow под ваш продукт."),
-    ("Нужна ли отдельная команда разработки?", "Нет, продукт рассчитан на маркетинг и growth-операторов. Технический слой уже встроен в платформу."),
-    ("Можно ли начать с пилота?", "Да. Стартовый путь рассчитан на пилоты, onboarding и дальнейший переход на полноценный subscription workflow."),
+    ("Что такое NEURO COMMENTING?", "Это операционная система для роста в Telegram. Вместо 7 разных инструментов \u2014 одна платформа: нейрокомментинг, парсинг, прогрев аккаунтов, карта каналов, контент-фабрика и аналитика. Все в одном dark terminal UI."),
+    ("Чем вы лучше GramGPT?", "Шире функционал (карта каналов, контент-фабрика, агентский пакет), умнее AI (10 стилей + A/B-тесты), дешевле вход (Starter от 4 990 руб vs $130 у GramGPT за меньший набор). И мы не заставляем платить за каждый модуль отдельно."),
+    ("Мои аккаунты не забанят?", "Мы серьезно относимся к антифроду. 7-фазный прогрев, Гауссовы задержки вместо линейных, правило 1 IP = 1 аккаунт, anti-detection имитация набора текста, карантин при подозрительной активности. Гарантировать 0% банов невозможно \u2014 Telegram постоянно обновляет алгоритмы. Наша задача \u2014 минимизировать риски."),
+    ("Нужны ли свои Telegram-аккаунты?", "Да. Вы загружаете .session-файлы своих аккаунтов. Мы не продаем аккаунты и не храним ваши пароли. Каждый аккаунт привязывается к персональному прокси."),
+    ("Как работает прогрев?", "Автономный 7-фазный цикл: stealth (только чтение) \u2192 light interaction (реакции) \u2192 social (вступление в каналы) \u2192 engagement (первые комментарии) \u2192 active \u2192 established \u2192 veteran. AI-персона определяет стиль поведения. Весь процесс идет без вашего участия."),
+    ("Можно попробовать бесплатно?", "Да. 14 дней на тарифе Pro без ограничений. Карта не нужна. После trial \u2014 выбираете тариф или уходите без обязательств."),
+    ("Работает только с русскоязычными каналами?", "Нет. Channel Map покрывает 55 стран. Парсер ищет каналы на любом языке. Smart Commenter генерирует комментарии на русском, английском, казахском и других языках. Но основной фокус \u2014 RU/CIS рынок."),
+    ("Что если Telegram заблокирует все мои аккаунты?", "Self-Healing Engine автоматически детектирует проблемы и ставит аккаунт на карантин до ручной проверки. Платформа сохраняет всю историю и настройки \u2014 подключите новый аккаунт и продолжайте."),
+    ("Есть API?", "Да. 200+ API-эндпоинтов. Полный REST API для интеграции с вашими CRM, дашбордами, n8n-сценариями. Доступен на тарифах Pro и Agency."),
+    ("Подходит ли для агентств?", "Специально для этого создан Agency-тариф. White label, управление клиентами, инвайты, revenue share. Перепродавайте платформу под своим брендом и зарабатывайте на каждом клиенте."),
 ]
 
 
@@ -1613,9 +1640,9 @@ def _page_context(request: Request, page: dict[str, object]) -> dict[str, object
         "features": FEATURES,
         "pricing": PRICING,
         "faq": FAQ,
-        "success_message": "Вы в списке — мы напишем вам в ближайшие 48 часов",
+        "success_message": "14 дней бесплатно. Без карты. Без обязательств.",
         "base_url": base_url,
-        "og_image": f"{base_url}/static/og-default.svg",
+        "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
     }
 
@@ -2108,7 +2135,7 @@ async def landing_pricing(request: Request) -> HTMLResponse:
     ctx = {
         "request": request,
         "base_url": base_url,
-        "og_image": f"{base_url}/static/og-default.svg",
+        "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
     }
     return templates.TemplateResponse(request, "marketing/pricing.html", ctx)
@@ -2121,7 +2148,7 @@ async def legal_terms(request: Request) -> HTMLResponse:
     ctx = {
         "request": request,
         "base_url": base_url,
-        "og_image": f"{base_url}/static/og-default.svg",
+        "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
     }
     return templates.TemplateResponse(request, "marketing/terms.html", ctx)
@@ -2134,7 +2161,7 @@ async def legal_privacy(request: Request) -> HTMLResponse:
     ctx = {
         "request": request,
         "base_url": base_url,
-        "og_image": f"{base_url}/static/og-default.svg",
+        "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
     }
     return templates.TemplateResponse(request, "marketing/privacy.html", ctx)
@@ -2147,7 +2174,7 @@ async def legal_refund(request: Request) -> HTMLResponse:
     ctx = {
         "request": request,
         "base_url": base_url,
-        "og_image": f"{base_url}/static/og-default.svg",
+        "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
     }
     return templates.TemplateResponse(request, "marketing/refund.html", ctx)
@@ -2195,8 +2222,26 @@ async def create_lead(payload: LeadCreatePayload, request: Request) -> JSONRespo
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse)
-async def robots_txt() -> str:
-    return "User-agent: *\nAllow: /\nSitemap: /sitemap.xml\n"
+async def robots_txt(request: Request) -> str:
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /ecom\n"
+        "Allow: /edtech\n"
+        "Allow: /saas\n"
+        "Allow: /pricing\n"
+        "Allow: /terms\n"
+        "Allow: /privacy\n"
+        "Allow: /refund\n"
+        "Disallow: /app\n"
+        "Disallow: /auth\n"
+        "Disallow: /v1\n"
+        "Disallow: /api\n"
+        "Disallow: /health\n"
+        f"Sitemap: {base_url}/sitemap.xml\n"
+    )
 
 
 @app.get("/favicon.ico")
@@ -2206,10 +2251,28 @@ async def favicon() -> FileResponse:
 
 @app.get("/sitemap.xml")
 async def sitemap_xml(request: Request) -> Response:
-    base_url = str(request.base_url).rstrip("/")
+    from datetime import date as _date
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    today = _date.today().isoformat()
+    _sitemap_pages = [
+        {"path": "/", "priority": "1.0", "changefreq": "weekly"},
+        {"path": "/ecom", "priority": "0.8", "changefreq": "monthly"},
+        {"path": "/edtech", "priority": "0.8", "changefreq": "monthly"},
+        {"path": "/saas", "priority": "0.8", "changefreq": "monthly"},
+        {"path": "/pricing", "priority": "0.9", "changefreq": "weekly"},
+        {"path": "/terms", "priority": "0.3", "changefreq": "yearly"},
+        {"path": "/privacy", "priority": "0.3", "changefreq": "yearly"},
+        {"path": "/refund", "priority": "0.3", "changefreq": "yearly"},
+    ]
     urls = "\n".join(
-        f"  <url><loc>{base_url}{page['path']}</loc></url>"
-        for page in MARKETING_PAGES.values()
+        f"  <url>\n"
+        f"    <loc>{base_url}{p['path']}</loc>\n"
+        f"    <lastmod>{today}</lastmod>\n"
+        f"    <changefreq>{p['changefreq']}</changefreq>\n"
+        f"    <priority>{p['priority']}</priority>\n"
+        f"  </url>"
+        for p in _sitemap_pages
     )
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
