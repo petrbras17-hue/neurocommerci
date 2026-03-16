@@ -603,7 +603,7 @@ export function ChannelSidebar({
       </div>
 
       {/* ── Sparkline ──────────────────────────────────────────────────────── */}
-      {history.length > 1 ? (
+      {(history.length > 1) ? (
         <>
           <Divider />
           <div>
