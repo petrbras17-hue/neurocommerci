@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEURO — Channel Map 3D</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #050508; color: #e0e0e0; font-family: 'Space Grotesk', sans-serif; overflow: hidden; height: 100vh; }
+  #globe-container { position: absolute; inset: 0; z-index: 1; }
+  canvas { display: block; }
+  .hud { position: fixed; z-index: 10; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  .hud-top { top: 0; left: 0; right: 0; height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: linear-gradient(180deg, rgba(5,5,8,0.95) 0%, transparent 100%); }
+  .hud-logo { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 14px; letter-spacing: 4px; color: #00ff88; text-shadow: 0 0 20px rgba(0,255,136,0.4); }
+  .hud-stats { display: flex; gap: 24px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #666; }
+  .hud-stats span { color: #00ff88; }
+  .hud-bottom { bottom: 0; left: 0; right: 0; height: 80px; display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 0 16px; background: linear-gradient(0deg, rgba(5,5,8,0.95) 0%, transparent 100%); }
+  .category-pill { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.03); font-size: 11px; font-family: 'JetBrains Mono', monospace; cursor: pointer; transition: all 0.3s; user-select: none; }
+  .category-pill:hover { border-color: rgba(0,255,136,0.3); background: rgba(0,255,136,0.05); }
+  .category-pill.active { border-color: rgba(0,255,136,0.6); background: rgba(0,255,136,0.1); color: #00ff88; }
+  .cat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .hud-right { position: fixed; top: 70px; right: 16px; z-index: 10; width: 320px; background: rgba(10,10,15,0.9); border: 1px solid rgba(255,255,255,0.06); border-radius: 14px; backdrop-filter: blur(16px); padding: 20px; display: none; }
+  .hud-right.show { display: block; }
+  .detail-close { position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; background: rgba(255,255,255,0.05); border: none; border-radius: 8px; color: #666; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .detail-title { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .detail-username { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #00ff88; margin-bottom: 12px; }
+  .detail-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .detail-stat { padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; }
+  .detail-stat .ds-val { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 700; color: #00ff88; }
+  .detail-stat .ds-label { font-size: 10px; color: #555; margin-top: 2px; }
+  .detail-btn { width: 100%; padding: 10px; background: rgba(0,255,136,0.1); border: 1px solid rgba(0,255,136,0.3); border-radius: 8px; color: #00ff88; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer; }
+  .loading { position: fixed; inset: 0; z-index: 100; background: #050508; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s; }
+  .loading.done { opacity: 0; pointer-events: none; }
+  .loading-ring { width: 60px; height: 60px; border: 2px solid rgba(0,255,136,0.1); border-top: 2px solid #00ff88; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { margin-top: 16px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #00ff88; letter-spacing: 3px; }
+</style>
+</head>
+<body>
+<div class="loading" id="loading"><div class="loading-ring"></div><div class="loading-text">INITIALIZING MAP</div></div>
+<div class="hud hud-top">
+  <div class="hud-logo">NEURO CHANNEL MAP</div>
+  <div class="hud-stats">CHANNELS <span id="stat-total">0</span> &middot; CATEGORIES <span id="stat-cats">0</span></div>
+</div>
+<div class="hud-right" id="detail-panel">
+  <button class="detail-close" id="detail-close">x</button>
+  <div class="detail-title" id="detail-title"></div>
+  <div class="detail-username" id="detail-username"></div>
+  <div class="detail-stats">
+    <div class="detail-stat"><div class="ds-val" id="detail-members">0</div><div class="ds-label">subscribers</div></div>
+    <div class="detail-stat"><div class="ds-val" id="detail-category"></div><div class="ds-label">category</div></div>
+  </div>
+  <button class="detail-btn" id="detail-open">Open in Telegram</button>
+</div>
+<div class="hud hud-bottom" id="categories"></div>
+<div id="globe-container"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const CAT_COLORS = {Crypto:'#f59e0b',Marketing:'#ec4899',Tech:'#3b82f6',Business:'#10b981','E-commerce':'#8b5cf6',EdTech:'#06b6d4',News:'#ef4444',Finance:'#22c55e',Lifestyle:'#f472b6',Gaming:'#a855f7',Health:'#14b8a6',Travel:'#f97316',Food:'#eab308',Sports:'#6366f1',Entertainment:'#e879f9',Science:'#2dd4bf',Politics:'#fb923c',Music:'#c084fc',Auto:'#38bdf8'};
+let CHANNELS=[], scene, camera, renderer, controls, globe, pins=[], hoveredPin=null, time=0;
+const PIN_GROUP = new THREE.Group();
+
+function latLngToVec3(lat,lng,r){const p=(90-lat)*Math.PI/180,t=(lng+180)*Math.PI/180;return new THREE.Vector3(-r*Math.sin(p)*Math.cos(t),r*Math.cos(p),r*Math.sin(p)*Math.sin(t));}
+function formatNum(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'K':String(n);}
+
+async function loadChannels(){
+  try{const r=await fetch('/v1/channel-map?limit=2000');const d=await r.json();if(d.items)CHANNELS=d.items.filter(c=>c.lat&&c.lng).map(c=>({username:c.username,title:c.title||c.username,category:c.category||'Other',region:c.region||'ru',members:c.member_count||0,lat:c.lat,lng:c.lng}));}catch(e){}
+  if(!CHANNELS.length)CHANNELS=window.__SEED||[];
+}
+
+function init(){
+  scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0x050508,0.08);
+  camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,1000);camera.position.set(0,1.5,4);
+  renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.2;
+  document.getElementById('globe-container').appendChild(renderer.domElement);
+  controls=new THREE.OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.dampingFactor=0.05;controls.minDistance=2;controls.maxDistance=8;controls.autoRotate=true;controls.autoRotateSpeed=0.3;
+  const raycaster=new THREE.Raycaster();const mouse=new THREE.Vector2(-999,-999);
+  scene.add(new THREE.AmbientLight(0x222233,0.5));
+  const sun=new THREE.DirectionalLight(0xffeedd,1.2);sun.position.set(5,3,5);scene.add(sun);
+  const rim=new THREE.PointLight(0x00ff88,0.8,10);rim.position.set(-3,2,-3);scene.add(rim);
+  const globeGeo=new THREE.SphereGeometry(1.5,128,128);
+  globe=new THREE.Mesh(globeGeo,new THREE.MeshStandardMaterial({color:0x0a0a12,roughness:0.8,metalness:0.2}));scene.add(globe);
+  const gridMat=new THREE.LineBasicMaterial({color:0x111122,transparent:true,opacity:0.3});
+  for(let lat=-80;lat<=80;lat+=20){const pts=[];for(let lng=0;lng<=360;lng+=2)pts.push(latLngToVec3(lat,lng,1.502));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gridMat));}
+  for(let lng=0;lng<360;lng+=30){const pts=[];for(let lat=-90;lat<=90;lat+=2)pts.push(latLngToVec3(lat,lng,1.502));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),gridMat));}
+  const atmosGeo=new THREE.SphereGeometry(1.58,64,64);
+  const atmosMat=new THREE.ShaderMaterial({vertexShader:'varying vec3 vN;void main(){vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',fragmentShader:'varying vec3 vN;void main(){float i=pow(0.65-dot(vN,vec3(0,0,1)),3.0);gl_FragColor=vec4(0,1,0.53,1)*i*0.4;}',blending:THREE.AdditiveBlending,side:THREE.BackSide,transparent:true});
+  scene.add(new THREE.Mesh(atmosGeo,atmosMat));
+  const starGeo=new THREE.BufferGeometry();const sv=[];for(let i=0;i<3000;i++)sv.push((Math.random()-0.5)*100,(Math.random()-0.5)*100,(Math.random()-0.5)*100);
+  starGeo.setAttribute('position',new THREE.Float32BufferAttribute(sv,3));scene.add(new THREE.Points(starGeo,new THREE.PointsMaterial({color:0xffffff,size:0.05,transparent:true,opacity:0.6})));
+  scene.add(PIN_GROUP);
+  window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+  renderer.domElement.addEventListener('mousemove',e=>{mouse.x=(e.clientX/innerWidth)*2-1;mouse.y=-(e.clientY/innerHeight)*2+1;});
+  renderer.domElement.addEventListener('click',()=>{if(hoveredPin){showDetail(hoveredPin.userData.channel);controls.autoRotate=false;const t=hoveredPin.position.clone().normalize().multiplyScalar(3);animCam(t);}});
+
+  function animCam(target){const s=camera.position.clone(),st=performance.now();(function step(){const t=Math.min((performance.now()-st)/1000,1),e=t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;camera.position.lerpVectors(s,target,e);if(t<1)requestAnimationFrame(step);})();}
+
+  function anim(){
+    requestAnimationFrame(anim);time+=0.01;controls.update();
+    raycaster.setFromCamera(mouse,camera);let cp=null,cd=Infinity;
+    pins.forEach(p=>{if(!p.visible)return;const wp=new THREE.Vector3();p.userData.head.getWorldPosition(wp);const d=raycaster.ray.distanceToPoint(wp);if(d<0.05&&d<cd){cd=d;cp=p;}});
+    if(hoveredPin&&hoveredPin!==cp){hoveredPin.userData.head.scale.setScalar(1);hoveredPin.userData.glow.material.opacity=0.15;renderer.domElement.style.cursor='grab';}
+    if(cp){hoveredPin=cp;cp.userData.head.scale.setScalar(1.8);cp.userData.glow.material.opacity=0.5;renderer.domElement.style.cursor='pointer';}else hoveredPin=null;
+    pins.forEach(p=>{if(!p.visible)return;p.userData.glow.rotation.z=time*0.5;if(p!==hoveredPin)p.userData.glow.material.opacity=0.1+Math.sin(time*2+p.userData.index*0.1)*0.05;});
+    renderer.render(scene,camera);
+  }
+  anim();
+}
+
+function createPins(channels){
+  while(PIN_GROUP.children.length)PIN_GROUP.remove(PIN_GROUP.children[0]);pins=[];
+  channels.forEach((ch,i)=>{
+    const pos=latLngToVec3(ch.lat,ch.lng,1.52),color=new THREE.Color(CAT_COLORS[ch.category]||'#00ff88');
+    const size=Math.max(0.012,Math.min(0.035,Math.log10(ch.members+1)*0.007));
+    const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.002,0.002,0.08,4),new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.6}));
+    const head=new THREE.Mesh(new THREE.SphereGeometry(size,12,12),new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.85}));
+    const glow=new THREE.Mesh(new THREE.RingGeometry(size*1.5,size*2.5,16),new THREE.MeshBasicMaterial({color,transparent:true,opacity:0.15,side:THREE.DoubleSide}));
+    const normal=pos.clone().normalize(),g=new THREE.Group();g.position.copy(pos);g.lookAt(pos.clone().add(normal));
+    stem.position.set(0,0,0.04);head.position.set(0,0,0.08);glow.position.set(0,0,0.085);
+    g.add(stem);g.add(head);g.add(glow);g.userData={channel:ch,index:i,head,glow,origSize:size};
+    PIN_GROUP.add(g);pins.push(g);
+  });
+}
+
+function showDetail(ch){
+  const p=document.getElementById('detail-panel');p.classList.add('show');
+  document.getElementById('detail-title').textContent=ch.title;
+  document.getElementById('detail-username').textContent='@'+ch.username;
+  document.getElementById('detail-members').textContent=formatNum(ch.members);
+  document.getElementById('detail-category').textContent=ch.category;
+  document.getElementById('detail-open').onclick=()=>window.open('https://t.me/'+ch.username,'_blank');
+}
+document.getElementById('detail-close').onclick=()=>{document.getElementById('detail-panel').classList.remove('show');controls.autoRotate=true;};
+
+function buildCategories(channels){
+  const cats={};channels.forEach(c=>{cats[c.category]=(cats[c.category]||0)+1;});
+  const container=document.getElementById('categories');
+  let activeCategory=null;
+  Object.entries(cats).sort((a,b)=>b[1]-a[1]).forEach(([cat,count])=>{
+    const pill=document.createElement('div');pill.className='category-pill';
+    const dot=document.createElement('span');dot.className='cat-dot';dot.style.background=CAT_COLORS[cat]||'#00ff88';
+    const label=document.createTextNode(' '+cat+' ');
+    const cnt=document.createElement('span');cnt.style.color='#555';cnt.textContent=String(count);
+    pill.appendChild(dot);pill.appendChild(label);pill.appendChild(cnt);
+    pill.onclick=()=>{
+      if(activeCategory===cat){activeCategory=null;pill.classList.remove('active');pins.forEach(p=>p.visible=true);}
+      else{container.querySelectorAll('.category-pill').forEach(p=>p.classList.remove('active'));activeCategory=cat;pill.classList.add('active');pins.forEach(p=>{p.visible=p.userData.channel.category===cat;});}
+    };
+    container.appendChild(pill);
+  });
+}
+
+async function boot(){
+  init();await loadChannels();
+  document.getElementById('stat-total').textContent=String(CHANNELS.length);
+  document.getElementById('stat-cats').textContent=String(new Set(CHANNELS.map(c=>c.category)).size);
+  createPins(CHANNELS);buildCategories(CHANNELS);
+  setTimeout(()=>{const l=document.getElementById('loading');l.classList.add('done');setTimeout(()=>l.remove(),800);},500);
+}
+boot();
+</script>
+</body>
+</html>
