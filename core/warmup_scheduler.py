@@ -12,7 +12,7 @@ import random
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, update, and_, or_
+from sqlalchemy import select, update, and_, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from storage.models import (
