@@ -105,6 +105,14 @@ from core.web_auth import (
 )
 from core.blog_engine import get_all_posts, get_post as get_blog_post
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
+from core.referral_service import (
+    ReferralError,
+    get_or_create_referral_code,
+    get_referral_stats,
+    list_referrals,
+    track_referral,
+    process_referral_reward,
+)
 from core.telegram_bot_auth import (
     close_redis as _close_bot_auth_redis,
     consume_pending_auth,
@@ -176,6 +184,7 @@ from storage.models import (
     ChattingPreset,
     DmInbox,
     DmMessage,
+    Referral,
 )
 from storage.sqlite_db import apply_session_rls_context, async_session, dispose_engine, init_db
 from utils.helpers import utcnow
@@ -2449,6 +2458,30 @@ async def list_recent_leads(
         }
         for row in rows
     ]
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/internal/leads/scored")
+async def list_scored_leads(
+    _: None = Depends(require_internal_token),
+) -> dict[str, object]:
+    """All leads with profile + engagement scores and category."""
+    from core.lead_scoring import get_all_scored_leads, lead_score_to_dict
+
+    scored = await get_all_scored_leads()
+    items = [lead_score_to_dict(ls) for ls in scored]
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/v1/internal/leads/pql")
+async def list_pql_leads(
+    _: None = Depends(require_internal_token),
+) -> dict[str, object]:
+    """Only PQL leads (total_score >= 121)."""
+    from core.lead_scoring import get_pql_leads, lead_score_to_dict
+
+    pql = await get_pql_leads()
+    items = [lead_score_to_dict(ls) for ls in pql]
     return {"items": items, "total": len(items)}
 
 
@@ -15706,6 +15739,47 @@ async def content_templates(
             },
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Referral System
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/referral/code")
+async def referral_get_code(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Получить (или сгенерировать) свой реферальный код."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    code = await get_or_create_referral_code(tenant_context.user_id, session)
+    return {
+        "referral_code": code,
+        "referral_link": f"https://neurocommenting.io/r/{code}",
+    }
+
+
+@app.get("/v1/referral/stats")
+async def referral_get_stats(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Статистика рефералов: total, earned, pending, tier."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    return await get_referral_stats(tenant_context.user_id, session)
+
+
+@app.get("/v1/referral/list")
+async def referral_list(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Список рефералов с пагинацией."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+    return await list_referrals(tenant_context.user_id, session, limit=limit, offset=offset)
 
 
 if __name__ == "__main__":

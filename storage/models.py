@@ -36,6 +36,7 @@ class AuthUser(Base):
     email = Column(String(255), unique=True, nullable=True)
     company = Column(String(255), nullable=True)
     password_hash = Column(String(255), nullable=True)  # bcrypt hash, null for Telegram-only users
+    referral_code = Column(String(8), unique=True, nullable=True, index=True)
     is_platform_admin = Column(Boolean, server_default="false", nullable=False)
     last_login_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)
@@ -2556,3 +2557,28 @@ class ModuleThroughput(Base):
     errors_count = Column(Integer, server_default="0")
     avg_latency_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Referral System
+# ---------------------------------------------------------------------------
+
+
+class Referral(Base):
+    """Реферальная запись: кто кого привёл и награда."""
+    __tablename__ = "referrals"
+    __table_args__ = (
+        UniqueConstraint("referred_id", name="uq_referrals_referred_id"),
+        Index("ix_referrals_referrer_id", "referrer_id"),
+        Index("ix_referrals_referral_code", "referral_code"),
+        Index("ix_referrals_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    referrer_id = Column(Integer, ForeignKey("auth_users.id"), nullable=False)
+    referred_id = Column(Integer, ForeignKey("auth_users.id"), nullable=False)
+    referral_code = Column(String(8), nullable=False)
+    status = Column(String(20), default="pending")  # pending, confirmed, rewarded, cancelled
+    reward_amount = Column(Integer, default=0)  # in cents/kopecks
+    rewarded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
