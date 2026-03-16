@@ -52,11 +52,11 @@ function toMapDataFilters(f: FiltersState): MapDataFilters {
 
 function toConstFilters(f: FiltersState): ConstMapFilters {
   return {
-    category: f.category ?? "",
-    language: f.language ?? "",
-    region: f.region ?? "",
+    category: f.category,
+    language: f.language,
+    region: f.region,
     minSubscribers: f.minSubscribers,
-    search: f.searchQuery,
+    searchQuery: f.searchQuery,
   };
 }
 

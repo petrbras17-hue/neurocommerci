@@ -85,7 +85,7 @@ export function MapStats({ filters, filteredTotal }: MapStatsProps) {
     filters.language ||
     filters.region ||
     filters.minSubscribers > 0 ||
-    filters.search;
+    filters.searchQuery;
 
   const totalChannels = stats?.total_channels ?? stats?.total ?? 0;
   const countryCount = stats ? Object.keys(stats.by_region ?? {}).length : 0;
@@ -151,9 +151,9 @@ export function MapStats({ filters, filteredTotal }: MapStatsProps) {
                 {getCategoryLabel(filters.category)}
               </span>
             )}
-            {filters.search && (
+            {filters.searchQuery && (
               <span style={{ color: T.accent, fontSize: 11, fontWeight: 700 }}>
-                &laquo;{filters.search}&raquo;
+                &laquo;{filters.searchQuery}&raquo;
               </span>
             )}
             <span
