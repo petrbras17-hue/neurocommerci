@@ -1498,18 +1498,28 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def _start_warmup_scheduler():
-    """Start WarmupScheduler independently of lifespan (which may be blocked by other init)."""
-    await asyncio.sleep(5)  # wait for DB/Redis to init
+_scheduler_boot_task = None
+
+@app.middleware("http")
+async def _lazy_scheduler_boot(request: Request, call_next):
+    """Boot WarmupScheduler on first HTTP request (guaranteed after DB/Redis init)."""
+    global _scheduler_boot_task
+    if _scheduler_boot_task is None:
+        _scheduler_boot_task = asyncio.create_task(_do_scheduler_boot())
+    return await call_next(request)
+
+
+async def _do_scheduler_boot():
+    """Actually start the scheduler (runs once via middleware guard)."""
     try:
         from core.warmup_scheduler import WarmupScheduler
+        log.info("WarmupScheduler: lazy boot triggered by first request")
         ws = WarmupScheduler(db_session_factory=async_session)
         await ws.start()
         app_state["warmup_scheduler"] = ws
-        log.info("WarmupScheduler started via on_event: running=%s", ws.is_running)
+        log.info("WarmupScheduler RUNNING: active=%d", ws.active_count)
     except Exception as exc:
-        log.error("WarmupScheduler on_event startup FAILED: %s", exc, exc_info=True)
+        log.error("WarmupScheduler boot FAILED: %s", exc, exc_info=True)
 
 
 @app.middleware("http")
