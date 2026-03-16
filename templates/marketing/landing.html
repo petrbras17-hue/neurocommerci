@@ -1,25 +1,67 @@
 <!DOCTYPE html>
-<html lang="{{ lang|default('ru') }}" dir="{{ t.meta.dir|default('ltr') }}">
+<html lang="{{ lang|default('en') }}" dir="{{ t.meta.dir|default('ltr') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page.title }}</title>
   <meta name="description" content="{{ page.description }}">
+  <!-- Google Search Console verification -->
+  <meta name="google-site-verification" content="PLACEHOLDER">
+  <!-- Canonical: language-aware for ?lang= variants -->
+  {% if request.query_params.get('lang') %}
+  <link rel="canonical" href="{{ base_url }}{{ request.url.path }}?lang={{ lang }}">
+  {% else %}
   <link rel="canonical" href="{{ base_url }}{{ request.url.path }}">
+  {% endif %}
+  <!-- Hreflang alternates for 9 languages + x-default -->
   {% for sl in supported_languages %}
   <link rel="alternate" hreflang="{{ sl.code }}" href="{{ base_url }}{{ request.url.path }}?lang={{ sl.code }}">
   {% endfor %}
-  <link rel="alternate" hreflang="x-default" href="{{ base_url }}{{ request.url.path }}">
+  <link rel="alternate" hreflang="x-default" href="{{ base_url }}{{ request.url.path }}?lang=en">
+  <!-- Open Graph with per-language locale -->
   <meta property="og:title" content="{{ page.title }}">
   <meta property="og:description" content="{{ page.description }}">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="{{ base_url }}{{ request.url.path }}">
+  <meta property="og:url" content="{{ base_url }}{{ request.url.path }}{% if request.query_params.get('lang') %}?lang={{ lang }}{% endif %}">
   <meta property="og:locale" content="{{ t.meta.locale|default('en_US') }}">
+  {% for sl in supported_languages %}{% if sl.code != lang %}
+  <meta property="og:locale:alternate" content="{{ sl.code }}{% if sl.code == 'ru' %}_RU{% elif sl.code == 'en' %}_US{% elif sl.code == 'es' %}_ES{% elif sl.code == 'pt' %}_BR{% elif sl.code == 'tr' %}_TR{% elif sl.code == 'de' %}_DE{% elif sl.code == 'fr' %}_FR{% elif sl.code == 'zh' %}_CN{% elif sl.code == 'ar' %}_SA{% endif %}">
+  {% endif %}{% endfor %}
   <meta property="og:site_name" content="NEURO COMMENTING">
-  <meta name="twitter:card" content="summary">
+  <meta property="og:image" content="{{ base_url }}/static/og-default.svg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <!-- Twitter Cards -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@neurocommenting">
+  <meta name="twitter:creator" content="@neurocommenting">
   <meta name="twitter:title" content="{{ page.title }}">
   <meta name="twitter:description" content="{{ page.description }}">
+  <meta name="twitter:image" content="{{ base_url }}/static/og-default.svg">
+  <!-- JSON-LD: Organization (all pages) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "NEURO COMMENTING",
+    "url": "{{ base_url }}",
+    "logo": "{{ base_url }}/static/og-default.svg",
+    "description": "{{ page.description }}",
+    "email": "support@neurocommenting.com",
+    "sameAs": [
+      "https://t.me/neurocommenting",
+      "https://github.com/neurocommenting"
+    ],
+    "contactPoint": {
+      "@type": "ContactPoint",
+      "contactType": "customer support",
+      "email": "support@neurocommenting.com",
+      "availableLanguage": ["Russian", "English", "Spanish", "Portuguese", "Turkish", "German", "French", "Chinese", "Arabic"]
+    }
+  }
+  </script>
   {% if page.slug == 'home' %}
+  <!-- JSON-LD: SoftwareApplication with localized currency (home only) -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -28,30 +70,111 @@
     "applicationCategory": "BusinessApplication",
     "operatingSystem": "Web",
     "description": "{{ page.description }}",
+    "inLanguage": "{{ lang }}",
     "offers": {
       "@type": "AggregateOffer",
+      {% if lang == 'ru' %}
+      "priceCurrency": "RUB",
+      "lowPrice": "4990",
+      "highPrice": "79990",
+      {% elif lang == 'tr' %}
+      "priceCurrency": "TRY",
+      "lowPrice": "1490",
+      "highPrice": "29990",
+      {% elif lang == 'pt' %}
+      "priceCurrency": "BRL",
+      "lowPrice": "249",
+      "highPrice": "2490",
+      {% elif lang == 'zh' %}
+      "priceCurrency": "CNY",
+      "lowPrice": "349",
+      "highPrice": "3490",
+      {% elif lang == 'ar' %}
+      "priceCurrency": "SAR",
+      "lowPrice": "189",
+      "highPrice": "1890",
+      {% elif lang == 'de' or lang == 'fr' or lang == 'es' %}
+      "priceCurrency": "EUR",
+      "lowPrice": "49",
+      "highPrice": "499",
+      {% else %}
       "priceCurrency": "USD",
       "lowPrice": "49",
       "highPrice": "499",
-      "offerCount": "3"
+      {% endif %}
+      "offerCount": "4"
+    }
+  }
+  </script>
+  {% endif %}
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="dns-prefetch" href="https://fonts.googleapis.com">
+  <link rel="dns-prefetch" href="https://fonts.gstatic.com">
+  <link rel="dns-prefetch" href="https://www.googletagmanager.com">
+  <link rel="dns-prefetch" href="https://www.google-analytics.com">
+  <link rel="dns-prefetch" href="https://mc.yandex.ru">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ static_css_url }}">
+  <!-- JSON-LD: WebSite with SearchAction (all pages) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "NEURO COMMENTING",
+    "url": "{{ base_url }}",
+    "inLanguage": "{{ lang }}",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": {
+        "@type": "EntryPoint",
+        "urlTemplate": "{{ base_url }}/blog?q={search_term_string}"
+      },
+      "query-input": "required name=search_term_string"
     }
   }
   </script>
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
-    "@type": "Organization",
-    "name": "NEURO COMMENTING",
-    "url": "{{ base_url }}",
-    "description": "{{ page.description }}",
-    "email": "support@neurocommenting.ru"
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "{{ t.nav.home }}",
+        "item": "{{ base_url }}/"
+      }{% if page.slug != 'home' %},
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "{{ page.title }}",
+        "item": "{{ base_url }}{{ request.url.path }}"
+      }{% endif %}
+    ]
+  }
+  </script>
+  {% if faq %}
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {% for question, answer in faq %}
+      {
+        "@type": "Question",
+        "name": "{{ question }}",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "{{ answer }}"
+        }
+      }{% if not loop.last %},{% endif %}
+      {% endfor %}
+    ]
   }
   </script>
   {% endif %}
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ static_css_url }}">
   <style>
     .lang-switcher { position: relative; display: inline-flex; align-items: center; }
     .lang-switcher select {
@@ -71,18 +194,22 @@
     .lang-switcher select option { background: #0a0a0b; color: #ccc; }
     [dir="rtl"] .nav-links { direction: rtl; }
     [dir="rtl"] .footer-links { direction: rtl; }
+    .skip-link { position: absolute; top: -100%; left: 16px; z-index: 9999; padding: 12px 24px; background: var(--accent, #00ff88); color: #000; font-weight: 700; border-radius: 0 0 8px 8px; text-decoration: none; font-size: 0.9rem; }
+    .skip-link:focus { top: 0; }
   </style>
 </head>
 <body>
 
-<div class="site-backdrop"></div>
+<a href="#main-content" class="skip-link">{{ t.nav.skip_to_content|default('Skip to content') }}</a>
+
+<div class="site-backdrop" aria-hidden="true"></div>
 
 <!-- NAV -->
-<header>
+<header role="banner">
   <div class="page-shell">
-    <nav class="top-nav">
-      <a href="/?lang={{ lang }}" class="brand">
-        <span class="brand-mark">NC</span>
+    <nav class="top-nav" aria-label="{{ t.nav.main_nav_label|default('Main navigation') }}">
+      <a href="/?lang={{ lang }}" class="brand" aria-label="NEURO COMMENTING — {{ t.nav.home }}">
+        <span class="brand-mark" aria-hidden="true">NC</span>
         <span>NEURO COMMENTING</span>
       </a>
       <div class="nav-links">
@@ -100,13 +227,13 @@
         </select>
       </div>
       <a href="#lead-form" class="nav-cta">{{ t.nav.get_demo }}</a>
-      <button class="hamburger" id="hamburger-btn" aria-label="{{ t.nav.menu_label|default('Menu') }}">
+      <button class="hamburger" id="hamburger-btn" aria-label="{{ t.nav.menu_label|default('Menu') }}" aria-expanded="false" aria-controls="mobile-nav">
         <span></span>
         <span></span>
         <span></span>
       </button>
     </nav>
-    <nav class="mobile-nav" id="mobile-nav">
+    <nav class="mobile-nav" id="mobile-nav" aria-label="{{ t.nav.mobile_nav_label|default('Mobile navigation') }}">
       <a href="/?lang={{ lang }}">{{ t.nav.home }}</a>
       <a href="/ecom?lang={{ lang }}">{{ t.nav.ecom }}</a>
       <a href="/edtech?lang={{ lang }}">{{ t.nav.edtech }}</a>
@@ -117,7 +244,7 @@
   </div>
 </header>
 
-<main>
+<main id="main-content" role="main">
 
   <!-- HERO -->
   <section class="page-shell">
@@ -168,12 +295,17 @@
           <p class="eyebrow">{{ t.lead_form.waitlist_eyebrow }}</p>
           <h2>{{ page.cta|default(t.hero.cta_default) }}</h2>
           <p class="panel-copy">{{ t.lead_form.panel_copy }}</p>
-          <form class="lead-form" id="lead-form-el">
-            <input type="text" name="name" placeholder="{{ t.lead_form.name_placeholder }}" required>
-            <input type="email" name="email" placeholder="{{ t.lead_form.email_placeholder }}" required>
-            <input type="text" name="company" placeholder="{{ t.lead_form.company_placeholder }}" required>
-            <input type="text" name="telegram_username" placeholder="{{ t.lead_form.telegram_placeholder }}">
-            <select name="use_case" required>
+          <form class="lead-form" id="lead-form-el" aria-label="{{ t.lead_form.form_aria_label|default('Request demo form') }}">
+            <label for="lead-name" class="sr-only">{{ t.lead_form.name_placeholder }}</label>
+            <input type="text" id="lead-name" name="name" placeholder="{{ t.lead_form.name_placeholder }}" required autocomplete="name">
+            <label for="lead-email" class="sr-only">{{ t.lead_form.email_placeholder }}</label>
+            <input type="email" id="lead-email" name="email" placeholder="{{ t.lead_form.email_placeholder }}" required autocomplete="email">
+            <label for="lead-company" class="sr-only">{{ t.lead_form.company_placeholder }}</label>
+            <input type="text" id="lead-company" name="company" placeholder="{{ t.lead_form.company_placeholder }}" required autocomplete="organization">
+            <label for="lead-telegram" class="sr-only">{{ t.lead_form.telegram_placeholder }}</label>
+            <input type="text" id="lead-telegram" name="telegram_username" placeholder="{{ t.lead_form.telegram_placeholder }}" autocomplete="username">
+            <label for="lead-usecase" class="sr-only">{{ t.lead_form.use_case_label }}</label>
+            <select id="lead-usecase" name="use_case" required>
               <option value="">{{ t.lead_form.use_case_label }}</option>
               <option value="ecom">Ecom</option>
               <option value="edtech">EdTech</option>
@@ -295,7 +427,7 @@
 </main>
 
 <!-- FOOTER -->
-<footer>
+<footer role="contentinfo">
   <div class="page-shell">
     <div class="footer-inner">
       <div class="footer-brand">
@@ -335,15 +467,17 @@
     });
   });
 
-  // Hamburger toggle
+  // Hamburger toggle with aria-expanded
   var hamburgerBtn = document.getElementById("hamburger-btn");
   var mobileNav = document.getElementById("mobile-nav");
   hamburgerBtn.addEventListener("click", function() {
-    mobileNav.classList.toggle("open");
+    var isOpen = mobileNav.classList.toggle("open");
+    hamburgerBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   });
   mobileNav.querySelectorAll("a").forEach(function(link) {
     link.addEventListener("click", function() {
       mobileNav.classList.remove("open");
+      hamburgerBtn.setAttribute("aria-expanded", "false");
     });
   });
 

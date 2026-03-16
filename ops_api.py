@@ -20,6 +20,7 @@ import uvicorn
 from fastapi import Body, Cookie, Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -104,6 +105,13 @@ from core.web_auth import (
     verify_telegram_login,
 )
 from core.blog_engine import get_all_posts, get_post as get_blog_post
+from core.seo_pages import (
+    get_all_seo_pages,
+    get_related_seo_pages,
+    get_seo_page_by_path,
+    get_seo_page_schemas,
+    get_seo_sitemap_entries,
+)
 from core.i18n import (
     SUPPORTED_LANGUAGES,
     detect_language,
@@ -1540,6 +1548,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
     expose_headers=["X-Request-Id"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 _scheduler_boot_done = False
@@ -1598,16 +1607,50 @@ async def private_access_gate(request: Request, call_next):
     return await call_next(request)
 
 
+_STATIC_PREFIXES = ("/static/", "/app/assets/")
+_IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
+_HTML_CACHE = "public, max-age=0, must-revalidate"
+_SHORT_CACHE = "public, max-age=3600"
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
+    path = request.url.path
+
+    # --- Security headers ---
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://telegram.org https://www.googletagmanager.com https://mc.yandex.ru; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https://mc.yandex.ru https://www.google-analytics.com; "
+        "frame-src https://oauth.telegram.org; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
     if settings.APP_ENV == "production" and settings.PUBLIC_DOMAIN:
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+
+    # --- X-Robots-Tag noindex for non-public paths ---
+    _noindex_prefixes = ("/app", "/auth", "/v1", "/api", "/health")
+    if any(path.startswith(p) for p in _noindex_prefixes):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+
+    # --- Cache-Control for performance ---
+    if any(path.startswith(p) for p in _STATIC_PREFIXES):
+        response.headers["Cache-Control"] = _IMMUTABLE_CACHE
+    elif path in ("/robots.txt", "/sitemap.xml", "/feed.xml", "/favicon.ico"):
+        response.headers["Cache-Control"] = _SHORT_CACHE
+    elif "text/html" in (response.headers.get("content-type") or ""):
+        response.headers["Cache-Control"] = _HTML_CACHE
+
     return response
 
 
@@ -2197,6 +2240,159 @@ async def blog_post_page(request: Request, slug: str) -> HTMLResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Programmatic SEO pages — industry, country, competitor, how-to
+# ---------------------------------------------------------------------------
+
+_SEO_OG_LOCALES = {
+    "ru": "ru_RU", "en": "en_US", "es": "es_ES", "pt": "pt_BR",
+    "tr": "tr_TR", "de": "de_DE", "fr": "fr_FR", "zh": "zh_CN", "ar": "ar_SA",
+}
+
+_SEO_DIR_MAP = {"ar": "rtl"}
+
+_SEO_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "home": "Home", "ecom": "E-commerce", "edtech": "EdTech", "saas": "SaaS",
+        "pricing": "Pricing", "blog": "Blog", "get_demo": "Get demo",
+        "words": "words", "faq_title": "Frequently Asked Questions",
+        "cta_sub": "14 days free. No credit card. No obligations.",
+        "related_title": "Related articles", "feature": "Feature",
+        "terms": "Terms", "privacy": "Privacy", "refund": "Refund",
+    },
+    "ru": {
+        "home": "Главная", "ecom": "E-commerce", "edtech": "EdTech", "saas": "SaaS",
+        "pricing": "Тарифы", "blog": "Блог", "get_demo": "Получить демо",
+        "words": "слов", "faq_title": "Часто задаваемые вопросы",
+        "cta_sub": "14 дней бесплатно. Без карты. Без обязательств.",
+        "related_title": "Связанные статьи", "feature": "Функция",
+        "terms": "Оферта", "privacy": "Конфиденциальность", "refund": "Возврат",
+    },
+}
+
+
+def _seo_page_context(request: Request, seo_page: "SEOPage") -> dict[str, object]:
+    """Build template context for a programmatic SEO page."""
+    from core.seo_pages import SEOPage  # noqa: F811 — deferred for type only
+    proto, host = _safe_host(request)
+    base_url = f"{proto}://{host}".rstrip("/")
+    lang = seo_page.lang
+    schemas = get_seo_page_schemas(seo_page, base_url)
+    related = get_related_seo_pages(seo_page, lang, limit=4)
+    labels = _SEO_LABELS.get(lang, _SEO_LABELS["en"])
+    reading_minutes = max(1, round(seo_page.word_count / 200))
+
+    return {
+        "request": request,
+        "seo": seo_page,
+        "base_url": base_url,
+        "static_css_url": f"{base_url}/static/marketing.css",
+        "lang": lang,
+        "dir": _SEO_DIR_MAP.get(lang, "ltr"),
+        "og_locale": _SEO_OG_LOCALES.get(lang, "en_US"),
+        "schemas": schemas,
+        "related_pages": related,
+        "reading_minutes": reading_minutes,
+        "supported_languages": get_supported_languages(),
+        # Flat labels for the template (simpler than full TranslationProxy)
+        "t_home": labels["home"],
+        "t_ecom": labels["ecom"],
+        "t_edtech": labels["edtech"],
+        "t_saas": labels["saas"],
+        "t_pricing": labels["pricing"],
+        "t_blog": labels["blog"],
+        "t_get_demo": labels["get_demo"],
+        "t_words": labels["words"],
+        "t_faq_title": labels["faq_title"],
+        "t_cta_sub": labels["cta_sub"],
+        "t_related_title": labels["related_title"],
+        "t_feature": labels["feature"],
+        "t_terms": labels["terms"],
+        "t_privacy": labels["privacy"],
+        "t_refund": labels["refund"],
+    }
+
+
+@app.get("/telegram-marketing-for-{industry}", response_class=HTMLResponse)
+async def seo_industry_page(request: Request, industry: str) -> HTMLResponse:
+    """Programmatic SEO: Telegram marketing for {industry}."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path(f"/telegram-marketing-for-{industry}", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/telegram-growth-in-{country}", response_class=HTMLResponse)
+async def seo_country_page(request: Request, country: str) -> HTMLResponse:
+    """Programmatic SEO: Telegram growth in {country}."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path(f"/telegram-growth-in-{country}", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/how-to-{action}", response_class=HTMLResponse)
+async def seo_howto_page(request: Request, action: str) -> HTMLResponse:
+    """Programmatic SEO: How to {action} on Telegram."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path(f"/how-to-{action}", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/gramgpt-alternative", response_class=HTMLResponse)
+async def seo_gramgpt_alt(request: Request) -> HTMLResponse:
+    """Programmatic SEO: GramGPT alternative."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path("/gramgpt-alternative", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/tgstat-alternative", response_class=HTMLResponse)
+async def seo_tgstat_alt(request: Request) -> HTMLResponse:
+    """Programmatic SEO: TGStat alternative."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path("/tgstat-alternative", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/hootsuite-telegram-alternative", response_class=HTMLResponse)
+async def seo_hootsuite_alt(request: Request) -> HTMLResponse:
+    """Programmatic SEO: Hootsuite Telegram alternative."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path("/hootsuite-telegram-alternative", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/combot-alternative", response_class=HTMLResponse)
+async def seo_combot_alt(request: Request) -> HTMLResponse:
+    """Programmatic SEO: Combot alternative."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path("/combot-alternative", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
+@app.get("/sprout-social-telegram-alternative", response_class=HTMLResponse)
+async def seo_sprout_alt(request: Request) -> HTMLResponse:
+    """Programmatic SEO: Sprout Social Telegram alternative."""
+    lang = detect_language(request)
+    page = get_seo_page_by_path("/sprout-social-telegram-alternative", lang)
+    if not page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return templates.TemplateResponse(request, "marketing/seo_page.html", _seo_page_context(request, page))
+
+
 @app.get("/", response_class=HTMLResponse)
 async def landing_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "marketing/landing.html", _page_context(request, MARKETING_PAGES["home"]))
@@ -2340,6 +2536,14 @@ async def robots_txt(request: Request) -> str:
         "Allow: /privacy\n"
         "Allow: /refund\n"
         "Allow: /blog\n"
+        "Allow: /telegram-marketing-for-*\n"
+        "Allow: /telegram-growth-in-*\n"
+        "Allow: /how-to-*\n"
+        "Allow: /gramgpt-alternative\n"
+        "Allow: /tgstat-alternative\n"
+        "Allow: /hootsuite-telegram-alternative\n"
+        "Allow: /combot-alternative\n"
+        "Allow: /sprout-social-telegram-alternative\n"
         "Disallow: /app\n"
         "Disallow: /auth\n"
         "Disallow: /v1\n"
@@ -2378,18 +2582,41 @@ async def sitemap_xml(request: Request) -> Response:
         _sitemap_pages.append(
             {"path": f"/blog/{post.slug}", "priority": "0.6", "changefreq": "monthly"}
         )
-    urls = "\n".join(
-        f"  <url>\n"
-        f"    <loc>{base_url}{p['path']}</loc>\n"
-        f"    <lastmod>{today}</lastmod>\n"
-        f"    <changefreq>{p['changefreq']}</changefreq>\n"
-        f"    <priority>{p['priority']}</priority>\n"
-        f"  </url>"
-        for p in _sitemap_pages
-    )
+
+    # Add programmatic SEO pages (industry, country, competitor, how-to)
+    for seo_entry in get_seo_sitemap_entries():
+        _sitemap_pages.append(seo_entry)
+
+    # International SEO: build hreflang alternates for every page x language
+    _seo_langs = SUPPORTED_LANGUAGES  # ["ru","en","es","pt","tr","de","fr","zh","ar"]
+
+    url_blocks: list[str] = []
+    for p in _sitemap_pages:
+        hreflang_links = "\n".join(
+            f'    <xhtml:link rel="alternate" hreflang="{sl}" '
+            f'href="{base_url}{p["path"]}?lang={sl}"/>'
+            for sl in _seo_langs
+        )
+        # x-default points to English variant
+        hreflang_links += (
+            f'\n    <xhtml:link rel="alternate" hreflang="x-default" '
+            f'href="{base_url}{p["path"]}?lang=en"/>'
+        )
+        url_blocks.append(
+            f"  <url>\n"
+            f"    <loc>{base_url}{p['path']}</loc>\n"
+            f"    <lastmod>{today}</lastmod>\n"
+            f"    <changefreq>{p['changefreq']}</changefreq>\n"
+            f"    <priority>{p['priority']}</priority>\n"
+            f"{hreflang_links}\n"
+            f"  </url>"
+        )
+
+    urls = "\n".join(url_blocks)
     body = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"\n'
+        '        xmlns:xhtml="http://www.w3.org/1999/xhtml">\n'
         f"{urls}\n"
         "</urlset>\n"
     )

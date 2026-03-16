@@ -5,17 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ post.title }} — NEURO COMMENTING</title>
   <meta name="description" content="{{ post.description }}">
+  <!-- Google Search Console verification -->
+  <meta name="google-site-verification" content="PLACEHOLDER">
+  <!-- Canonical -->
   <link rel="canonical" href="{{ base_url }}/blog/{{ post.slug }}">
+  <!-- Hreflang alternates for 9 languages + x-default -->
+  <link rel="alternate" hreflang="ru" href="{{ base_url }}/blog/{{ post.slug }}?lang=ru">
+  <link rel="alternate" hreflang="en" href="{{ base_url }}/blog/{{ post.slug }}?lang=en">
+  <link rel="alternate" hreflang="es" href="{{ base_url }}/blog/{{ post.slug }}?lang=es">
+  <link rel="alternate" hreflang="pt" href="{{ base_url }}/blog/{{ post.slug }}?lang=pt">
+  <link rel="alternate" hreflang="tr" href="{{ base_url }}/blog/{{ post.slug }}?lang=tr">
+  <link rel="alternate" hreflang="de" href="{{ base_url }}/blog/{{ post.slug }}?lang=de">
+  <link rel="alternate" hreflang="fr" href="{{ base_url }}/blog/{{ post.slug }}?lang=fr">
+  <link rel="alternate" hreflang="zh" href="{{ base_url }}/blog/{{ post.slug }}?lang=zh">
+  <link rel="alternate" hreflang="ar" href="{{ base_url }}/blog/{{ post.slug }}?lang=ar">
+  <link rel="alternate" hreflang="x-default" href="{{ base_url }}/blog/{{ post.slug }}?lang=en">
+  <!-- Open Graph -->
   <meta property="og:title" content="{{ post.title }}">
   <meta property="og:description" content="{{ post.description }}">
   <meta property="og:type" content="article">
   <meta property="og:url" content="{{ base_url }}/blog/{{ post.slug }}">
   <meta property="og:locale" content="ru_RU">
+  <meta property="og:locale:alternate" content="en_US">
+  <meta property="og:locale:alternate" content="es_ES">
+  <meta property="og:locale:alternate" content="pt_BR">
+  <meta property="og:locale:alternate" content="tr_TR">
+  <meta property="og:locale:alternate" content="de_DE">
+  <meta property="og:locale:alternate" content="fr_FR">
+  <meta property="og:locale:alternate" content="zh_CN">
+  <meta property="og:locale:alternate" content="ar_SA">
   <meta property="og:site_name" content="NEURO COMMENTING">
+  <meta property="og:image" content="{{ base_url }}/static/og-default.svg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
   <meta property="article:published_time" content="{{ post.date }}">
   {% for tag in post.tags %}
   <meta property="article:tag" content="{{ tag }}">
   {% endfor %}
+  <!-- Twitter Cards -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:site" content="@neurocommenting">
+  <meta name="twitter:creator" content="@neurocommenting">
+  <meta name="twitter:title" content="{{ post.title }} — NEURO COMMENTING">
+  <meta name="twitter:description" content="{{ post.description }}">
+  <meta name="twitter:image" content="{{ base_url }}/static/og-default.svg">
+  <!-- JSON-LD: Article -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -27,12 +61,17 @@
     "author": {
       "@type": "Organization",
       "name": "NEURO COMMENTING",
-      "url": "{{ base_url }}"
+      "url": "{{ base_url }}",
+      "logo": "{{ base_url }}/static/og-default.svg"
     },
     "publisher": {
       "@type": "Organization",
       "name": "NEURO COMMENTING",
-      "url": "{{ base_url }}"
+      "url": "{{ base_url }}",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "{{ base_url }}/static/og-default.svg"
+      }
     },
     "mainEntityOfPage": {
       "@type": "WebPage",
