@@ -104,6 +104,13 @@ from core.web_auth import (
     verify_telegram_login,
 )
 from core.blog_engine import get_all_posts, get_post as get_blog_post
+from core.i18n import (
+    SUPPORTED_LANGUAGES,
+    detect_language,
+    get_supported_languages,
+    get_translation_proxy,
+    set_language_cookie,
+)
 from core.lead_funnel import LeadSnapshot, deliver_lead_funnel
 from core.referral_service import (
     ReferralError,
@@ -1642,6 +1649,8 @@ def _safe_host(request: Request) -> tuple[str, str]:
 def _page_context(request: Request, page: dict[str, object]) -> dict[str, object]:
     proto, host = _safe_host(request)
     base_url = f"{proto}://{host}".rstrip("/")
+    lang = detect_language(request)
+    tr = get_translation_proxy(lang)
     return {
         "request": request,
         "page": page,
@@ -1654,6 +1663,10 @@ def _page_context(request: Request, page: dict[str, object]) -> dict[str, object
         "base_url": base_url,
         "og_image": "",
         "static_css_url": f"{base_url}/static/marketing.css",
+        # i18n
+        "lang": lang,
+        "t": tr,
+        "supported_languages": get_supported_languages(),
     }
 
 
@@ -2172,6 +2185,21 @@ async def landing_edtech(request: Request) -> HTMLResponse:
 @app.get("/saas", response_class=HTMLResponse)
 async def landing_saas(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(request, "marketing/landing.html", _page_context(request, MARKETING_PAGES["saas"]))
+
+
+@app.get("/api/set-lang/{lang}", response_class=JSONResponse)
+async def set_lang(lang: str, response: Response) -> JSONResponse:
+    """Set preferred language cookie. Returns the selected language."""
+    if lang not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Unsupported language: {lang}. Supported: {', '.join(SUPPORTED_LANGUAGES)}")
+    set_language_cookie(response, lang)
+    return JSONResponse({"lang": lang, "ok": True})
+
+
+@app.get("/api/languages", response_class=JSONResponse)
+async def list_languages() -> JSONResponse:
+    """List all supported languages with metadata."""
+    return JSONResponse({"languages": get_supported_languages()})
 
 
 @app.get("/pricing", response_class=HTMLResponse)

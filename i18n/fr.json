@@ -1,0 +1,329 @@
+{
+  "meta": {
+    "lang": "fr",
+    "dir": "ltr",
+    "name": "Fran\u00e7ais",
+    "flag": "🇫🇷",
+    "locale": "fr_FR",
+    "currency": "EUR",
+    "currency_symbol": "\u20ac",
+    "region": "FR/BE/CH/CA/AF"
+  },
+  "nav": {
+    "features": "Fonctionnalit\u00e9s",
+    "pricing": "Tarifs",
+    "faq": "FAQ",
+    "login": "Connexion",
+    "signup": "Cr\u00e9er un compte",
+    "dashboard": "Tableau de bord",
+    "docs": "Documentation",
+    "blog": "Blog",
+    "contact": "Contact"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "headline": "Votre croissance Telegram en pilote automatique. 50 threads, 0 ban.",
+    "subheadline": "Commentaires IA, parsing de canaux, pr\u00e9chauffage de comptes et content factory \u2014 dans un seul terminal. Vos concurrents paient 130\u00a0$/mois pour la moiti\u00e9.",
+    "cta_primary": "D\u00e9marrer l'essai gratuit",
+    "cta_secondary": "Voir la d\u00e9mo en 2 minutes"
+  },
+  "features": {
+    "title": "Tout le growth stack Telegram en une plateforme",
+    "subtitle": "15+ modules. Une seule interface. Z\u00e9ro compromis.",
+    "items": [
+      {
+        "id": "smart_commenter",
+        "title": "Smart Commenter",
+        "description": "Commentaires IA en 10 styles \u2014 de l'expert au provocateur. Tests A/B des styles, astuce emoji-first pour atteindre le top, r\u00e8gle du \u00ab\u00a0jamais le premier\u00a0\u00bb. L'IA \u00e9crit de sorte que les mod\u00e9rateurs ne la distinguent pas d'un vrai utilisateur.",
+        "icon": "comment"
+      },
+      {
+        "id": "farm_orchestrator",
+        "title": "Farm Orchestrator",
+        "description": "Jusqu'\u00e0 50 threads par ferme. Distribution automatique des canaux, pause en cas de FloodWait, quarantaine des comptes probl\u00e9matiques. \u00c9v\u00e9nements Redis pub-sub en temps r\u00e9el. Passez de 1 compte \u00e0 une ferme compl\u00e8te en quelques minutes.",
+        "icon": "farm"
+      },
+      {
+        "id": "channel_map",
+        "title": "Channel Map",
+        "description": "Carte mondiale de 100\u00a0K+ canaux Telegram sur un globe 3D interactif. Clustering H3, filtres par cat\u00e9gorie (33 niches), drill-down jusqu'au canal individuel. Discovery, Farm Control et Intelligence \u2014 trois modes pour diff\u00e9rents objectifs.",
+        "icon": "globe"
+      },
+      {
+        "id": "warmup_engine",
+        "title": "Warmup Engine",
+        "description": "Pr\u00e9chauffage autonome en 7 phases : de la lecture stealth des canaux au commentaire actif. Personas IA, d\u00e9lais gaussiens, modes conservateur/mod\u00e9r\u00e9/agressif. Le compte passe de l'achat \u00e0 l'\u00e9tat op\u00e9rationnel tout seul.",
+        "icon": "warmup"
+      },
+      {
+        "id": "content_factory",
+        "title": "Content Factory",
+        "description": "Une source \u2014 six formats en 30 secondes. Post Telegram, thread Twitter/X, article LinkedIn, description YouTube, id\u00e9es Reels/Shorts, newsletter email. 5 voix de marque. Arr\u00eatez d'\u00e9crire la m\u00eame chose 6 fois.",
+        "icon": "content"
+      },
+      {
+        "id": "parser",
+        "title": "Parser",
+        "description": "Parsing de canaux par mots-cl\u00e9s, langue, g\u00e9olocalisation et taille d'audience. Barre de progression en temps r\u00e9el, annulation \u00e0 la vol\u00e9e, import par lots. Trouvez les espaces o\u00f9 l'on parle de votre produit \u2014 en minutes, pas en jours.",
+        "icon": "search"
+      },
+      {
+        "id": "profile_factory",
+        "title": "Profile Factory",
+        "description": "L'IA g\u00e9n\u00e8re des profils pour les comptes : nom, bio, avatar, canal personnel avec \u00e9pingle. G\u00e9n\u00e9ration de masse pour toute la ferme. Chaque compte ressemble \u00e0 un vrai utilisateur avec un historique.",
+        "icon": "profile"
+      },
+      {
+        "id": "billing_agency",
+        "title": "Billing & Agency Package",
+        "description": "Stripe + paiements locaux, essai gratuit de 14 jours. Package agence : marque blanche, gestion de clients, partage de revenus. G\u00e9n\u00e9rez des revenus en revendant la plateforme \u00e0 vos clients.",
+        "icon": "agency"
+      }
+    ]
+  },
+  "pricing": {
+    "title": "Des tarifs transparents. Sans surprise.",
+    "subtitle": "14 jours d'essai gratuit sur tous les plans. Sans carte bancaire.",
+    "billing_monthly": "Mensuel",
+    "billing_annual": "Annuel",
+    "annual_discount": "-20%",
+    "plans": [
+      {
+        "id": "starter",
+        "name": "Starter",
+        "price": 49,
+        "currency": "EUR",
+        "period": "mois",
+        "target": "Freelances et marketeurs solo qui d\u00e9butent sur Telegram.",
+        "features": [
+          "5 comptes dans la ferme",
+          "3 threads simultan\u00e9s",
+          "Smart Commenter (3 styles)",
+          "Parser de canaux (500 canaux/mois)",
+          "Pr\u00e9chauffage basique (mode conservateur)",
+          "Channel Map (mode Discovery)",
+          "1 workspace",
+          "Support par email"
+        ],
+        "not_included": [
+          "Tests A/B des styles",
+          "Content Factory",
+          "Agency Package"
+        ],
+        "cta": "D\u00e9marrer l'essai gratuit",
+        "highlighted": false
+      },
+      {
+        "id": "pro",
+        "name": "Pro",
+        "price": 129,
+        "currency": "EUR",
+        "period": "mois",
+        "badge": "Choix populaire",
+        "target": "\u00c9quipes growth et agences SMM qui veulent un processus r\u00e9p\u00e9table.",
+        "features": [
+          "25 comptes dans la ferme",
+          "15 threads simultan\u00e9s",
+          "Smart Commenter (10 styles + A/B)",
+          "Parser de canaux (5\u00a0000 canaux/mois)",
+          "Pr\u00e9chauffage autonome (tous les modes)",
+          "Channel Map (3 modes)",
+          "Content Factory (6 formats)",
+          "Profile Factory (g\u00e9n\u00e9ration de masse)",
+          "3 workspaces",
+          "Support Telegram, r\u00e9ponse sous 4h",
+          "Acc\u00e8s API"
+        ],
+        "not_included": [
+          "Agency Package",
+          "Marque blanche"
+        ],
+        "cta": "D\u00e9marrer l'essai gratuit",
+        "highlighted": true
+      },
+      {
+        "id": "agency",
+        "name": "Agency",
+        "price": 299,
+        "currency": "EUR",
+        "period": "mois",
+        "target": "Agences et \u00e9quipes qui g\u00e8rent la croissance Telegram pour leurs clients.",
+        "features": [
+          "100 comptes dans la ferme",
+          "50 threads simultan\u00e9s",
+          "Tous les modules sans restriction",
+          "Parser de canaux (illimit\u00e9)",
+          "Agency Package : clients, invitations, partage de revenus",
+          "Marque blanche : votre marque, vos couleurs",
+          "10 workspaces",
+          "Support prioritaire, r\u00e9ponse sous 1h",
+          "Manager d\u00e9di\u00e9",
+          "Styles IA personnalis\u00e9s par marque client"
+        ],
+        "not_included": [],
+        "cta": "Contacter l'\u00e9quipe commerciale",
+        "highlighted": false
+      },
+      {
+        "id": "enterprise",
+        "name": "Enterprise",
+        "price": 799,
+        "currency": "EUR",
+        "period": "mois",
+        "target": "Grandes structures, r\u00e9seaux d'agences et \u00e9quipes avec des besoins sur mesure.",
+        "features": [
+          "Comptes et threads illimit\u00e9s",
+          "Tous les modules Agency +",
+          "Instance d\u00e9di\u00e9e (VPS isol\u00e9)",
+          "SLA garanti 99,9%",
+          "Int\u00e9gration sur mesure (CRM, ERP, outils internes)",
+          "Workspaces illimit\u00e9s",
+          "Support 24/7 avec interlocuteur d\u00e9di\u00e9",
+          "Onboarding personnalis\u00e9",
+          "Audit de s\u00e9curit\u00e9 et conformit\u00e9"
+        ],
+        "not_included": [],
+        "cta": "Demander un devis",
+        "highlighted": false
+      }
+    ]
+  },
+  "proof": {
+    "title": "Ils font grandir leur Telegram avec nous",
+    "testimonials": [
+      {
+        "quote": "En un mois, nous avons g\u00e9n\u00e9r\u00e9 340 commentaires dans des canaux mode de niche. Taux de clic vers le site : 4,2\u00a0%. Avant, notre CM y passait 3 jours par semaine \u2014 maintenant la ferme tourne toute seule.",
+        "author": "Sophie M.",
+        "role": "Head of Growth",
+        "company": "Marque e-commerce, Paris",
+        "avatar": null
+      },
+      {
+        "quote": "Le parser a trouv\u00e9 87 canaux sur la reconversion professionnelle et l'EdTech en 15 minutes. \u00c0 la main, on y aurait pass\u00e9 une semaine. Le commentaire IA en mode expert nous g\u00e9n\u00e8re 2 \u00e0 3 leads par jour.",
+        "author": "Thomas R.",
+        "role": "CMO",
+        "company": "Plateforme EdTech, Bruxelles",
+        "avatar": null
+      },
+      {
+        "quote": "On utilise Content Factory au quotidien : un post Telegram devient un thread X, un article LinkedIn et un email. 6 heures \u00e9conomis\u00e9es par semaine sur le contenu. Et Channel Map nous a r\u00e9v\u00e9l\u00e9 des concurrents qu'on ignorait.",
+        "author": "Marc V.",
+        "role": "Product Marketing",
+        "company": "SaaS B2B, Gen\u00e8ve",
+        "avatar": null
+      },
+      {
+        "quote": "Le package Agency, c'est exactement ce qui manquait. Marque blanche + workspaces clients. 8 clients connect\u00e9s au premier trimestre, l'abonnement rentabilis\u00e9 x4. Le partage de revenus, c'est la cerise sur le g\u00e2teau.",
+        "author": "Claire S.",
+        "role": "CEO",
+        "company": "Agence digitale, Montr\u00e9al",
+        "avatar": null
+      },
+      {
+        "quote": "Le pr\u00e9chauffage fonctionne comme une horloge. 10 comptes achet\u00e9s, sessions t\u00e9l\u00e9vers\u00e9es, mode conservateur. Deux semaines plus tard, les 10 sont op\u00e9rationnels, z\u00e9ro ban. Le commentaire sur 5 canaux concurrents rapporte 50 \u00e0 70 abonn\u00e9s par jour.",
+        "author": "Antoine L.",
+        "role": "Growth marketer Telegram",
+        "company": "45K abonn\u00e9s, Lyon",
+        "avatar": null
+      }
+    ]
+  },
+  "faq": {
+    "title": "Questions fr\u00e9quentes",
+    "items": [
+      {
+        "q": "Qu'est-ce que NEURO COMMENTING\u00a0?",
+        "a": "C'est un syst\u00e8me d'exploitation pour la croissance sur Telegram. Au lieu de 7 outils diff\u00e9rents \u2014 une seule plateforme : commentaires IA, parsing, pr\u00e9chauffage de comptes, carte des canaux, content factory et analytics. Le tout dans une interface dark terminal."
+      },
+      {
+        "q": "En quoi \u00eates-vous meilleur que GramGPT\u00a0?",
+        "a": "Plus de fonctionnalit\u00e9s (carte des canaux, content factory, package agence), une IA plus intelligente (10 styles + tests A/B), un prix d'entr\u00e9e plus bas (Starter \u00e0 49\u00a0\u20ac vs 130\u00a0$ chez GramGPT pour moins de modules). Et pas de facturation module par module."
+      },
+      {
+        "q": "Mes comptes ne risquent-ils pas d'\u00eatre bannis\u00a0?",
+        "a": "Nous prenons l'anti-fraude au s\u00e9rieux. Pr\u00e9chauffage en 7 phases, d\u00e9lais gaussiens au lieu de lin\u00e9aires, r\u00e8gle 1 IP = 1 compte, simulation anti-d\u00e9tection de frappe, quarantaine automatique en cas d'activit\u00e9 suspecte. Mais garantir 0\u00a0% de bans est impossible \u2014 Telegram met constamment \u00e0 jour ses algorithmes. Notre mission : minimiser les risques de mani\u00e8re syst\u00e9matique."
+      },
+      {
+        "q": "Ai-je besoin de mes propres comptes Telegram\u00a0?",
+        "a": "Oui. Vous t\u00e9l\u00e9versez les fichiers .session de vos comptes. Nous ne vendons pas de comptes et ne stockons pas vos mots de passe. Chaque compte est li\u00e9 \u00e0 un proxy d\u00e9di\u00e9."
+      },
+      {
+        "q": "Comment fonctionne le pr\u00e9chauffage\u00a0?",
+        "a": "Un cycle autonome en 7 phases : stealth (lecture seule) \u2192 interaction l\u00e9g\u00e8re (r\u00e9actions) \u2192 social (rejoindre des canaux) \u2192 engagement (premiers commentaires) \u2192 actif \u2192 \u00e9tabli \u2192 v\u00e9t\u00e9ran. Une persona IA d\u00e9finit le style de comportement. Tout le processus se d\u00e9roule sans intervention de votre part."
+      },
+      {
+        "q": "Puis-je essayer gratuitement\u00a0?",
+        "a": "Oui. 14 jours sur le plan Pro sans restriction. Pas de carte bancaire requise. Apr\u00e8s l'essai, choisissez un plan ou partez sans engagement."
+      },
+      {
+        "q": "La plateforme fonctionne-t-elle uniquement avec des canaux francophones\u00a0?",
+        "a": "Non. Channel Map couvre 55 pays. Le parser recherche des canaux dans toutes les langues. Smart Commenter g\u00e9n\u00e8re des commentaires en fran\u00e7ais, anglais, russe, arabe et d'autres langues. Le march\u00e9 francophone (France, Belgique, Suisse, Canada, Afrique) est pleinement support\u00e9."
+      },
+      {
+        "q": "Que se passe-t-il si Telegram bloque tous mes comptes\u00a0?",
+        "a": "Le Self-Healing Engine d\u00e9tecte automatiquement les probl\u00e8mes et met le compte en quarantaine en attendant une v\u00e9rification manuelle. Nous ne tentons pas de \u00ab\u00a0ressusciter\u00a0\u00bb automatiquement un compte banni. La plateforme conserve tout l'historique et les param\u00e8tres \u2014 connectez un nouveau compte et continuez."
+      },
+      {
+        "q": "Y a-t-il une API\u00a0?",
+        "a": "Oui. Plus de 200 endpoints API. API REST compl\u00e8te pour l'int\u00e9gration avec vos CRM, tableaux de bord, sc\u00e9narios n8n ou Make. Disponible sur les plans Pro et Agency."
+      },
+      {
+        "q": "La plateforme convient-elle aux agences\u00a0?",
+        "a": "Le plan Agency a \u00e9t\u00e9 con\u00e7u sp\u00e9cifiquement pour cela. Marque blanche, gestion de clients, invitations, partage de revenus. Revendez la plateforme sous votre propre marque et g\u00e9n\u00e9rez des revenus sur chaque client."
+      }
+    ]
+  },
+  "footer": {
+    "product": "Produit",
+    "company": "Entreprise",
+    "legal": "L\u00e9gal",
+    "features": "Fonctionnalit\u00e9s",
+    "pricing": "Tarifs",
+    "docs": "Documentation",
+    "api": "API",
+    "changelog": "Changelog",
+    "about": "A propos",
+    "blog": "Blog",
+    "careers": "Carri\u00e8res",
+    "contact": "Contact",
+    "privacy": "Politique de confidentialit\u00e9",
+    "terms": "Conditions g\u00e9n\u00e9rales",
+    "refund": "Politique de remboursement",
+    "copyright": "\u00a9 2026 NEURO COMMENTING. Tous droits r\u00e9serv\u00e9s.",
+    "tagline": "Telegram Growth OS pour les \u00e9quipes marketing ambitieuses."
+  },
+  "common": {
+    "get_started": "Commencer",
+    "learn_more": "En savoir plus",
+    "free_trial": "Essai gratuit 14 jours",
+    "no_credit_card": "Sans carte bancaire",
+    "per_month": "/mois",
+    "per_year": "/an",
+    "most_popular": "Le plus populaire",
+    "coming_soon": "Bient\u00f4t disponible",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "close": "Fermer",
+    "back": "Retour",
+    "next": "Suivant",
+    "loading": "Chargement...",
+    "error": "Erreur",
+    "success": "Succ\u00e8s",
+    "warning": "Attention",
+    "confirm": "Confirmer",
+    "search": "Rechercher",
+    "filter": "Filtrer",
+    "export": "Exporter",
+    "import": "Importer",
+    "accounts": "Comptes",
+    "channels": "Canaux",
+    "threads": "Threads",
+    "comments": "Commentaires",
+    "workspace": "Workspace",
+    "settings": "Param\u00e8tres",
+    "logout": "D\u00e9connexion",
+    "language": "Langue"
+  }
+}

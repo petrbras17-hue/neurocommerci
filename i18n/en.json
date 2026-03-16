@@ -1,0 +1,300 @@
+{
+  "meta": {
+    "lang": "en",
+    "dir": "ltr",
+    "name": "English",
+    "flag": "🇬🇧",
+    "locale": "en_US"
+  },
+  "nav": {
+    "home": "Home",
+    "ecom": "Ecom",
+    "edtech": "EdTech",
+    "saas": "SaaS",
+    "pricing": "Pricing",
+    "login": "Log in",
+    "get_demo": "Get a demo",
+    "menu_label": "Menu"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "cta_default": "Start free pilot",
+    "secondary_cta": "Pricing"
+  },
+  "pages": {
+    "home": {
+      "title": "Telegram Growth OS — your Telegram on autopilot",
+      "description": "AI commenting, channel parsing, account warmup and content factory in one terminal. 50 threads, 0 bans.",
+      "headline": "Your Telegram on autopilot. 50 threads, 0 bans.",
+      "subheadline": "AI commenting, channel parsing, account warmup and content factory — in one terminal. Competitors charge $130/mo for half of this.",
+      "bullets": [
+        "AI commenting in 10 styles with A/B tests — moderators can't tell it from a real person.",
+        "7-phase autonomous warmup: from stealth reading to live commenting without bans.",
+        "Global map of 100K+ channels, content factory for 6 platforms, agency package with white label."
+      ],
+      "segment_title": "One platform instead of ten tools",
+      "segment_points": [
+        "Discovery, campaigns, AI drafts and analytics — in one workspace for your growth team.",
+        "AI generates drafts, but humans make decisions. 10 styles, approval gate, full control.",
+        "Scale from 1 account to a full farm in minutes — without losing accounts."
+      ],
+      "final_cta": "Your Telegram on autopilot. Start your free pilot."
+    },
+    "ecom": {
+      "title": "Telegram traffic for e-commerce — AI commenting in shopping channels | NEURO COMMENTING",
+      "description": "Organic traffic from Telegram for e-commerce: AI commenting in discount and shopping channels, shopper audience parsing, content for product posts. Free 14-day pilot.",
+      "headline": "Telegram traffic for e-commerce stores",
+      "subheadline": "AI commenting in shopping and discount channels. Organic Telegram traffic instead of expensive marketplace ads — one platform for discovery, campaigns and analytics.",
+      "bullets": [
+        "Find discount, review and curated channels where your niche products are already discussed.",
+        "Launch AI commenting under product posts — 10 styles, from expert review to buyer testimonial.",
+        "Parse shopper audiences by category: fashion, electronics, beauty, home goods — 33 niches on Channel Map."
+      ],
+      "segment_title": "Why e-commerce loses money without Telegram",
+      "segment_points": [
+        "Marketplace competition grows, and ad CPC grows with it. Telegram discount and review channels provide organic traffic with high purchase intent.",
+        "Zero loyalty on marketplaces: buyers choose by price. In Telegram channels, brands build recognition through expert comments and presence in discussions.",
+        "Manual seeding in channels takes days and doesn't scale. NC automates the entire pipeline: from finding venues to AI comments with A/B style tests."
+      ]
+    },
+    "edtech": {
+      "title": "Students from Telegram for online schools — AI commenting in educational channels | NEURO COMMENTING",
+      "description": "Organic leads for online schools from Telegram: AI commenting in educational channels, student audience parsing, content for learning posts, farm in self-development channels. Free 14-day pilot.",
+      "headline": "Students from Telegram. AI commenting in educational channels.",
+      "subheadline": "Expensive course traffic, low webinar conversion, no organic reach — sound familiar? Organic leads from Telegram through AI commenting in educational channels. No targeting, no seeding, no manual work.",
+      "bullets": [
+        "Parse channels by learning niches: IT courses, marketing, design, languages, self-development, career.",
+        "Expert-style AI commenting under learning posts — 2-3 new leads per day from comments.",
+        "Farm in self-development and reskilling channels — where your audience is already looking for solutions.",
+        "Content factory: one webinar announcement becomes 6 formats in 30 seconds."
+      ],
+      "cta": "Start free pilot for your online school",
+      "final_cta": "Students are already on Telegram. Start your free pilot for online schools.",
+      "segment_title": "Why EdTech teams need neurocommenting",
+      "segment_points": [
+        "Telegram ad targeting gets more expensive, and CPL for courses grows every quarter. Neurocommenting provides organic traffic from channels where audiences already discuss learning and career.",
+        "Webinar funnels convert 2-5% of cold traffic. An expert comment in an IT reskilling channel converts 3-4x better — because it's not an ad, it's an answer to a need.",
+        "The parser finds 80+ educational channels in 15 minutes. A marketer manually collects the same in a week. Free your team from routine — let them focus on the product."
+      ]
+    },
+    "saas": {
+      "title": "B2B leads from Telegram for SaaS — AI commenting in business channels | NEURO COMMENTING",
+      "description": "Thought leadership through AI commenting on Telegram: expert comments in niche B2B channels, startup and cloud audience parsing, content for brand awareness. Free pilot.",
+      "headline": "B2B leads from Telegram. AI commenting in niche business channels.",
+      "subheadline": "Expensive CAC, long sales cycles, zero brand awareness on Telegram — sound familiar? Thought leadership through AI commenting: trust → leads → demo.",
+      "bullets": [
+        "Comment expertly in startup, tech, VC and cloud channels — where your ICPs make decisions.",
+        "Parse B2B audiences: founder, product manager, CTO and growth lead channels by keywords and niches.",
+        "Generate thought leadership content: from expert comment to LinkedIn article and email in 30 seconds."
+      ],
+      "segment_title": "Why SaaS teams need Telegram Growth OS",
+      "segment_points": [
+        "Your competitors are already building presence in Telegram tech and startup channels. Every day without thought leadership in your niche means leads going to them.",
+        "B2B ad CAC grows every quarter. Expert commenting in 10 styles — from analyst to visionary — builds trust organically: no click budget, no cold emails.",
+        "One pipeline from channel discovery to demo request: parser finds venues, AI writes in your brand's tone of voice, analytics shows which channels convert to clicks and leads."
+      ]
+    }
+  },
+  "trust_strip": {
+    "items": ["Smart Commenter", "Farm Orchestrator", "Channel Map", "Warmup Engine", "Content Factory"]
+  },
+  "proof_metrics": [
+    {"value": "10", "label": "comment styles"},
+    {"value": "50", "label": "farm threads"},
+    {"value": "7", "label": "warmup phases"},
+    {"value": "6", "label": "content formats"}
+  ],
+  "features": {
+    "section_eyebrow": "What's inside",
+    "section_title": "Full growth stack in one dark terminal",
+    "items": [
+      {
+        "title": "Smart Commenter",
+        "body": "AI commenting in 10 styles — from expert to provocative. A/B style tests, emoji-first trick for top placement. AI writes so well that moderators can't tell it from a real person."
+      },
+      {
+        "title": "Farm Orchestrator",
+        "body": "Up to 50 threads per farm. Auto-distribution of channels, FloodWait pause, quarantine for problematic accounts. Redis pub-sub for real-time events."
+      },
+      {
+        "title": "Channel Map",
+        "body": "Global map of 100K+ Telegram channels on an interactive 3D globe. H3 clustering, filters across 33 niches, drill-down to individual channels."
+      },
+      {
+        "title": "Warmup Engine",
+        "body": "Autonomous 7-phase warmup: from stealth channel reading to full commenting. AI personas, Gaussian delays. The account walks itself from purchase to battle-ready."
+      },
+      {
+        "title": "Content Factory",
+        "body": "One source — six formats in 30 seconds. Telegram post, Twitter/X thread, LinkedIn article, YouTube description, Reels/Shorts ideas, email newsletter. 5 brand voices."
+      },
+      {
+        "title": "Parser",
+        "body": "Channel parsing by keywords, language, geo and audience size. Real-time progress bar, on-the-fly cancellation, batch import."
+      },
+      {
+        "title": "Profile Factory",
+        "body": "AI generates profiles for accounts: name, bio, avatar, personal channel with pinned post. Mass generation for the entire farm."
+      },
+      {
+        "title": "Billing & Agency Package",
+        "body": "Stripe + YooKassa, 54-FZ receipts, 14-day trial. Agency package: white label, client management, revenue share."
+      }
+    ]
+  },
+  "social_proof": {
+    "eyebrow": "Platform in numbers",
+    "title": "Not promises — engineering",
+    "items": [
+      {"value": "10", "label": "AI comment styles with A/B tests"},
+      {"value": "50", "label": "simultaneous farm threads"},
+      {"value": "7", "label": "autonomous warmup phases"},
+      {"value": "6", "label": "content formats in 30 seconds"},
+      {"value": "100K+", "label": "channels on the global map"},
+      {"value": "200+", "label": "API endpoints for integrations"}
+    ]
+  },
+  "pricing": {
+    "eyebrow": "Pricing",
+    "title": "Transparent pricing for every growth stage",
+    "popular_badge": "Most popular",
+    "cta": "Discuss deployment",
+    "plans": [
+      {
+        "name": "Starter",
+        "price": "$49/mo",
+        "note": "Freelancers and solo marketers",
+        "featured": false,
+        "bullets": [
+          "5 accounts, 3 threads",
+          "Smart Commenter (3 styles)",
+          "Channel Parser (500 channels/mo)",
+          "Basic warmup (conservative)",
+          "Channel Map (Discovery mode)"
+        ]
+      },
+      {
+        "name": "Pro",
+        "price": "$149/mo",
+        "note": "Growth teams and SMM agencies",
+        "featured": true,
+        "bullets": [
+          "25 accounts, 15 threads",
+          "Smart Commenter (all 10 styles + A/B)",
+          "Autonomous warmup (all modes)",
+          "Content Factory (6 formats)",
+          "Profile Factory + API access"
+        ]
+      },
+      {
+        "name": "Agency",
+        "price": "$499/mo",
+        "note": "Agencies and client teams",
+        "featured": false,
+        "bullets": [
+          "100 accounts, 50 threads",
+          "All modules unlimited",
+          "White Label + clients + revenue share",
+          "Custom AI styles for client brands",
+          "Priority support, 1-hour response"
+        ]
+      }
+    ]
+  },
+  "faq": {
+    "eyebrow": "FAQ",
+    "title": "Frequently asked questions",
+    "items": [
+      {
+        "q": "What is NEURO COMMENTING?",
+        "a": "It's an operating system for Telegram growth. Instead of 7 different tools — one platform: neurocommenting, parsing, account warmup, channel map, content factory and analytics. All in one dark terminal UI."
+      },
+      {
+        "q": "How are you better than GramGPT?",
+        "a": "Broader features (channel map, content factory, agency package), smarter AI (10 styles + A/B tests), cheaper entry (Starter from $49 vs $130 at GramGPT for a smaller set). And we don't make you pay for each module separately."
+      },
+      {
+        "q": "Will my accounts get banned?",
+        "a": "We take anti-fraud seriously. 7-phase warmup, Gaussian delays instead of linear, 1 IP = 1 account rule, anti-detection typing simulation, quarantine on suspicious activity. Guaranteeing 0% bans is impossible — Telegram constantly updates algorithms. Our job is to minimize risks."
+      },
+      {
+        "q": "Do I need my own Telegram accounts?",
+        "a": "Yes. You upload .session files of your accounts. We don't sell accounts and don't store your passwords. Each account is bound to a personal proxy."
+      },
+      {
+        "q": "How does warmup work?",
+        "a": "Autonomous 7-phase cycle: stealth (reading only) → light interaction (reactions) → social (joining channels) → engagement (first comments) → active → established → veteran. An AI persona defines the behavior style. The entire process runs without your involvement."
+      },
+      {
+        "q": "Can I try it for free?",
+        "a": "Yes. 14 days on the Pro plan with no restrictions. No card required. After the trial — choose a plan or leave with no obligations."
+      },
+      {
+        "q": "Does it only work with Russian-language channels?",
+        "a": "No. Channel Map covers 55 countries. The parser finds channels in any language. Smart Commenter generates comments in Russian, English, Kazakh and other languages. But the main focus is the RU/CIS market."
+      },
+      {
+        "q": "What if Telegram blocks all my accounts?",
+        "a": "The Self-Healing Engine automatically detects issues and quarantines the account for manual review. The platform preserves all history and settings — connect a new account and continue."
+      },
+      {
+        "q": "Is there an API?",
+        "a": "Yes. 200+ API endpoints. Full REST API for integration with your CRMs, dashboards, n8n scenarios. Available on Pro and Agency plans."
+      },
+      {
+        "q": "Is it suitable for agencies?",
+        "a": "The Agency plan was created specifically for this. White label, client management, invites, revenue share. Resell the platform under your brand and earn from every client."
+      }
+    ]
+  },
+  "story": {
+    "eyebrow": "Why it works"
+  },
+  "final_cta": {
+    "eyebrow": "Next step",
+    "link_text": "Submit request"
+  },
+  "lead_form": {
+    "waitlist_eyebrow": "Waitlist",
+    "panel_copy": "Leave your contacts — we'll show the product for your growth scenario and give you 14 days of Pro for free.",
+    "name_placeholder": "Name",
+    "email_placeholder": "Email",
+    "company_placeholder": "Company",
+    "telegram_placeholder": "Telegram username (optional)",
+    "use_case_label": "Choose use case",
+    "use_case_other": "Other",
+    "submit": "Submit request",
+    "submitting": "Submitting...",
+    "submitted": "Request submitted",
+    "error_generic": "Failed to submit form. Check the fields and try again.",
+    "error_connection": "Connection error. Please try later.",
+    "success_message": "14 days free. No card. No obligations."
+  },
+  "terminal": {
+    "line1_cmd": "nc init --workspace=growth-team",
+    "line2_out": "connecting to Telegram discovery engine...",
+    "line3_ok": "parser online",
+    "line3_out": "channels indexed: 1,247",
+    "line4_ok": "ai router ready",
+    "line4_out": "model: manager tier",
+    "line5_ok": "workspace shell"
+  },
+  "footer": {
+    "copyright": "NEURO COMMENTING",
+    "tagline": "NEURO COMMENTING — Telegram Growth OS",
+    "email": "support@neurocommenting.ru",
+    "request_link": "Request",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "refund": "Refund Policy"
+  },
+  "lang_switcher": {
+    "label": "Language"
+  },
+  "common": {
+    "per_month": "/mo",
+    "try_free": "Try for free",
+    "contact_us": "Contact us",
+    "learn_more": "Learn more"
+  }
+}

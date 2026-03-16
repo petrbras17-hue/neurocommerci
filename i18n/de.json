@@ -1,0 +1,362 @@
+{
+  "meta": {
+    "lang": "de",
+    "dir": "ltr",
+    "name": "Deutsch",
+    "flag": "🇩🇪",
+    "locale": "de_DE",
+    "currency": "EUR",
+    "currency_symbol": "\u20ac",
+    "region": "DACH"
+  },
+  "nav": {
+    "features": "Funktionen",
+    "pricing": "Preise",
+    "faq": "FAQ",
+    "login": "Anmelden",
+    "signup": "Kostenlos testen",
+    "dashboard": "Dashboard",
+    "language": "Sprache"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "headline": "Dein Telegram-Wachstum. Automatisiert. Sicher. Skalierbar.",
+    "subheadline": "KI-Kommentierung in 10 Stilen, Kanal-Parsing, 7-Phasen-Warmup und Content-Fabrik f\u00fcr 6 Plattformen \u2014 eine einzige Plattform statt 7 Einzeltools. Datenschutz und Accountsicherheit stehen an erster Stelle.",
+    "cta_primary": "14 Tage kostenlos testen",
+    "cta_secondary": "Live-Demo ansehen",
+    "social_proof": "Vertrauen von \u00fcber 200 Growth-Teams in Europa und GUS"
+  },
+  "features": {
+    "title": "Alles in einer Plattform",
+    "subtitle": "8 Module. Eine Oberfl\u00e4che. Kein Tool-Chaos.",
+    "items": [
+      {
+        "id": "smart_commenter",
+        "icon": "brain",
+        "title": "Smart Commenter",
+        "description": "KI-Kommentierung in 10 Stilen \u2014 von fachlich-expertenhaft bis provokativ. A/B-Tests f\u00fcr Stile, Emoji-First-Trick f\u00fcr Top-Platzierungen, Regel \u201eNie der Erste\u201c. Die KI schreibt so, dass Moderatoren keinen Unterschied zu echten Nutzern erkennen.",
+        "badge": null
+      },
+      {
+        "id": "farm_orchestrator",
+        "icon": "server",
+        "title": "Farm Orchestrator",
+        "description": "Bis zu 50 Threads pro Farm. Automatische Kanalverteilung, Pause bei FloodWait, Quarant\u00e4ne problematischer Accounts. Redis Pub-Sub f\u00fcr Echtzeit-Events. Skaliert von 1 Account zur vollst\u00e4ndigen Farm in Minuten.",
+        "badge": null
+      },
+      {
+        "id": "channel_map",
+        "icon": "globe",
+        "title": "Channel Map",
+        "description": "Globale Karte mit \u00fcber 100.000 Telegram-Kan\u00e4len auf einem interaktiven 3D-Globus. H3-Clustering, Filter nach 33 Kategorien, Drill-down bis zum einzelnen Kanal. Discovery, Farm Control und Intelligence \u2014 drei Modi f\u00fcr verschiedene Aufgaben.",
+        "badge": "Neu"
+      },
+      {
+        "id": "warmup_engine",
+        "icon": "flame",
+        "title": "Warmup Engine",
+        "description": "Autonomes 7-Phasen-Warmup: von Stealth-Lesen bis zum aktiven Kommentieren. KI-Personas, Gau\u00df-Verteilung bei Verz\u00f6gerungen, konservativer/moderater/aggressiver Modus. Jeder Account durchl\u00e4uft den Weg vom Kauf bis zum Einsatz vollautomatisch.",
+        "badge": null
+      },
+      {
+        "id": "content_factory",
+        "icon": "layers",
+        "title": "Content-Fabrik",
+        "description": "Eine Quelle \u2014 sechs Formate in 30 Sekunden. Telegram-Post, Twitter/X-Thread, LinkedIn-Artikel, YouTube-Beschreibung, Reels/Shorts-Ideen, E-Mail-Newsletter. 5 Markenstimmen zur Auswahl. Schluss mit dem manuellen Umformatieren.",
+        "badge": null
+      },
+      {
+        "id": "parser",
+        "icon": "search",
+        "title": "Kanal-Parser",
+        "description": "Kanal-Parsing nach Stichworten, Sprache, Geo und Zielgruppengr\u00f6\u00dfe. Echtzeit-Fortschrittsbalken, Abbruch jederzeit, Batch-Import. Finden Sie die Kan\u00e4le, in denen \u00fcber Ihr Produkt gesprochen wird \u2014 in Minuten, nicht in Tagen.",
+        "badge": null
+      },
+      {
+        "id": "profile_factory",
+        "icon": "user",
+        "title": "Profil-Fabrik",
+        "description": "KI generiert Profile f\u00fcr Accounts: Name, Bio, Avatar, eigener Kanal mit Pinned-Post. Massengenerierung f\u00fcr die gesamte Farm. Jeder Account sieht aus wie ein echter Nutzer mit Geschichte.",
+        "badge": null
+      },
+      {
+        "id": "billing_agency",
+        "icon": "briefcase",
+        "title": "Abrechnung & Agentur-Paket",
+        "description": "Stripe-Integration, 14-Tage-Testphase ohne Kreditkarte. Agentur-Paket: White Label, Kundenverwaltung, Revenue Share. Verdienen Sie an der Weitergabe der Plattform an Ihre eigenen Kunden. DSGVO-konforme Datenverarbeitung.",
+        "badge": null
+      }
+    ]
+  },
+  "pricing": {
+    "title": "Einfache, transparente Preise",
+    "subtitle": "Kein Kleingedrucktes. Kein Aufpreis f\u00fcr Module. 14 Tage kostenlos testen.",
+    "billing_toggle": {
+      "monthly": "Monatlich",
+      "annual": "J\u00e4hrlich (-20%)"
+    },
+    "plans": [
+      {
+        "id": "starter",
+        "name": "Starter",
+        "price_monthly": 49,
+        "price_annual": 39,
+        "currency": "EUR",
+        "period": "/ Monat",
+        "target": "F\u00fcr Freelancer und Solo-Marketer, die mit Telegram-Wachstum starten.",
+        "badge": null,
+        "cta": "Kostenlos starten",
+        "features": [
+          "5 Accounts in der Farm",
+          "3 gleichzeitige Threads",
+          "Smart Commenter (3 Stile)",
+          "Kanal-Parser (500 Kan\u00e4le/Monat)",
+          "Basis-Warmup (konservativer Modus)",
+          "Channel Map (Discovery-Modus)",
+          "1 Workspace",
+          "E-Mail-Support"
+        ],
+        "not_included": [
+          "A/B-Tests f\u00fcr Stile",
+          "Content-Fabrik",
+          "Agentur-Paket"
+        ]
+      },
+      {
+        "id": "pro",
+        "name": "Pro",
+        "price_monthly": 129,
+        "price_annual": 99,
+        "currency": "EUR",
+        "period": "/ Monat",
+        "target": "F\u00fcr Growth-Teams und Agenturen, die einen skalierbaren Prozess brauchen.",
+        "badge": "Beliebteste Wahl",
+        "cta": "14 Tage kostenlos testen",
+        "features": [
+          "25 Accounts in der Farm",
+          "15 gleichzeitige Threads",
+          "Smart Commenter (alle 10 Stile + A/B)",
+          "Kanal-Parser (5.000 Kan\u00e4le/Monat)",
+          "Autonomes Warmup (alle Modi)",
+          "Channel Map (alle 3 Modi)",
+          "Content-Fabrik (6 Formate)",
+          "Profil-Fabrik (Massengenerierung)",
+          "3 Workspaces",
+          "Telegram-Support, Antwort in 4 Stunden",
+          "API-Zugang"
+        ],
+        "not_included": [
+          "Agentur-Paket",
+          "White Label"
+        ]
+      },
+      {
+        "id": "agency",
+        "name": "Agency",
+        "price_monthly": 299,
+        "price_annual": 239,
+        "currency": "EUR",
+        "period": "/ Monat",
+        "target": "F\u00fcr Agenturen und Teams, die Telegram-Wachstum f\u00fcr ihre Kunden steuern.",
+        "badge": null,
+        "cta": "Agency-Demo buchen",
+        "features": [
+          "100 Accounts in der Farm",
+          "50 gleichzeitige Threads",
+          "Alle Module ohne Einschr\u00e4nkungen",
+          "Kanal-Parser (unbegrenzt)",
+          "Agentur-Paket: Kunden, Einladungen, Revenue Share",
+          "White Label: eigene Marke, eigene Farben",
+          "10 Workspaces",
+          "Priorit\u00e4ts-Support, Antwort in 1 Stunde",
+          "Dedizierter Account Manager",
+          "Individuelle KI-Stile f\u00fcr Kundenmarken"
+        ],
+        "not_included": []
+      },
+      {
+        "id": "enterprise",
+        "name": "Enterprise",
+        "price_monthly": 799,
+        "price_annual": 639,
+        "currency": "EUR",
+        "period": "/ Monat",
+        "target": "F\u00fcr Unternehmen mit eigenen Compliance- und Datenschutzanforderungen.",
+        "badge": null,
+        "cta": "Kontakt aufnehmen",
+        "features": [
+          "Unbegrenzte Accounts",
+          "Unbegrenzte Threads",
+          "Alle Module + individuelle Anpassung",
+          "Dedizierte Infrastruktur (eigener Server)",
+          "DSGVO-Audit und DPA auf Anfrage",
+          "SSO/SAML-Integration",
+          "Unbegrenzte Workspaces",
+          "SLA mit garantierter Verf\u00fcgbarkeit",
+          "Pers\u00f6nlicher Onboarding-Manager",
+          "Individuelle API-Limits"
+        ],
+        "not_included": []
+      }
+    ]
+  },
+  "proof": {
+    "title": "Vertrauen von Growth-Teams in ganz Europa",
+    "items": [
+      {
+        "quote": "Im ersten Monat haben wir 340 Kommentare in Nischen-Fashion-Kan\u00e4len gesammelt. Die Conversion zu Website-Besuchen lag bei 4,2 %. Fr\u00fcher hat unser Social-Media-Manager daf\u00fcr 3 Tage pro Woche gebraucht \u2014 jetzt arbeitet die Farm selbstst\u00e4ndig.",
+        "author": "Alina K.",
+        "role": "Head of Growth",
+        "company": "Fashion E-Commerce",
+        "location": "Berlin"
+      },
+      {
+        "quote": "Der Parser hat 87 Kan\u00e4le zu Karriere und IT-Weiterbildung in 15 Minuten gefunden. Manuell h\u00e4tten wir eine Woche gebraucht. Die KI-Kommentierung im Experten-Stil bringt uns 2\u20133 neue Leads pro Tag.",
+        "author": "Dimitri R.",
+        "role": "CMO",
+        "company": "EdTech-Startup",
+        "location": "Wien"
+      },
+      {
+        "quote": "Wir nutzen die Content-Fabrik: Ein Telegram-Post wird zum X-Thread, LinkedIn-Artikel und E-Mail. Wir sparen 6 Stunden pro Woche beim Content. Die Channel Map hat uns Wettbewerber gezeigt, von denen wir nichts wussten.",
+        "author": "Michael V.",
+        "role": "Product Marketing",
+        "company": "B2B SaaS",
+        "location": "Z\u00fcrich"
+      },
+      {
+        "quote": "Das Agentur-Paket ist genau das, was gefehlt hat. White Label plus Kunden-Workspaces. Wir haben 8 Kunden im ersten Quartal angebunden und die Kosten vierfach amortisiert.",
+        "author": "Irina S.",
+        "role": "CEO",
+        "company": "Digital-Agentur",
+        "location": "M\u00fcnchen"
+      },
+      {
+        "quote": "Das Warmup funktioniert wie ein Uhrwerk. 10 Accounts gekauft, Sessions hochgeladen, konservativen Modus gew\u00e4hlt. Nach 2 Wochen alle 10 einsatzbereit, kein einziger Bann. Kommentierung in 5 Konkurrenz-Kan\u00e4len bringt 50\u201370 neue Abonnenten pro Tag.",
+        "author": "Artem L.",
+        "role": "Telegram-Blogger, 45K Abonnenten",
+        "company": null,
+        "location": "Hamburg"
+      }
+    ]
+  },
+  "faq": {
+    "title": "H\u00e4ufig gestellte Fragen",
+    "items": [
+      {
+        "q": "Was ist NEURO COMMENTING?",
+        "a": "NEURO COMMENTING ist ein Betriebssystem f\u00fcr Telegram-Wachstum. Statt 7 verschiedener Tools bietet eine einzige Plattform: KI-Kommentierung, Kanal-Parsing, Account-Warmup, Channel Map, Content-Fabrik und Analytik. Alles in einer sicheren, \u00fcbersichtlichen Oberfl\u00e4che."
+      },
+      {
+        "q": "Wie steht es um den Datenschutz? Ist die Plattform DSGVO-konform?",
+        "a": "Datenschutz hat f\u00fcr uns h\u00f6chste Priorit\u00e4t. Alle Daten werden verschl\u00fcsselt \u00fcbertragen und gespeichert. Tenant-Isolation mit PostgreSQL Row-Level Security stellt sicher, dass kein Zugriff auf fremde Daten m\u00f6glich ist. Auf Enterprise-Tarif bieten wir ein vollst\u00e4ndiges DSGVO-Audit und DPA (Auftragsverarbeitungsvertrag) an."
+      },
+      {
+        "q": "Werden meine Accounts gesperrt?",
+        "a": "Wir nehmen Account-Sicherheit sehr ernst. 7-Phasen-Warmup, Gau\u00df-verteilte Verz\u00f6gerungen, 1 IP = 1 Account, Anti-Detection-Simulation, automatische Quarant\u00e4ne bei verd\u00e4chtiger Aktivit\u00e4t. Eine Garantie f\u00fcr 0 % Sperren kann niemand geben \u2014 Telegram aktualisiert st\u00e4ndig seine Algorithmen. Unsere Aufgabe: Risiken systematisch minimieren."
+      },
+      {
+        "q": "Brauche ich eigene Telegram-Accounts?",
+        "a": "Ja. Sie laden .session-Dateien Ihrer eigenen Accounts hoch. Wir verkaufen keine Accounts und speichern keine Passw\u00f6rter. Jeder Account wird an einen pers\u00f6nlichen Proxy gebunden."
+      },
+      {
+        "q": "Wie funktioniert das Warmup?",
+        "a": "Autonomer 7-Phasen-Zyklus: Stealth (nur Lesen) \u2192 Light Interaction (Reaktionen) \u2192 Social (Kanal-Beitritt) \u2192 Engagement (erste Kommentare) \u2192 Active \u2192 Established \u2192 Veteran. Eine KI-Persona bestimmt den Verhaltensstil. Der gesamte Prozess l\u00e4uft ohne Ihr Zutun."
+      },
+      {
+        "q": "Kann ich die Plattform kostenlos testen?",
+        "a": "Ja. 14 Tage auf dem Pro-Tarif ohne Einschr\u00e4nkungen. Keine Kreditkarte erforderlich. Nach der Testphase w\u00e4hlen Sie einen Tarif oder gehen ohne Verpflichtungen."
+      },
+      {
+        "q": "Funktioniert das nur mit deutschsprachigen Kan\u00e4len?",
+        "a": "Nein. Die Channel Map deckt 55 L\u00e4nder ab. Der Parser sucht Kan\u00e4le in jeder Sprache. Smart Commenter generiert Kommentare auf Deutsch, Englisch, Russisch und weiteren Sprachen. Der Hauptfokus liegt auf dem DACH- und GUS-Markt."
+      },
+      {
+        "q": "Was passiert, wenn Telegram alle meine Accounts sperrt?",
+        "a": "Die Self-Healing Engine erkennt Probleme automatisch und stellt den Account unter Quarant\u00e4ne. Wir versuchen nicht, gesperrte Accounts automatisch wiederherzustellen. Die Plattform bewahrt die gesamte Historie und Konfiguration \u2014 verbinden Sie einen neuen Account und fahren Sie nahtlos fort."
+      },
+      {
+        "q": "Gibt es eine API?",
+        "a": "Ja. \u00dcber 200 API-Endpunkte. Vollst\u00e4ndige REST-API f\u00fcr die Integration mit Ihren CRM-Systemen, Dashboards und Automatisierungstools (n8n, Zapier, Make). Verf\u00fcgbar ab dem Pro-Tarif."
+      },
+      {
+        "q": "Ist die Plattform f\u00fcr Agenturen geeignet?",
+        "a": "Speziell daf\u00fcr gibt es den Agency-Tarif. White Label, Kundenverwaltung, Einladungen, Revenue Share. Vermarkten Sie die Plattform unter Ihrer eigenen Marke und verdienen Sie an jedem Kunden."
+      }
+    ]
+  },
+  "footer": {
+    "product": "Produkt",
+    "features": "Funktionen",
+    "pricing": "Preise",
+    "changelog": "\u00c4nderungsprotokoll",
+    "api_docs": "API-Dokumentation",
+    "status": "Systemstatus",
+    "company": "Unternehmen",
+    "about": "\u00dcber uns",
+    "blog": "Blog",
+    "careers": "Karriere",
+    "contact": "Kontakt",
+    "legal": "Rechtliches",
+    "terms": "Nutzungsbedingungen",
+    "privacy": "Datenschutzerkl\u00e4rung",
+    "imprint": "Impressum",
+    "dpa": "Auftragsverarbeitung (AVV)",
+    "refund": "Widerrufsbelehrung",
+    "social": "Soziale Medien",
+    "telegram_channel": "Telegram-Kanal",
+    "telegram_support": "Telegram-Support",
+    "twitter": "Twitter / X",
+    "linkedin": "LinkedIn",
+    "copyright": "\u00a9 2026 NEURO COMMENTING. Alle Rechte vorbehalten.",
+    "made_with": "Entwickelt mit KI. Betrieben in Europa."
+  },
+  "common": {
+    "loading": "Wird geladen...",
+    "error": "Ein Fehler ist aufgetreten",
+    "retry": "Erneut versuchen",
+    "save": "Speichern",
+    "cancel": "Abbrechen",
+    "delete": "L\u00f6schen",
+    "edit": "Bearbeiten",
+    "create": "Erstellen",
+    "search": "Suchen",
+    "filter": "Filtern",
+    "export": "Exportieren",
+    "import": "Importieren",
+    "back": "Zur\u00fcck",
+    "next": "Weiter",
+    "confirm": "Best\u00e4tigen",
+    "close": "Schlie\u00dfen",
+    "yes": "Ja",
+    "no": "Nein",
+    "or": "oder",
+    "and": "und",
+    "free": "Kostenlos",
+    "popular": "Beliebt",
+    "new": "Neu",
+    "per_month": "/ Monat",
+    "per_year": "/ Jahr",
+    "days_trial": "14 Tage kostenlos",
+    "no_credit_card": "Keine Kreditkarte erforderlich",
+    "get_started": "Jetzt starten",
+    "learn_more": "Mehr erfahren",
+    "contact_sales": "Vertrieb kontaktieren",
+    "accounts": "Accounts",
+    "channels": "Kan\u00e4le",
+    "threads": "Threads",
+    "workspaces": "Workspaces",
+    "comments": "Kommentare",
+    "farm": "Farm",
+    "parser": "Parser",
+    "warmup": "Warmup",
+    "analytics": "Analytik",
+    "billing": "Abrechnung",
+    "settings": "Einstellungen",
+    "profile": "Profil",
+    "logout": "Abmelden",
+    "datenschutz": "Datenschutz",
+    "sicherheit": "Sicherheit",
+    "impressum": "Impressum"
+  }
+}

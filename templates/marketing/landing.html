@@ -1,17 +1,20 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="{{ lang|default('ru') }}" dir="{{ t.meta.dir|default('ltr') }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page.title }}</title>
   <meta name="description" content="{{ page.description }}">
   <link rel="canonical" href="{{ base_url }}{{ request.url.path }}">
-  <link rel="alternate" hreflang="ru" href="{{ base_url }}{{ request.url.path }}">
+  {% for sl in supported_languages %}
+  <link rel="alternate" hreflang="{{ sl.code }}" href="{{ base_url }}{{ request.url.path }}?lang={{ sl.code }}">
+  {% endfor %}
+  <link rel="alternate" hreflang="x-default" href="{{ base_url }}{{ request.url.path }}">
   <meta property="og:title" content="{{ page.title }}">
   <meta property="og:description" content="{{ page.description }}">
   <meta property="og:type" content="website">
   <meta property="og:url" content="{{ base_url }}{{ request.url.path }}">
-  <meta property="og:locale" content="ru_RU">
+  <meta property="og:locale" content="{{ t.meta.locale|default('en_US') }}">
   <meta property="og:site_name" content="NEURO COMMENTING">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="{{ page.title }}">
@@ -24,13 +27,13 @@
     "name": "NEURO COMMENTING",
     "applicationCategory": "BusinessApplication",
     "operatingSystem": "Web",
-    "description": "Telegram Growth OS — AI-нейрокомментинг, парсинг каналов, контент-фабрика для RU/CIS брендов",
+    "description": "{{ page.description }}",
     "offers": {
       "@type": "AggregateOffer",
-      "priceCurrency": "RUB",
-      "lowPrice": "4990",
-      "highPrice": "79990",
-      "offerCount": "4"
+      "priceCurrency": "USD",
+      "lowPrice": "49",
+      "highPrice": "499",
+      "offerCount": "3"
     }
   }
   </script>
@@ -40,7 +43,7 @@
     "@type": "Organization",
     "name": "NEURO COMMENTING",
     "url": "{{ base_url }}",
-    "description": "SaaS-платформа для автоматизации роста в Telegram: нейрокомментинг, парсинг каналов, AI-генерация контента",
+    "description": "{{ page.description }}",
     "email": "support@neurocommenting.ru"
   }
   </script>
@@ -49,6 +52,26 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ static_css_url }}">
+  <style>
+    .lang-switcher { position: relative; display: inline-flex; align-items: center; }
+    .lang-switcher select {
+      appearance: none; -webkit-appearance: none;
+      background: transparent; border: 1px solid var(--border, #333);
+      color: var(--text-secondary, #aaa); padding: 4px 24px 4px 8px;
+      border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+      font-family: inherit;
+    }
+    .lang-switcher::after {
+      content: ""; position: absolute; right: 8px; top: 50%;
+      transform: translateY(-50%); pointer-events: none;
+      border-left: 4px solid transparent; border-right: 4px solid transparent;
+      border-top: 5px solid var(--text-secondary, #aaa);
+    }
+    .lang-switcher select:hover { border-color: var(--accent, #00ff88); color: var(--accent, #00ff88); }
+    .lang-switcher select option { background: #0a0a0b; color: #ccc; }
+    [dir="rtl"] .nav-links { direction: rtl; }
+    [dir="rtl"] .footer-links { direction: rtl; }
+  </style>
 </head>
 <body>
 
@@ -58,31 +81,38 @@
 <header>
   <div class="page-shell">
     <nav class="top-nav">
-      <a href="/" class="brand">
+      <a href="/?lang={{ lang }}" class="brand">
         <span class="brand-mark">NC</span>
         <span>NEURO COMMENTING</span>
       </a>
       <div class="nav-links">
-        <a href="/">Главная</a>
-        <a href="/ecom">Ecom</a>
-        <a href="/edtech">EdTech</a>
-        <a href="/saas">SaaS</a>
-        <a href="/pricing">Тарифы</a>
+        <a href="/?lang={{ lang }}">{{ t.nav.home }}</a>
+        <a href="/ecom?lang={{ lang }}">{{ t.nav.ecom }}</a>
+        <a href="/edtech?lang={{ lang }}">{{ t.nav.edtech }}</a>
+        <a href="/saas?lang={{ lang }}">{{ t.nav.saas }}</a>
+        <a href="/pricing?lang={{ lang }}">{{ t.nav.pricing }}</a>
       </div>
-      <a href="#lead-form" class="nav-cta">Получить демо</a>
-      <button class="hamburger" id="hamburger-btn" aria-label="Меню">
+      <div class="lang-switcher">
+        <select id="lang-select" aria-label="{{ t.lang_switcher.label|default('Language') }}">
+          {% for sl in supported_languages %}
+          <option value="{{ sl.code }}" {% if sl.code == lang %}selected{% endif %}>{{ sl.flag }} {{ sl.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <a href="#lead-form" class="nav-cta">{{ t.nav.get_demo }}</a>
+      <button class="hamburger" id="hamburger-btn" aria-label="{{ t.nav.menu_label|default('Menu') }}">
         <span></span>
         <span></span>
         <span></span>
       </button>
     </nav>
     <nav class="mobile-nav" id="mobile-nav">
-      <a href="/">Главная</a>
-      <a href="/ecom">Ecom</a>
-      <a href="/edtech">EdTech</a>
-      <a href="/saas">SaaS</a>
-      <a href="/pricing">Тарифы</a>
-      <a href="#lead-form" class="nav-cta">Получить демо</a>
+      <a href="/?lang={{ lang }}">{{ t.nav.home }}</a>
+      <a href="/ecom?lang={{ lang }}">{{ t.nav.ecom }}</a>
+      <a href="/edtech?lang={{ lang }}">{{ t.nav.edtech }}</a>
+      <a href="/saas?lang={{ lang }}">{{ t.nav.saas }}</a>
+      <a href="/pricing?lang={{ lang }}">{{ t.nav.pricing }}</a>
+      <a href="#lead-form" class="nav-cta">{{ t.nav.get_demo }}</a>
     </nav>
   </div>
 </header>
@@ -94,7 +124,7 @@
     <div class="hero">
 
       <div class="hero-copy">
-        <p class="eyebrow">Telegram Growth OS</p>
+        <p class="eyebrow">{{ t.hero.eyebrow }}</p>
         <h1>{{ page.headline }}<span class="cursor"></span></h1>
         <p class="subheadline">{{ page.subheadline }}</p>
 
@@ -111,16 +141,16 @@
         </ul>
 
         <div class="hero-actions">
-          <a href="#lead-form" class="primary-cta">{{ page.cta|default('Запустить бесплатный пилот') }}</a>
-          <a href="/pricing" class="secondary-cta">Тарифы</a>
+          <a href="#lead-form" class="primary-cta">{{ page.cta|default(t.hero.cta_default) }}</a>
+          <a href="/pricing?lang={{ lang }}" class="secondary-cta">{{ t.hero.secondary_cta }}</a>
         </div>
 
         <div class="terminal-hero" aria-hidden="true">
-          <div><span class="t-prompt">$ </span><span class="t-cmd">nc init --workspace=growth-team</span></div>
-          <div><span class="t-out">connecting to Telegram discovery engine...</span></div>
-          <div><span class="t-ok">✓ parser online</span><span class="t-out"> · channels indexed: 1,247</span></div>
-          <div><span class="t-ok">✓ ai router ready</span><span class="t-out"> · model: manager tier</span></div>
-          <div><span class="t-ok">✓ workspace shell</span><span class="t-out"> · tenant: {{ page.slug }}</span></div>
+          <div><span class="t-prompt">$ </span><span class="t-cmd">{{ t.terminal.line1_cmd }}</span></div>
+          <div><span class="t-out">{{ t.terminal.line2_out }}</span></div>
+          <div><span class="t-ok">✓ {{ t.terminal.line3_ok }}</span><span class="t-out"> · {{ t.terminal.line3_out }}</span></div>
+          <div><span class="t-ok">✓ {{ t.terminal.line4_ok }}</span><span class="t-out"> · {{ t.terminal.line4_out }}</span></div>
+          <div><span class="t-ok">✓ {{ t.terminal.line5_ok }}</span><span class="t-out"> · tenant: {{ page.slug }}</span></div>
         </div>
       </div>
 
@@ -135,23 +165,23 @@
         </div>
 
         <div class="form-panel" id="lead-form">
-          <p class="eyebrow">Waitlist</p>
-          <h2>{{ page.cta|default('Запустить бесплатный пилот') }}</h2>
-          <p class="panel-copy">Оставьте контакты — покажем продукт под ваш сценарий роста и дадим 14 дней Pro бесплатно.</p>
+          <p class="eyebrow">{{ t.lead_form.waitlist_eyebrow }}</p>
+          <h2>{{ page.cta|default(t.hero.cta_default) }}</h2>
+          <p class="panel-copy">{{ t.lead_form.panel_copy }}</p>
           <form class="lead-form" id="lead-form-el">
-            <input type="text" name="name" placeholder="Имя" required>
-            <input type="email" name="email" placeholder="Email" required>
-            <input type="text" name="company" placeholder="Компания" required>
-            <input type="text" name="telegram_username" placeholder="Telegram username (опционально)">
+            <input type="text" name="name" placeholder="{{ t.lead_form.name_placeholder }}" required>
+            <input type="email" name="email" placeholder="{{ t.lead_form.email_placeholder }}" required>
+            <input type="text" name="company" placeholder="{{ t.lead_form.company_placeholder }}" required>
+            <input type="text" name="telegram_username" placeholder="{{ t.lead_form.telegram_placeholder }}">
             <select name="use_case" required>
-              <option value="">Выберите use case</option>
+              <option value="">{{ t.lead_form.use_case_label }}</option>
               <option value="ecom">Ecom</option>
               <option value="edtech">EdTech</option>
               <option value="saas">SaaS</option>
               <option value="agency">Agency</option>
-              <option value="other">Другое</option>
+              <option value="other">{{ t.lead_form.use_case_other }}</option>
             </select>
-            <button type="submit">Отправить заявку</button>
+            <button type="submit">{{ t.lead_form.submit }}</button>
             <p id="form-message" class="form-message" aria-live="polite"></p>
           </form>
         </div>
@@ -163,7 +193,7 @@
   <!-- STORY / WHY IT WORKS -->
   <section class="story-grid page-shell">
     <div class="section-head">
-      <p class="eyebrow">Почему это работает</p>
+      <p class="eyebrow">{{ t.story.eyebrow }}</p>
       <h2>{{ page.segment_title }}</h2>
     </div>
     <div class="story-points">
@@ -179,8 +209,8 @@
   <!-- FEATURES -->
   <section class="section-grid page-shell">
     <div class="section-head">
-      <p class="eyebrow">Что внутри</p>
-      <h2>Весь growth-стек в одном dark terminal</h2>
+      <p class="eyebrow">{{ t.features.section_eyebrow }}</p>
+      <h2>{{ t.features.section_title }}</h2>
     </div>
     <div class="feature-grid">
       {% for item in features %}
@@ -195,48 +225,30 @@
   <!-- SOCIAL PROOF -->
   <section class="section-grid page-shell">
     <div class="section-head">
-      <p class="eyebrow">Платформа в цифрах</p>
-      <h2>Не обещания, а инженерия</h2>
+      <p class="eyebrow">{{ t.social_proof.eyebrow }}</p>
+      <h2>{{ t.social_proof.title }}</h2>
     </div>
     <div class="metrics-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:24px; margin-top:32px;">
+      {% for item in t.social_proof.items %}
       <article class="metric-card">
-        <span class="metric-value">10</span>
-        <span class="metric-label">стилей AI-комментариев с A/B-тестами</span>
+        <span class="metric-value">{{ item.value }}</span>
+        <span class="metric-label">{{ item.label }}</span>
       </article>
-      <article class="metric-card">
-        <span class="metric-value">50</span>
-        <span class="metric-label">потоков на ферму одновременно</span>
-      </article>
-      <article class="metric-card">
-        <span class="metric-value">7</span>
-        <span class="metric-label">фаз автономного прогрева</span>
-      </article>
-      <article class="metric-card">
-        <span class="metric-value">6</span>
-        <span class="metric-label">форматов контента за 30 секунд</span>
-      </article>
-      <article class="metric-card">
-        <span class="metric-value">100K+</span>
-        <span class="metric-label">каналов на глобальной карте</span>
-      </article>
-      <article class="metric-card">
-        <span class="metric-value">200+</span>
-        <span class="metric-label">API-эндпоинтов для интеграций</span>
-      </article>
+      {% endfor %}
     </div>
   </section>
 
   <!-- PRICING -->
   <section class="section-grid page-shell" id="pricing">
     <div class="section-head">
-      <p class="eyebrow">Тарифы</p>
-      <h2>Прозрачные цены для каждого этапа роста</h2>
+      <p class="eyebrow">{{ t.pricing.eyebrow }}</p>
+      <h2>{{ t.pricing.title }}</h2>
     </div>
     <div class="pricing-grid">
       {% for plan in pricing %}
       <article class="pricing-card{% if plan.featured %} featured{% endif %}">
         {% if plan.featured %}
-        <span class="pricing-badge">Популярный выбор</span>
+        <span class="pricing-badge">{{ t.pricing.popular_badge }}</span>
         {% endif %}
         <h3>{{ plan.name }}</h3>
         <p class="price">{{ plan.price }}</p>
@@ -246,7 +258,7 @@
           <li>{{ bullet }}</li>
           {% endfor %}
         </ul>
-        <a href="#lead-form" class="plan-cta">Обсудить внедрение</a>
+        <a href="#lead-form" class="plan-cta">{{ t.pricing.cta }}</a>
       </article>
       {% endfor %}
     </div>
@@ -255,8 +267,8 @@
   <!-- FAQ -->
   <section class="section-grid faq-grid page-shell">
     <div class="section-head">
-      <p class="eyebrow">FAQ</p>
-      <h2>Частые вопросы</h2>
+      <p class="eyebrow">{{ t.faq.eyebrow }}</p>
+      <h2>{{ t.faq.title }}</h2>
     </div>
     <div class="faq-list">
       {% for question, answer in faq %}
@@ -272,11 +284,11 @@
   <div class="page-shell">
     <div class="cta-banner">
       <div>
-        <p class="eyebrow">Следующий шаг</p>
-        <h2>{{ page.final_cta|default('Твой Telegram на автопилоте. Запусти бесплатный пилот.') }}</h2>
-        <p>{{ success_message }}</p>
+        <p class="eyebrow">{{ t.final_cta.eyebrow }}</p>
+        <h2>{{ page.final_cta|default(t.hero.cta_default) }}</h2>
+        <p>{{ t.lead_form.success_message }}</p>
       </div>
-      <a href="#lead-form" class="cta-link">Оставить заявку</a>
+      <a href="#lead-form" class="cta-link">{{ t.final_cta.link_text }}</a>
     </div>
   </div>
 
@@ -288,83 +300,103 @@
     <div class="footer-inner">
       <div class="footer-brand">
         <span class="brand-mark" style="width:28px;height:28px;font-size:0.65rem;border-radius:7px;">NC</span>
-        NEURO COMMENTING &copy; 2026
+        {{ t.footer.copyright }} &copy; 2026
       </div>
       <div class="footer-links">
-        <a href="/">Главная</a>
-        <a href="/ecom">Ecom</a>
-        <a href="/edtech">EdTech</a>
-        <a href="/saas">SaaS</a>
-        <a href="/pricing">Тарифы</a>
-        <a href="#lead-form">Заявка</a>
+        <a href="/?lang={{ lang }}">{{ t.nav.home }}</a>
+        <a href="/ecom?lang={{ lang }}">{{ t.nav.ecom }}</a>
+        <a href="/edtech?lang={{ lang }}">{{ t.nav.edtech }}</a>
+        <a href="/saas?lang={{ lang }}">{{ t.nav.saas }}</a>
+        <a href="/pricing?lang={{ lang }}">{{ t.nav.pricing }}</a>
+        <a href="#lead-form">{{ t.footer.request_link }}</a>
       </div>
     </div>
     <div class="footer-inner" style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:0.8rem; color:var(--text-secondary); flex-wrap:wrap; gap:8px;">
-      <span>NEURO COMMENTING — Telegram Growth OS</span>
-      <span>support@neurocommenting.ru</span>
+      <span>{{ t.footer.tagline }}</span>
+      <span>{{ t.footer.email }}</span>
     </div>
     <div class="footer-inner" style="margin-top:10px; gap:16px; font-size:0.8rem; color:var(--text-secondary);">
-      <a href="/terms" style="color:var(--text-secondary);">Пользовательское соглашение</a>
-      <a href="/privacy" style="color:var(--text-secondary);">Политика конфиденциальности</a>
-      <a href="/refund" style="color:var(--text-secondary);">Возврат средств</a>
+      <a href="/terms?lang={{ lang }}" style="color:var(--text-secondary);">{{ t.footer.terms }}</a>
+      <a href="/privacy?lang={{ lang }}" style="color:var(--text-secondary);">{{ t.footer.privacy }}</a>
+      <a href="/refund?lang={{ lang }}" style="color:var(--text-secondary);">{{ t.footer.refund }}</a>
     </div>
   </div>
 </footer>
 
 <script>
+  // Language switcher
+  var langSelect = document.getElementById("lang-select");
+  langSelect.addEventListener("change", function() {
+    var selectedLang = langSelect.value;
+    fetch("/api/set-lang/" + selectedLang).then(function() {
+      var url = new URL(window.location.href);
+      url.searchParams.set("lang", selectedLang);
+      window.location.href = url.toString();
+    });
+  });
+
   // Hamburger toggle
-  const hamburgerBtn = document.getElementById("hamburger-btn");
-  const mobileNav = document.getElementById("mobile-nav");
-  hamburgerBtn.addEventListener("click", () => {
+  var hamburgerBtn = document.getElementById("hamburger-btn");
+  var mobileNav = document.getElementById("mobile-nav");
+  hamburgerBtn.addEventListener("click", function() {
     mobileNav.classList.toggle("open");
   });
-  // Close mobile nav when a link inside it is clicked
   mobileNav.querySelectorAll("a").forEach(function(link) {
     link.addEventListener("click", function() {
       mobileNav.classList.remove("open");
     });
   });
 
-  // Lead form submission
-  const form = document.getElementById("lead-form-el");
-  const message = document.getElementById("form-message");
-  const params = new URLSearchParams(window.location.search);
+  // Lead form submission — i18n-aware messages
+  var i18nForm = {
+    submitting: "{{ t.lead_form.submitting }}",
+    submit: "{{ t.lead_form.submit }}",
+    submitted: "{{ t.lead_form.submitted }}",
+    errorGeneric: "{{ t.lead_form.error_generic }}",
+    errorConnection: "{{ t.lead_form.error_connection }}",
+    successMessage: "{{ t.lead_form.success_message }}"
+  };
+
+  var form = document.getElementById("lead-form-el");
+  var message = document.getElementById("form-message");
+  var params = new URLSearchParams(window.location.search);
 
   form.addEventListener("submit", async function(event) {
     event.preventDefault();
-    const btn = form.querySelector("button[type=submit]");
+    var btn = form.querySelector("button[type=submit]");
     btn.disabled = true;
-    btn.textContent = "Отправляем...";
+    btn.textContent = i18nForm.submitting;
     message.textContent = "";
     message.className = "form-message";
 
-    const payload = Object.fromEntries(new FormData(form).entries());
+    var payload = Object.fromEntries(new FormData(form).entries());
     payload.utm_source = params.get("utm_source") || "";
+    payload.lang = "{{ lang }}";
 
     try {
-      const response = await fetch("/api/leads", {
+      var response = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json().catch(function() { return {}; });
+      var data = await response.json().catch(function() { return {}; });
 
       if (!response.ok) {
-        message.textContent = data.detail || "Не удалось отправить форму. Проверьте поля и попробуйте ещё раз.";
+        message.textContent = data.detail || i18nForm.errorGeneric;
         message.className = "form-message error";
         btn.disabled = false;
-        btn.textContent = "Отправить заявку";
+        btn.textContent = i18nForm.submit;
         return;
       }
 
-      message.textContent = data.message || "{{ success_message }}";
+      message.textContent = data.message || i18nForm.successMessage;
       form.reset();
-      btn.textContent = "Заявка отправлена";
+      btn.textContent = i18nForm.submitted;
     } catch (err) {
-      message.textContent = "Ошибка соединения. Попробуйте позже.";
+      message.textContent = i18nForm.errorConnection;
       message.className = "form-message error";
       btn.disabled = false;
-      btn.textContent = "Отправить заявку";
+      btn.textContent = i18nForm.submit;
     }
   });
 </script>

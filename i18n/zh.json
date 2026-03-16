@@ -1,0 +1,329 @@
+{
+  "meta": {
+    "lang": "zh",
+    "dir": "ltr",
+    "name": "中文",
+    "flag": "🇨🇳",
+    "locale": "zh_CN",
+    "currency": "USD",
+    "currency_symbol": "$",
+    "market": "China / Global Chinese"
+  },
+  "nav": {
+    "features": "功能",
+    "pricing": "价格",
+    "faq": "常见问题",
+    "login": "登录",
+    "signup": "免费注册",
+    "dashboard": "控制台",
+    "accounts": "账户",
+    "farm": "农场",
+    "parser": "解析器",
+    "channel_map": "频道地图",
+    "assistant": "助手",
+    "creative": "创意",
+    "billing": "账单",
+    "settings": "设置",
+    "analytics": "数据分析",
+    "profiles": "档案"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "headline": "Telegram增长自动化。50线程，零封禁。",
+    "subheadline": "AI评论、频道解析、账户预热和内容工厂——集于一个终端。竞品收$130/月，功能还不到我们的一半。",
+    "cta_primary": "免费试用14天",
+    "cta_secondary": "2分钟获取演示"
+  },
+  "features": {
+    "section_title": "平台功能",
+    "section_subtitle": "一个平台取代7个工具",
+    "smart_commenter": {
+      "title": "智能评论",
+      "description": "10种AI评论风格——从专业分析到轻松幽默。A/B风格测试，emoji优先策略抢占热评，「绝不第一个」规则。AI生成的评论让管理员无法与真人区分。"
+    },
+    "farm_orchestrator": {
+      "title": "农场编排",
+      "description": "每个农场最多50线程。自动分配频道，FloodWait时自动暂停，问题账户隔离。Redis pub-sub实时事件推送。从1个账户扩展到完整农场，只需几分钟。"
+    },
+    "channel_map": {
+      "title": "频道地图",
+      "description": "交互式3D地球上展示10万+Telegram频道。H3六边形聚类，33个类目过滤，可下钻至单个频道。Discovery、Farm Control和Intelligence——三种模式满足不同需求。"
+    },
+    "warmup_engine": {
+      "title": "预热引擎",
+      "description": "7阶段自主预热：从隐身阅读到全面评论。AI人设、高斯随机延迟、保守/适中/激进三种模式。账户从购买到战斗状态，全程自动完成。"
+    },
+    "content_factory": {
+      "title": "内容工厂",
+      "description": "一个素材，30秒生成六种格式。Telegram帖子、Twitter/X线程、LinkedIn文章、YouTube描述、Reels/Shorts创意、电子邮件。5种品牌语调可选。不要再把同一内容手动改写6遍。"
+    },
+    "parser": {
+      "title": "频道解析",
+      "description": "按关键词、语言、地区和受众规模解析频道。实时进度条，随时取消，批量导入。几分钟内找到讨论你产品的频道——而不是几天。"
+    },
+    "profile_factory": {
+      "title": "档案工厂",
+      "description": "AI为账户生成完整档案：姓名、简介、头像、个人频道与置顶消息。支持整个农场批量生成。让每个账户看起来都像真实用户。"
+    },
+    "billing_agency": {
+      "title": "账单与代理",
+      "description": "Stripe支付，14天免费试用。代理套餐：白标定制、客户管理、收入分成。将平台转售给你的客户并从中盈利。"
+    }
+  },
+  "pricing": {
+    "section_title": "选择适合你的方案",
+    "section_subtitle": "14天免费试用，无需信用卡",
+    "monthly": "月付",
+    "annually": "年付",
+    "per_month": "/月",
+    "most_popular": "热门之选",
+    "get_started": "立即开始",
+    "contact_sales": "联系销售",
+    "starter": {
+      "name": "入门版",
+      "price": "49",
+      "target": "适合自由职业者和独立营销人，刚开始运营Telegram。",
+      "features": [
+        "5个农场账户",
+        "3个并发线程",
+        "智能评论（3种风格）",
+        "频道解析（500频道/月）",
+        "基础预热（保守模式）",
+        "频道地图（Discovery模式）",
+        "1个工作空间",
+        "邮件支持"
+      ],
+      "not_included": [
+        "A/B风格测试",
+        "内容工厂",
+        "代理套餐"
+      ]
+    },
+    "pro": {
+      "name": "专业版",
+      "price": "129",
+      "target": "适合增长团队和SMM代理商，需要可复制的流程。",
+      "features": [
+        "25个农场账户",
+        "15个并发线程",
+        "智能评论（全部10种风格 + A/B测试）",
+        "频道解析（5,000频道/月）",
+        "自主预热（全部模式）",
+        "频道地图（全部3种模式）",
+        "内容工厂（6种格式）",
+        "档案工厂（批量生成）",
+        "3个工作空间",
+        "Telegram支持，4小时响应",
+        "API访问"
+      ],
+      "not_included": [
+        "代理套餐",
+        "白标定制"
+      ]
+    },
+    "agency": {
+      "name": "代理版",
+      "price": "299",
+      "target": "适合代理商和团队，为客户管理Telegram增长。",
+      "features": [
+        "100个农场账户",
+        "50个并发线程",
+        "所有模块无限制",
+        "频道解析（无限量）",
+        "代理套餐：客户管理、邀请、收入分成",
+        "白标：自定义品牌和配色",
+        "10个工作空间",
+        "优先支持，1小时响应",
+        "专属客户经理",
+        "自定义AI评论风格"
+      ],
+      "not_included": []
+    },
+    "enterprise": {
+      "name": "企业版",
+      "price": "799",
+      "target": "适合大型企业和集团，需要定制化部署和专属服务。",
+      "features": [
+        "无限农场账户",
+        "无限并发线程",
+        "所有模块无限制",
+        "私有化部署支持",
+        "专属技术架构师",
+        "自定义SLA",
+        "无限工作空间",
+        "7x24专属支持",
+        "定制化功能开发",
+        "数据合规与审计报告"
+      ],
+      "not_included": []
+    }
+  },
+  "proof": {
+    "section_title": "用户评价",
+    "testimonials": [
+      {
+        "quote": "第一个月在垂直时尚频道收获340条评论。网站点击转化率4.2%。以前SMM专员每周花3天做这些，现在农场自动运行。",
+        "author": "Alina K.",
+        "role": "增长负责人",
+        "company": "电商品牌",
+        "location": "莫斯科"
+      },
+      {
+        "quote": "解析器15分钟找到87个职业发展和IT培训频道。手动搜索要花一周。专业风格的AI评论每天从评论区带来2-3个新线索。",
+        "author": "Dmitry R.",
+        "role": "CMO",
+        "company": "在线教育平台",
+        "location": "圣彼得堡"
+      },
+      {
+        "quote": "我们用内容工厂：一条Telegram帖子变成X线程、LinkedIn文章和邮件。每周节省6小时。频道地图还帮我们发现了之前不知道的竞品。",
+        "author": "Mikhail V.",
+        "role": "产品营销",
+        "company": "SaaS产品",
+        "location": "阿拉木图"
+      },
+      {
+        "quote": "代理套餐正是我们缺少的。白标 + 客户工作空间。第一季度接入8个客户，订阅费4倍回本。收入分成是锦上添花。",
+        "author": "Irina S.",
+        "role": "CEO",
+        "company": "数字营销代理",
+        "location": "明斯克"
+      },
+      {
+        "quote": "预热像时钟一样精准。买了10个账户，上传session文件，选保守模式。2周后全部进入战斗状态，零封禁。在5个竞品频道评论，每天带来50-70个新订阅者。",
+        "author": "Artem L.",
+        "role": "Telegram博主",
+        "company": "4.5万订阅者",
+        "location": "基辅"
+      }
+    ]
+  },
+  "faq": {
+    "section_title": "常见问题",
+    "items": [
+      {
+        "question": "NEURO COMMENTING是什么？",
+        "answer": "这是一个Telegram增长操作系统。用一个平台取代7个不同的工具：AI评论、频道解析、账户预热、频道地图、内容工厂和数据分析。全部集成在暗色终端风格的界面中。"
+      },
+      {
+        "question": "与GramGPT相比有什么优势？",
+        "answer": "更广的功能覆盖（频道地图、内容工厂、代理套餐），更智能的AI（10种风格 + A/B测试），更低的入门价格（入门版$49/月 vs GramGPT $130/月但功能更少）。而且我们不会让你为每个模块单独付费。"
+      },
+      {
+        "question": "我的账户会被封禁吗？",
+        "answer": "我们非常重视反检测。7阶段预热、高斯随机延迟（非线性）、1 IP = 1账户规则、模拟真人输入的反检测技术、可疑活动自动隔离。但无法保证零封禁率——Telegram持续更新算法。我们的目标是系统性地将风险降到最低。"
+      },
+      {
+        "question": "需要自己准备Telegram账户吗？",
+        "answer": "是的。你上传自己账户的.session文件。我们不出售账户，也不存储你的密码。每个账户绑定专属代理IP。"
+      },
+      {
+        "question": "预热是如何工作的？",
+        "answer": "自主7阶段循环：隐身（仅阅读）-> 轻互动（表情回应）-> 社交（加入频道）-> 参与（首次评论）-> 活跃 -> 稳定 -> 资深。AI人设决定行为风格。全程无需人工干预。"
+      },
+      {
+        "question": "可以免费试用吗？",
+        "answer": "可以。14天专业版全功能试用，无任何限制。无需绑定信用卡。试用结束后选择付费方案或直接离开，没有任何强制。"
+      },
+      {
+        "question": "只支持俄语频道吗？",
+        "answer": "不是。频道地图覆盖55个国家。解析器支持搜索任何语言的频道。智能评论可生成俄语、英语、哈萨克语、中文及其他语言的评论。但主要聚焦俄语/独联体市场。"
+      },
+      {
+        "question": "如果Telegram封禁了我所有账户怎么办？",
+        "answer": "自愈引擎会自动检测问题并将账户隔离，等待人工审核。我们不会自动尝试「复活」被封禁的账户。平台保留所有历史记录和配置——接入新账户即可继续。"
+      },
+      {
+        "question": "有API吗？",
+        "answer": "有。200+个API接口。完整的REST API可与你的CRM、数据看板、n8n工作流集成。专业版和代理版可用。"
+      },
+      {
+        "question": "适合代理商使用吗？",
+        "answer": "代理版套餐专为此而设计。白标定制、客户管理、邀请机制、收入分成。以你自己的品牌转售平台，从每个客户中获利。"
+      }
+    ]
+  },
+  "footer": {
+    "product": "产品",
+    "company": "公司",
+    "legal": "法律",
+    "support": "支持",
+    "terms": "服务条款",
+    "privacy": "隐私政策",
+    "refund": "退款政策",
+    "contact": "联系我们",
+    "telegram_channel": "Telegram频道",
+    "email_support": "邮件支持",
+    "copyright": "NEURO COMMENTING. 保留所有权利。",
+    "pricing_page": "价格",
+    "docs": "文档",
+    "api_reference": "API文档",
+    "blog": "博客",
+    "about": "关于我们",
+    "careers": "加入我们"
+  },
+  "common": {
+    "loading": "加载中...",
+    "error": "发生错误",
+    "retry": "重试",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "search": "搜索",
+    "filter": "筛选",
+    "export": "导出",
+    "import": "导入",
+    "confirm": "确认",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "close": "关闭",
+    "open": "打开",
+    "yes": "是",
+    "no": "否",
+    "all": "全部",
+    "none": "无",
+    "select": "选择",
+    "upload": "上传",
+    "download": "下载",
+    "refresh": "刷新",
+    "status": "状态",
+    "active": "活跃",
+    "inactive": "未激活",
+    "paused": "已暂停",
+    "stopped": "已停止",
+    "running": "运行中",
+    "queued": "排队中",
+    "completed": "已完成",
+    "failed": "失败",
+    "pending": "待处理",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+    "threads": "线程",
+    "accounts": "账户",
+    "channels": "频道",
+    "comments": "评论",
+    "workspace": "工作空间",
+    "tenant": "租户",
+    "actions": "操作",
+    "details": "详情",
+    "overview": "概览",
+    "no_data": "暂无数据",
+    "rows_per_page": "每页行数",
+    "total": "总计",
+    "free_trial": "免费试用",
+    "days_remaining": "剩余天数",
+    "upgrade": "升级",
+    "logout": "退出登录",
+    "login": "登录",
+    "register": "注册",
+    "email": "邮箱",
+    "password": "密码",
+    "username": "用户名",
+    "phone": "手机号",
+    "copied": "已复制",
+    "copy": "复制"
+  }
+}

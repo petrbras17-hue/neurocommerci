@@ -1,0 +1,380 @@
+{
+  "meta": {
+    "lang": "tr",
+    "dir": "ltr",
+    "name": "Turkce",
+    "flag": "🇹🇷",
+    "locale": "tr_TR",
+    "currency": "USD",
+    "currency_symbol": "$",
+    "region": "Turkey"
+  },
+  "nav": {
+    "home": "Ana Sayfa",
+    "features": "Ozellikler",
+    "pricing": "Fiyatlandirma",
+    "faq": "SSS",
+    "login": "Giris Yap",
+    "register": "Kayit Ol",
+    "dashboard": "Panel",
+    "try_free": "14 Gun Ucretsiz Dene",
+    "docs": "Dokumantasyon",
+    "blog": "Blog",
+    "contact": "Iletisim"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "headline": "Telegram Buyumeniz Otopilotta. 50 Thread, 0 Ban.",
+    "subheadline": "Yapay zeka yorumlama, kanal tarama, hesap isitma ve icerik fabrikasi -- tek bir platformda. Rakipler ayni isin yarisini icin ayda $130 oduyor.",
+    "cta_primary": "14 Gun Ucretsiz Baslat",
+    "cta_secondary": "2 Dakikada Demo Al",
+    "social_proof": "Turkiye, Azerbaycan ve Orta Asya'dan 500+ aktif kullanici"
+  },
+  "features": {
+    "section_title": "Moduller",
+    "section_subtitle": "7 arac yerine tek platform. Her modul birlikte calisir.",
+    "smart_commenter": {
+      "title": "Smart Commenter",
+      "subtitle": "Yapay Zeka Yorumlama Motoru",
+      "description": "10 farkli tarzda yapay zeka yorumlama -- uzman tonundan provokatif tarza. Tarz A/B testleri, one cikma icin emoji-first hilesi, 'asla ilk olma' kurali. Yapay zeka o kadar dogal yazar ki moderatorler gercek kisiden ayirt edemez.",
+      "features": [
+        "10 yorum tarzi + ozel tarzlar",
+        "A/B tarz testleri",
+        "Emoji-first one cikarma hilesi",
+        "Coklu dil destegi"
+      ]
+    },
+    "farm_orchestrator": {
+      "title": "Farm Orchestrator",
+      "subtitle": "Coklu Thread Yonetimi",
+      "description": "Her farm icin 50'ye kadar thread. Kanallar otomatik dagitilir, FloodWait'te otomatik duraklama, sorunlu hesaplara karantina. Gercek zamanli Redis pub-sub olaylari. 1 hesaptan tam kapasiteli farmaya dakikalar icinde olceklenir.",
+      "features": [
+        "Farm basina 50'ye kadar thread",
+        "Otomatik kanal dagitimi",
+        "FloodWait duraklama + karantina",
+        "Gercek zamanli Redis olaylari"
+      ]
+    },
+    "channel_map": {
+      "title": "Channel Map",
+      "subtitle": "3D Kuresel Kanal Haritasi",
+      "description": "Interaktif 3D kure uzerinde 100.000'den fazla Telegram kanali. H3 kumeleme, 33 nis kategorisine gore filtreleme, belirli bir kanala kadar detay inceleme. Discovery, Farm Control ve Intelligence -- farkli gorevler icin uc mod.",
+      "features": [
+        "100K+ kanal 3D kurede",
+        "33 kategori filtresi",
+        "Discovery / Farm / Intelligence modlari",
+        "Kumeleme ve detay inceleme"
+      ]
+    },
+    "warmup_engine": {
+      "title": "Warmup Engine",
+      "subtitle": "Otonom Hesap Isitma",
+      "description": "7 fazli otonom isitma: stealth kanal okumadan tam kapasiteli yorumlamaya. Yapay zeka personalar, Gauss gecikmeleri, ihtiyatli/orta/agresif modlar. Hesap, satinalmadan savas moduna kendi basina gecer.",
+      "features": [
+        "7 fazli isitma dongusu",
+        "Yapay zeka persona olusturma",
+        "Gauss gecikmeleri (anti-detection)",
+        "Ihtiyatli / Orta / Agresif modlar"
+      ]
+    },
+    "content_factory": {
+      "title": "Content Factory",
+      "subtitle": "Coklu Platform Icerik Uretimi",
+      "description": "Bir kaynak -- 30 saniyede alti format. Telegram gonderisi, Twitter/X thread, LinkedIn makalesi, YouTube aciklamasi, Reels/Shorts fikirleri, e-posta bulteni. 5 marka tonu. Ayni seyi 6 kez yazmayi birakin.",
+      "features": [
+        "1 kaynak -> 6 format",
+        "30 saniyede uretim",
+        "5 marka tonu",
+        "Telegram, X, LinkedIn, YouTube, Reels, Email"
+      ]
+    },
+    "parser": {
+      "title": "Parser",
+      "subtitle": "Kanal Tarama ve Kesif",
+      "description": "Anahtar kelime, dil, cografi konum ve izleyici boyutuna gore kanal tarama. Gercek zamanli ilerleme cubugu, aninda iptal, toplu icerik aktarimi. Urunuzun tartisildigi alanlari gunler yerine dakikalar icinde bulun.",
+      "features": [
+        "Anahtar kelime + geo + dil filtresi",
+        "Gercek zamanli ilerleme cubugu",
+        "Aninda iptal",
+        "Toplu anahtar kelime icerik aktarimi"
+      ]
+    },
+    "profile_factory": {
+      "title": "Profile Factory",
+      "subtitle": "Yapay Zeka Profil Olusturma",
+      "description": "Yapay zeka hesaplar icin profil olusturur: isim, biyografi, avatar, sabitleme ile kisisel kanal. Tum farm icin toplu olusturma. Her hesap gecmisi olan gercek bir kullanici gibi gorunur.",
+      "features": [
+        "Yapay zeka ile isim + bio + avatar",
+        "Kisisel kanal olusturma",
+        "Toplu olusturma",
+        "Dogal kullanici gorunumu"
+      ]
+    },
+    "billing_agency": {
+      "title": "Billing ve Agency Package",
+      "subtitle": "Odeme ve Ajans Yonetimi",
+      "description": "Stripe ile odeme, 14 gunluk deneme suresi. Ajans paketi: white label, musteri yonetimi, gelir paylasimi. Platformu kendi musterilerinize satarak kazanin.",
+      "features": [
+        "Stripe entegrasyonu",
+        "14 gun ucretsiz deneme",
+        "White label marka",
+        "Musteri yonetimi + gelir paylasimi"
+      ]
+    }
+  },
+  "pricing": {
+    "section_title": "Fiyatlandirma",
+    "section_subtitle": "14 gun ucretsiz. Kart gerekmez. Istediginiz zaman iptal edin.",
+    "billing_monthly": "Aylik",
+    "billing_yearly": "Yillik",
+    "yearly_discount": "2 ay ucretsiz",
+    "popular": "Populer secim",
+    "current_plan": "Mevcut plan",
+    "per_month": "/ay",
+    "start_trial": "Ucretsiz Deneyin",
+    "contact_sales": "Satis ile Iletisim",
+    "starter": {
+      "name": "Starter",
+      "price": "$49",
+      "target": "Freelancerlar ve solo pazarlamacilar icin, Telegram'a yeni baslayanlar.",
+      "features": [
+        "Farmda 5 hesap",
+        "3 esanli thread",
+        "Smart Commenter (3 tarz)",
+        "Kanal tarayici (500 kanal/ay)",
+        "Temel isitma (ihtiyatli mod)",
+        "Channel Map (Discovery modu)",
+        "1 calisma alani",
+        "E-posta destek"
+      ],
+      "not_included": [
+        "A/B tarz testleri",
+        "Content Factory",
+        "Agency Package"
+      ]
+    },
+    "pro": {
+      "name": "Pro",
+      "price": "$129",
+      "target": "Growth ekipleri ve SMM ajanslari icin -- tekrarlanabilir surec ihtiyaci olanlar.",
+      "features": [
+        "Farmda 25 hesap",
+        "15 esanli thread",
+        "Smart Commenter (10 tarz + A/B)",
+        "Kanal tarayici (5.000 kanal/ay)",
+        "Otonom isitma (tum modlar)",
+        "Channel Map (3 mod)",
+        "Content Factory (6 format)",
+        "Profile Factory (toplu olusturma)",
+        "3 calisma alani",
+        "Telegram destek, 4 saat icinde yanit",
+        "API erisimi"
+      ],
+      "not_included": [
+        "Agency Package",
+        "White Label"
+      ]
+    },
+    "agency": {
+      "name": "Agency",
+      "price": "$299",
+      "target": "Musterileri icin Telegram buyumesini yoneten ajanslar ve ekipler.",
+      "features": [
+        "Farmda 100 hesap",
+        "50 esanli thread",
+        "Sinirlamasz tum moduller",
+        "Kanal tarayici (sinirlamasz)",
+        "Agency Package: musteriler, davetiyeler, gelir paylasimi",
+        "White Label: kendi markaniz, kendi renkleriniz",
+        "10 calisma alani",
+        "Oncelikli destek, 1 saat icinde yanit",
+        "Ozel yonetici",
+        "Musteri markalarina ozel yapay zeka tarzlari"
+      ],
+      "not_included": []
+    },
+    "enterprise": {
+      "name": "Enterprise",
+      "price": "$799",
+      "target": "Ozel altyapi, SLA ve tamamen kisisellestirme gerektiren buyuk sirketler.",
+      "features": [
+        "Sinirlamasz hesap ve thread",
+        "Ozel sunucu altyapisi",
+        "SLA garantisi (%99.9 uptime)",
+        "Ozel API entegrasyonu",
+        "Kisisel cozum muhendisi",
+        "Ozel yapay zeka model eğitimi",
+        "On-premise kurulum secenegi",
+        "Sinirlamasz calisma alani",
+        "7/24 oncelikli destek"
+      ],
+      "not_included": []
+    }
+  },
+  "proof": {
+    "section_title": "Kullanicilar Ne Diyor",
+    "testimonials": [
+      {
+        "quote": "Ilk ayda nis moda kanallarinda 340 yorum topladik. Siteye gecis donusumu %4,2. Onceden SMM uzmani buna haftada 3 gun harciyordu, simdi farm kendi kendine calisiyor.",
+        "author": "Ayse K.",
+        "role": "Growth Muduru",
+        "company": "E-ticaret Markasi",
+        "location": "Istanbul"
+      },
+      {
+        "quote": "Parser 15 dakikada kariyer ve IT egitimi hakkinda 87 kanal buldu. Bunlari elle aramak bir hafta surerdi. Uzman tarzinda noro-yorumlama bize gunluk 2-3 yeni lead getiriyor.",
+        "author": "Mehmet R.",
+        "role": "Pazarlama Direktoru",
+        "company": "Online Egitim Platformu",
+        "location": "Ankara"
+      },
+      {
+        "quote": "Content Factory kullaniyoruz: Telegram kanalindaki bir gonderi X icin thread'e, LinkedIn makalesi ve e-postaya donusuyor. Icerik islerinde haftada 6 saat tasarruf. Channel Map ise bilmedigimiz rakipleri gosterdi.",
+        "author": "Ali V.",
+        "role": "Urun Pazarlama",
+        "company": "SaaS Urunu",
+        "location": "Istanbul"
+      },
+      {
+        "quote": "Agency paketi -- tam ihtiyacimiz olan seydi. White label + musteri calisma alanlari. Ilk ceyrekte 8 musteri bagladik ve aboneligimizi 4 katina cikardik. Gelir paylasimi bonus.",
+        "author": "Zeynep S.",
+        "role": "CEO",
+        "company": "Dijital Ajans",
+        "location": "Izmir"
+      },
+      {
+        "quote": "Isitma saat gibi calisiyor. 10 hesap satin aldim, oturumlari yukledim, ihtiyatli modu sectim. 2 hafta sonra 10'u da savas modunda, tek bir ban yok. 5 rakip kanalinda yorumlama gunluk 50-70 abone getiriyor.",
+        "author": "Emre L.",
+        "role": "Telegram Blogger",
+        "company": "45K abone",
+        "location": "Istanbul"
+      }
+    ]
+  },
+  "faq": {
+    "section_title": "Sikca Sorulan Sorular",
+    "items": [
+      {
+        "q": "NEURO COMMENTING nedir?",
+        "a": "Telegram'da buyume icin bir isletim sistemidir. 7 farkli arac yerine tek platform: noro-yorumlama, tarama, hesap isitma, kanal haritasi, icerik fabrikasi ve analitik. Hepsi tek bir dark terminal arayuzunde."
+      },
+      {
+        "q": "GramGPT'den farkniniz ne?",
+        "a": "Daha genis islevsellik (kanal haritasi, icerik fabrikasi, ajans paketi), daha akilli yapay zeka (10 tarz + A/B testleri), daha uygun fiyat (Starter $49/ay vs GramGPT $130/ay daha az ozellik icin). Ve her modul icin ayri odeme yaptirmiyoruz."
+      },
+      {
+        "q": "Hesaplarim ban yer mi?",
+        "a": "Anti-fraud konusunu ciddiye aliyoruz. 7 fazli isitma, dogrusal yerine Gauss gecikmeleri, 1 IP = 1 hesap kurali, anti-detection yazma simulasyonu, suphelenen aktivitede karantina. Ancak %0 ban garantisi vermek mumkun degil -- Telegram surekli algoritmalarini guncelliyor. Gorevimiz riskleri sistematik olarak minimize etmek."
+      },
+      {
+        "q": "Kendi Telegram hesaplarim mi olmali?",
+        "a": "Evet. Kendi hesaplarinizin .session dosyalarini yuklersiniz. Hesap satmiyoruz ve sifrelerinizi saklamiyoruz. Her hesap kisisel bir proxy'ye baglanir."
+      },
+      {
+        "q": "Isitma nasil calisiyor?",
+        "a": "7 fazli otonom dongu: stealth (sadece okuma) -> hafif etkilesim (reaksiyonlar) -> sosyal (kanallara katilma) -> baglanti (ilk yorumlar) -> aktif -> yerlesmis -> veteran. Yapay zeka personasi davranis tarzini belirler. Tum surec sizin mudahaleniz olmadan ilerler."
+      },
+      {
+        "q": "Ucretsiz deneyebilir miyim?",
+        "a": "Evet. Pro planinda 14 gun sinirlamasz deneme. Kart gerekmez. Deneme sonrasi plan secer veya hicbir yukumluluk olmadan ayrilirsiniz."
+      },
+      {
+        "q": "Sadece Turkce kanallarla mi calisiyor?",
+        "a": "Hayir. Channel Map 55 ulkeyi kapsiyor. Parser herhangi bir dilde kanal ariyor. Smart Commenter Turkce, Ingilizce, Rusca, Arapca ve diger dillerde yorum uretiyor. Ancak ana odak Turkiye ve bolge pazarlari."
+      },
+      {
+        "q": "Telegram tum hesaplarimi engellerse ne olur?",
+        "a": "Self-Healing Engine sorunlari otomatik tespit eder ve hesabi manuel incelemeye kadar karantinaya alir. Banlanan hesabi otomatik olarak 'diriltmeye' calismiyoruz. Platform tum gecmisi ve ayarlari korur -- yeni bir hesap baglayip devam edin."
+      },
+      {
+        "q": "API var mi?",
+        "a": "Evet. 200'den fazla API endpoint'i. CRM'leriniz, panolariniz ve otomasyon senaryolarinizla entegrasyon icin tam REST API. Pro ve Agency planlarinda kullanilabilir."
+      },
+      {
+        "q": "Ajanslar icin uygun mu?",
+        "a": "Ozellikle bunun icin Agency plani olusturuldu. White label, musteri yonetimi, davetiyeler, gelir paylasimi. Platformu kendi markanizla satin ve her musteriden kazanin."
+      }
+    ]
+  },
+  "footer": {
+    "product": "Urun",
+    "company": "Sirket",
+    "legal": "Yasal",
+    "resources": "Kaynaklar",
+    "about": "Hakkimizda",
+    "careers": "Kariyer",
+    "blog": "Blog",
+    "docs": "Dokumantasyon",
+    "api": "API Referansi",
+    "status": "Sistem Durumu",
+    "terms": "Kullanim Kosullari",
+    "privacy": "Gizlilik Politikasi",
+    "refund": "Iade Politikasi",
+    "contact": "Iletisim",
+    "copyright": "2026 NEURO COMMENTING. Tum haklari saklidir.",
+    "tagline": "Telegram Growth OS -- tek platformda buyume."
+  },
+  "common": {
+    "loading": "Yukleniyor...",
+    "error": "Bir hata olustu",
+    "retry": "Tekrar Dene",
+    "save": "Kaydet",
+    "cancel": "Iptal",
+    "delete": "Sil",
+    "edit": "Duzenle",
+    "create": "Olustur",
+    "search": "Ara",
+    "filter": "Filtrele",
+    "export": "Disari Aktar",
+    "import": "Icerik Aktar",
+    "back": "Geri",
+    "next": "Sonraki",
+    "previous": "Onceki",
+    "close": "Kapat",
+    "confirm": "Onayla",
+    "yes": "Evet",
+    "no": "Hayir",
+    "or": "veya",
+    "and": "ve",
+    "all": "Tumu",
+    "none": "Hicbiri",
+    "status": "Durum",
+    "actions": "Islemler",
+    "settings": "Ayarlar",
+    "account": "Hesap",
+    "accounts": "Hesaplar",
+    "workspace": "Calisma Alani",
+    "channels": "Kanallar",
+    "comments": "Yorumlar",
+    "proxy": "Proxy",
+    "proxies": "Proxyler",
+    "farm": "Farm",
+    "threads": "Threadler",
+    "active": "Aktif",
+    "paused": "Duraklatildi",
+    "stopped": "Durduruldu",
+    "running": "Calisiyor",
+    "completed": "Tamamlandi",
+    "failed": "Basarisiz",
+    "pending": "Bekliyor",
+    "quarantine": "Karantina",
+    "healthy": "Saglikli",
+    "warning": "Uyari",
+    "critical": "Kritik",
+    "per_month": "/ay",
+    "free_trial": "14 gun ucretsiz deneme",
+    "no_card_required": "Kart gerekmez",
+    "get_started": "Baslayin",
+    "learn_more": "Daha Fazla Bilgi",
+    "sign_up": "Kayit Ol",
+    "sign_in": "Giris Yap",
+    "sign_out": "Cikis Yap",
+    "email": "E-posta",
+    "password": "Sifre",
+    "telegram": "Telegram",
+    "language": "Dil",
+    "theme": "Tema",
+    "dark": "Karanlik",
+    "light": "Aydinlik"
+  }
+}

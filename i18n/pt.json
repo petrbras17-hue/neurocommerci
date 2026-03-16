@@ -1,0 +1,418 @@
+{
+  "meta": {
+    "lang": "pt",
+    "dir": "ltr",
+    "name": "Portugues",
+    "flag": "🇧🇷",
+    "locale": "pt_BR",
+    "currency": "USD",
+    "currency_symbol": "$",
+    "market": "Brazil / LATAM"
+  },
+  "nav": {
+    "features": "Funcionalidades",
+    "pricing": "Precos",
+    "faq": "FAQ",
+    "login": "Entrar",
+    "signup": "Comecar gratis",
+    "dashboard": "Painel",
+    "accounts": "Contas",
+    "campaigns": "Campanhas",
+    "parser": "Parser",
+    "analytics": "Analytics",
+    "billing": "Faturamento",
+    "settings": "Configuracoes",
+    "farm": "Farm",
+    "channel_map": "Mapa de Canais",
+    "assistant": "Assistente",
+    "profiles": "Perfis",
+    "agency": "Agencia"
+  },
+  "hero": {
+    "eyebrow": "Telegram Growth OS",
+    "headline": "Seu Telegram no piloto automatico. 50 threads, 0 bans.",
+    "subheadline": "Comentarios com IA, parsing de canais, aquecimento de contas e fabrica de conteudo -- tudo em um terminal. O Telegram e o app que mais cresce no Brasil. Domine ele antes dos seus concorrentes.",
+    "cta_primary": "Comecar teste gratis de 14 dias",
+    "cta_secondary": "Ver demo em 2 minutos",
+    "social_proof": "Usado por growth teams em 55 paises"
+  },
+  "features": {
+    "section_title": "Tudo que voce precisa para crescer no Telegram",
+    "section_subtitle": "15+ modulos em uma plataforma. Pare de pagar por 7 ferramentas separadas.",
+    "smart_commenter": {
+      "title": "Smart Commenter",
+      "description": "Comentarios com IA em 10 estilos -- do especialista ao provocador. Testes A/B de estilos, truque emoji-first para ficar no topo, regra 'nunca ser o primeiro'. A IA escreve de um jeito que moderadores nao conseguem distinguir de um usuario real.",
+      "highlights": [
+        "10 estilos de comentario com IA",
+        "Testes A/B automaticos de estilos",
+        "Truque emoji-first para ranking no topo",
+        "Estilos customizados por marca"
+      ]
+    },
+    "farm_orchestrator": {
+      "title": "Farm Orchestrator",
+      "description": "Ate 50 threads por farm. Distribuicao automatica de canais, pausa em FloodWait, quarentena de contas problematicas. Eventos em tempo real via Redis pub-sub. Escala de 1 conta a uma farm completa em minutos.",
+      "highlights": [
+        "Ate 50 threads simultaneas",
+        "Distribuicao automatica de canais",
+        "Quarentena inteligente",
+        "Eventos em tempo real via Redis"
+      ]
+    },
+    "channel_map": {
+      "title": "Channel Map",
+      "description": "Mapa global de 100K+ canais do Telegram em um globo 3D interativo. Clusterizacao H3, filtros por categoria (33 nichos), drill-down ate o canal individual. Discovery, Farm Control e Intelligence -- tres modos para diferentes tarefas.",
+      "highlights": [
+        "Globo 3D com 100K+ canais",
+        "33 categorias de nicho",
+        "3 modos: Discovery, Farm, Intelligence",
+        "Drill-down por pais e cidade"
+      ]
+    },
+    "warmup_engine": {
+      "title": "Warmup Engine",
+      "description": "Aquecimento autonomo em 7 fases: de leitura stealth ate comentarios completos. Personas com IA, delays Gaussianos, modos conservador/moderado/agressivo. A conta percorre sozinha o caminho da compra ate o estado de combate.",
+      "highlights": [
+        "7 fases de aquecimento automatico",
+        "Personas com IA unicas por conta",
+        "Delays Gaussianos anti-deteccao",
+        "Modos conservador, moderado, agressivo"
+      ]
+    },
+    "content_factory": {
+      "title": "Content Factory",
+      "description": "Uma fonte -- seis formatos em 30 segundos. Post no Telegram, thread no Twitter/X, artigo no LinkedIn, descricao no YouTube, ideias para Reels/Shorts, email marketing. 5 vozes de marca. Pare de reescrever o mesmo conteudo 6 vezes.",
+      "highlights": [
+        "1 texto = 6 plataformas em 30s",
+        "Telegram, X, LinkedIn, YouTube, Reels, Email",
+        "5 vozes de marca",
+        "Formatacao nativa por plataforma"
+      ]
+    },
+    "parser": {
+      "title": "Parser de Canais",
+      "description": "Parsing de canais por palavras-chave, idioma, geo e tamanho de audiencia. Barra de progresso em tempo real, cancelamento on-the-fly, importacao em lote. Encontre os espacos onde falam do seu produto -- em minutos, nao em dias.",
+      "highlights": [
+        "Busca por keyword, idioma, geo",
+        "Progresso em tempo real",
+        "Importacao em lote",
+        "Cancelamento instantaneo"
+      ]
+    },
+    "profile_factory": {
+      "title": "Profile Factory",
+      "description": "IA gera perfis para contas: nome, bio, avatar, canal pessoal com post fixado. Geracao em massa para toda a farm. Cada conta parece um usuario real com historico.",
+      "highlights": [
+        "Perfis gerados por IA",
+        "Avatar + bio + canal pessoal",
+        "Geracao em massa",
+        "Cada conta parece real"
+      ]
+    },
+    "billing_agency": {
+      "title": "Billing e Agency Package",
+      "description": "Stripe para pagamentos globais, trial de 14 dias. Pacote de agencia: white label, gestao de clientes, revenue share. Ganhe dinheiro revendendo a plataforma para seus proprios clientes.",
+      "highlights": [
+        "Stripe (USD global)",
+        "Trial de 14 dias sem cartao",
+        "White label para agencias",
+        "Revenue share com clientes"
+      ]
+    }
+  },
+  "pricing": {
+    "section_title": "Precos simples. Sem surpresas.",
+    "section_subtitle": "Comece gratis por 14 dias. Sem cartao de credito. Cancele quando quiser.",
+    "billing_toggle_monthly": "Mensal",
+    "billing_toggle_annual": "Anual (2 meses gratis)",
+    "starter": {
+      "name": "Starter",
+      "price_monthly": 49,
+      "price_annual": 490,
+      "currency": "USD",
+      "period": "/mes",
+      "target": "Para freelancers e marketeiros solo que estao comecando no Telegram.",
+      "cta": "Comecar teste gratis",
+      "badge": null,
+      "includes": [
+        "5 contas na farm",
+        "3 threads simultaneas",
+        "Smart Commenter (3 estilos)",
+        "Parser de canais (500 canais/mes)",
+        "Aquecimento basico (modo conservador)",
+        "Channel Map (modo Discovery)",
+        "1 workspace",
+        "Suporte por email"
+      ],
+      "not_included": [
+        "Testes A/B de estilos",
+        "Content Factory",
+        "Agency Package"
+      ]
+    },
+    "pro": {
+      "name": "Pro",
+      "price_monthly": 129,
+      "price_annual": 1290,
+      "currency": "USD",
+      "period": "/mes",
+      "target": "Para growth teams e agencias de social media que precisam de um processo repetivel.",
+      "cta": "Comecar teste gratis",
+      "badge": "Mais popular",
+      "includes": [
+        "25 contas na farm",
+        "15 threads simultaneas",
+        "Smart Commenter (10 estilos + A/B)",
+        "Parser de canais (5.000 canais/mes)",
+        "Aquecimento autonomo (todos os modos)",
+        "Channel Map (3 modos completos)",
+        "Content Factory (6 formatos)",
+        "Profile Factory (geracao em massa)",
+        "3 workspaces",
+        "Suporte via Telegram, resposta em 4h",
+        "Acesso a API"
+      ],
+      "not_included": [
+        "Agency Package",
+        "White Label"
+      ]
+    },
+    "agency": {
+      "name": "Agency",
+      "price_monthly": 299,
+      "price_annual": 2990,
+      "currency": "USD",
+      "period": "/mes",
+      "target": "Para agencias e times que gerenciam crescimento no Telegram para clientes.",
+      "cta": "Falar com vendas",
+      "badge": "Para agencias",
+      "includes": [
+        "100 contas na farm",
+        "50 threads simultaneas",
+        "Todos os modulos sem limites",
+        "Parser de canais (ilimitado)",
+        "Agency Package: clientes, convites, revenue share",
+        "White Label: sua marca, suas cores",
+        "10 workspaces",
+        "Suporte prioritario, resposta em 1h",
+        "Gerente dedicado",
+        "Estilos de IA customizados por marca do cliente"
+      ],
+      "not_included": []
+    },
+    "enterprise": {
+      "name": "Enterprise",
+      "price_monthly": 799,
+      "price_annual": 7990,
+      "currency": "USD",
+      "period": "/mes",
+      "target": "Para operacoes de grande escala com necessidades customizadas.",
+      "cta": "Agendar demo",
+      "badge": "Custom",
+      "includes": [
+        "Contas e threads ilimitadas",
+        "Todos os modulos sem restricoes",
+        "Infraestrutura dedicada",
+        "SLA garantido",
+        "Onboarding personalizado",
+        "Integracoes customizadas",
+        "Workspaces ilimitados",
+        "Suporte 24/7 com SLA",
+        "Customer Success Manager dedicado",
+        "Treinamento para equipe"
+      ],
+      "not_included": []
+    }
+  },
+  "proof": {
+    "section_title": "Quem ja usa",
+    "testimonials": [
+      {
+        "quote": "No primeiro mes coletamos 340 comentarios em canais de moda no Telegram. Conversao em cliques para o site: 4,2%. Antes, o social media gastava 3 dias por semana nisso. Agora a farm faz sozinha.",
+        "author": "Carolina M.",
+        "role": "Head of Growth",
+        "company": "E-commerce de moda",
+        "location": "Sao Paulo"
+      },
+      {
+        "quote": "O parser encontrou 87 canais de carreira e tecnologia em 15 minutos. Levariamos uma semana procurando manualmente. O neurocommenting no estilo especialista nos traz 2-3 leads novos por dia pelos comentarios.",
+        "author": "Rafael S.",
+        "role": "CMO",
+        "company": "EdTech",
+        "location": "Rio de Janeiro"
+      },
+      {
+        "quote": "Usamos o Content Factory: um post no Telegram vira thread no X, artigo no LinkedIn e email. Economizamos 6 horas por semana em conteudo. E o Channel Map mostrou concorrentes que nem sabiamos que existiam.",
+        "author": "Lucas V.",
+        "role": "Product Marketing",
+        "company": "SaaS B2B",
+        "location": "Belo Horizonte"
+      },
+      {
+        "quote": "O pacote Agency e o que faltava. White label + workspaces por cliente. Conectamos 8 clientes no primeiro trimestre e pagamos a assinatura 4x. Revenue share e a cereja do bolo.",
+        "author": "Amanda R.",
+        "role": "CEO",
+        "company": "Agencia digital",
+        "location": "Curitiba"
+      },
+      {
+        "quote": "O aquecimento funciona como relogio. Comprei 10 contas, fiz upload das sessions, escolhi modo conservador. Em 2 semanas todas as 10 prontas para combate, zero bans. Commenting em 5 canais de concorrentes traz 50-70 inscritos por dia.",
+        "author": "Thiago L.",
+        "role": "Growth Hacker",
+        "company": "Canal Telegram, 45K inscritos",
+        "location": "Florianopolis"
+      }
+    ]
+  },
+  "faq": {
+    "section_title": "Perguntas frequentes",
+    "items": [
+      {
+        "q": "O que e o NEURO COMMENTING?",
+        "a": "E um sistema operacional para crescimento no Telegram. Em vez de 7 ferramentas diferentes -- uma plataforma: neurocommenting com IA, parsing de canais, aquecimento de contas, mapa de canais, fabrica de conteudo e analytics. Tudo em uma interface dark terminal."
+      },
+      {
+        "q": "Por que o Telegram e relevante no Brasil?",
+        "a": "O Telegram e o app de mensagens que mais cresce no Brasil. Mais de 80 milhoes de usuarios brasileiros, grupos e canais ativos em todos os nichos -- de cripto a educacao, de e-commerce a politica. Quem dominar o Telegram agora tera vantagem competitiva nos proximos anos."
+      },
+      {
+        "q": "Minhas contas nao vao ser banidas?",
+        "a": "Levamos antifraude a serio. Aquecimento em 7 fases, delays Gaussianos em vez de lineares, regra 1 IP = 1 conta, simulacao anti-deteccao de digitacao, quarentena ao primeiro sinal de problema. Mas garantir 0% de bans e impossivel -- o Telegram atualiza seus algoritmos constantemente. Nosso trabalho e minimizar riscos de forma sistematica."
+      },
+      {
+        "q": "Preciso ter minhas proprias contas Telegram?",
+        "a": "Sim. Voce faz upload dos arquivos .session das suas contas. Nao vendemos contas e nao armazenamos suas senhas. Cada conta e vinculada a um proxy individual."
+      },
+      {
+        "q": "Como funciona o aquecimento?",
+        "a": "Ciclo autonomo de 7 fases: stealth (so leitura) -> interacao leve (reacoes) -> social (entrada em canais) -> engajamento (primeiros comentarios) -> ativo -> estabelecido -> veterano. Uma persona de IA define o estilo de comportamento. Todo o processo roda sem sua intervencao."
+      },
+      {
+        "q": "Posso testar gratis?",
+        "a": "Sim. 14 dias no plano Pro sem restricoes. Sem cartao de credito. Depois do trial, escolha um plano ou cancele sem compromisso."
+      },
+      {
+        "q": "Funciona so com canais em portugues?",
+        "a": "Nao. O Channel Map cobre 55 paises. O parser busca canais em qualquer idioma. O Smart Commenter gera comentarios em portugues, ingles, espanhol, russo e outros idiomas. Mas nosso foco principal agora e Brasil e LATAM."
+      },
+      {
+        "q": "E se o Telegram bloquear todas as minhas contas?",
+        "a": "O Self-Healing Engine detecta problemas automaticamente e coloca a conta em quarentena para verificacao manual. Nao tentamos 'ressuscitar' uma conta banida automaticamente. A plataforma salva todo o historico e configuracoes -- conecte uma nova conta e continue de onde parou."
+      },
+      {
+        "q": "Tem API?",
+        "a": "Sim. 200+ endpoints de API. REST API completa para integracao com seus CRMs, dashboards, cenarios do n8n ou Make. Disponivel nos planos Pro e Agency."
+      },
+      {
+        "q": "Serve para agencias?",
+        "a": "Foi feito especialmente para isso. O plano Agency inclui white label, gestao de clientes, convites, revenue share. Revenda a plataforma com sua marca e ganhe em cada cliente."
+      }
+    ]
+  },
+  "footer": {
+    "product": "Produto",
+    "company": "Empresa",
+    "legal": "Legal",
+    "support": "Suporte",
+    "links": {
+      "features": "Funcionalidades",
+      "pricing": "Precos",
+      "faq": "FAQ",
+      "api_docs": "Documentacao da API",
+      "changelog": "Changelog",
+      "about": "Sobre nos",
+      "blog": "Blog",
+      "careers": "Vagas",
+      "contact": "Contato",
+      "terms": "Termos de uso",
+      "privacy": "Politica de privacidade",
+      "refund": "Politica de reembolso",
+      "help_center": "Central de ajuda",
+      "telegram_support": "Suporte via Telegram",
+      "email_support": "Suporte por email",
+      "status_page": "Status da plataforma"
+    },
+    "copyright": "2026 NEURO COMMENTING. Todos os direitos reservados.",
+    "tagline": "Telegram Growth OS para times ambiciosos."
+  },
+  "common": {
+    "loading": "Carregando...",
+    "error": "Erro",
+    "success": "Sucesso",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "delete": "Excluir",
+    "edit": "Editar",
+    "create": "Criar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "export": "Exportar",
+    "import": "Importar",
+    "refresh": "Atualizar",
+    "back": "Voltar",
+    "next": "Proximo",
+    "previous": "Anterior",
+    "confirm": "Confirmar",
+    "close": "Fechar",
+    "yes": "Sim",
+    "no": "Nao",
+    "or": "ou",
+    "and": "e",
+    "all": "Todos",
+    "none": "Nenhum",
+    "active": "Ativo",
+    "inactive": "Inativo",
+    "enabled": "Ativado",
+    "disabled": "Desativado",
+    "status": "Status",
+    "actions": "Acoes",
+    "details": "Detalhes",
+    "overview": "Visao geral",
+    "settings": "Configuracoes",
+    "logout": "Sair",
+    "login": "Entrar",
+    "register": "Cadastrar",
+    "email": "Email",
+    "password": "Senha",
+    "username": "Usuario",
+    "name": "Nome",
+    "description": "Descricao",
+    "date": "Data",
+    "time": "Hora",
+    "today": "Hoje",
+    "yesterday": "Ontem",
+    "per_month": "/mes",
+    "per_year": "/ano",
+    "free_trial": "Teste gratis",
+    "no_credit_card": "Sem cartao de credito",
+    "get_started": "Comecar agora",
+    "learn_more": "Saiba mais",
+    "contact_sales": "Falar com vendas",
+    "coming_soon": "Em breve",
+    "beta": "Beta",
+    "new": "Novo",
+    "popular": "Popular",
+    "recommended": "Recomendado",
+    "unlimited": "Ilimitado",
+    "accounts": "Contas",
+    "threads": "Threads",
+    "channels": "Canais",
+    "comments": "Comentarios",
+    "workspaces": "Workspaces",
+    "members": "Membros",
+    "subscribers": "Inscritos",
+    "views": "Visualizacoes",
+    "clicks": "Cliques",
+    "leads": "Leads",
+    "conversions": "Conversoes",
+    "revenue": "Receita",
+    "growth": "Crescimento",
+    "engagement": "Engajamento",
+    "health_score": "Score de saude",
+    "quarantine": "Quarentena",
+    "warmup": "Aquecimento",
+    "parsing": "Parsing",
+    "farm": "Farm",
+    "dashboard": "Painel"
+  }
+}
