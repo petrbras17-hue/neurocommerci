@@ -1568,6 +1568,36 @@ async def _do_scheduler_boot():
         log.error("WarmupScheduler boot FAILED: %s", exc, exc_info=True)
 
 
+# --- Private Access Gate ---
+# /app/* is closed to public. Only accessible with ?access=SECRET or nc_access cookie.
+# Set PRIVATE_ACCESS_TOKEN in .env. Landing + lead form stay public.
+_PRIVATE_ACCESS_TOKEN = os.getenv("PRIVATE_ACCESS_TOKEN", "founder2026")
+_PRIVATE_PATHS_PREFIX = "/app"
+
+
+@app.middleware("http")
+async def private_access_gate(request: Request, call_next):
+    """Block /app/* for everyone except founder (token via query or cookie)."""
+    path = request.url.path
+    if path.startswith(_PRIVATE_PATHS_PREFIX):
+        token = request.query_params.get("access") or request.cookies.get("nc_access")
+        if token != _PRIVATE_ACCESS_TOKEN:
+            return HTMLResponse(
+                '<html><body style="background:#0a0a0b;color:#00ff88;font-family:monospace;display:flex;'
+                'align-items:center;justify-content:center;height:100vh;margin:0">'
+                '<div style="text-align:center"><h1>Coming Soon</h1>'
+                '<p>NEURO COMMENTING is in private beta.</p>'
+                '<p><a href="/" style="color:#00ff88">Join the waitlist →</a></p>'
+                '</div></body></html>',
+                status_code=403,
+            )
+        # Set cookie so founder doesn't need ?access= every time
+        response = await call_next(request)
+        response.set_cookie("nc_access", _PRIVATE_ACCESS_TOKEN, max_age=86400 * 30, httponly=True)
+        return response
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
