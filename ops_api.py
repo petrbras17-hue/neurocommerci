@@ -1426,15 +1426,15 @@ async def lifespan(_: FastAPI):
             log.warning(f"assistant worker startup skipped: {exc}")
         # Init Redis for bot auth (shared state between ops_api and bot containers)
         try:
-            await _init_bot_auth_redis(settings.REDIS_URL)
+            await asyncio.wait_for(_init_bot_auth_redis(settings.REDIS_URL), timeout=10)
+        except asyncio.TimeoutError:
+            log.warning("bot auth Redis init timed out after 10s — skipping")
         except Exception as exc:  # pragma: no cover
             log.warning(f"bot auth Redis init skipped: {exc}")
         # ── Start Autonomous Warmup Scheduler ──
         warmup_scheduler = None
-        import sys; print("=== WARMUP SCHEDULER INIT STARTING ===", file=sys.stderr, flush=True)
         try:
             from core.warmup_scheduler import WarmupScheduler
-            print(f"WarmupScheduler imported OK", file=sys.stderr, flush=True)
             log.info("Initializing WarmupScheduler with db_session_factory=%r", async_session)
             warmup_scheduler = WarmupScheduler(db_session_factory=async_session)
             await warmup_scheduler.start()
@@ -1445,8 +1445,6 @@ async def lifespan(_: FastAPI):
                 warmup_scheduler.active_count,
             )
         except Exception as exc:
-            import traceback; traceback.print_exc(file=sys.stderr)
-            print(f"WARMUP SCHEDULER FAILED: {exc}", file=sys.stderr, flush=True)
             log.error(
                 "WarmupScheduler startup FAILED — autonomous warmup will not run: %s",
                 exc,
