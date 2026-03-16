@@ -1431,6 +1431,7 @@ async def lifespan(_: FastAPI):
             log.warning(f"bot auth Redis init skipped: {exc}")
         # ── Start Autonomous Warmup Scheduler ──
         warmup_scheduler = None
+        log.info("=== WARMUP SCHEDULER INIT STARTING ===")
         try:
             from core.warmup_scheduler import WarmupScheduler
             log.info("Initializing WarmupScheduler with db_session_factory=%r", async_session)
