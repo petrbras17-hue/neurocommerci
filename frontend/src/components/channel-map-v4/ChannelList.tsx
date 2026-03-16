@@ -255,7 +255,7 @@ export function ChannelList({
       language: filters.language || undefined,
       region: filters.region || undefined,
       min_members: filters.minSubscribers || undefined,
-      search: filters.search || undefined,
+      search: filters.searchQuery || undefined,
       limit: PAGE_SIZE,
       offset: currentOffset,
     }),
@@ -292,7 +292,7 @@ export function ChannelList({
 
     return () => ctrl.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, filters.category, filters.language, filters.region, filters.minSubscribers, filters.search]);
+  }, [token, filters.category, filters.language, filters.region, filters.minSubscribers, filters.searchQuery]);
 
   // ── Load more ──────────────────────────────────────────────────────────────
 
