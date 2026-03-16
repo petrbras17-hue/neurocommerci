@@ -658,7 +658,7 @@ export function ChannelSidebar({
             <div style={secHdr}>Теги</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
               {(
-                (channel as unknown as Record<string, string[]>)["topic_tags"] ?? []
+                ((channel as unknown as Record<string, string[]>)["topic_tags"] ?? []) as string[]
               ).map((tag: string) => (
                 <span
                   key={tag}

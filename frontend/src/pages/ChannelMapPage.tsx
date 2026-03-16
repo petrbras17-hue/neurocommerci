@@ -19,7 +19,7 @@ import { ChannelMarker } from "../components/channel-map-v4/ChannelMarker";
 import { useMapData } from "../components/channel-map-v4/hooks/useMapData";
 import type { MapFilters as MapDataFilters } from "../components/channel-map-v4/hooks/useMapData";
 import type { ChannelMapEntry } from "../api";
-import type { MapFilters as ConstMapFilters } from "../components/channel-map-v4/hooks/useMapData";
+import type { FiltersState as ConstMapFilters } from "../components/channel-map-v4/MapFilters";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

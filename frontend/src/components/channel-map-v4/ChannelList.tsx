@@ -12,7 +12,7 @@ import {
   getCategoryColor,
   getCategoryLabel,
 } from "./constants";
-import type { MapFilters } from "./hooks/useMapData";
+import type { FiltersState as MapFilters } from "./MapFilters";
 
 // ─── Design tokens (local) ────────────────────────────────────────────────────
 
