@@ -651,34 +651,37 @@ export function ChannelSidebar({
       )}
 
       {/* ── Topic tags ─────────────────────────────────────────────────────── */}
-      {!loading && channel && (channel as unknown as Record<string, unknown>)["topic_tags"] && (
-        <>
-          <Divider />
-          <div>
-            <div style={secHdr}>Теги</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-              {(
-                ((channel as unknown as Record<string, string[]>)["topic_tags"] ?? []) as string[]
-              ).map((tag: string) => (
-                <span
-                  key={tag}
-                  style={{
-                    background: "rgba(0,255,136,0.07)",
-                    color: T.ACCENT,
-                    fontSize: 10,
-                    fontWeight: 600,
-                    padding: "3px 8px",
-                    borderRadius: 100,
-                    border: "1px solid rgba(0,255,136,0.2)",
-                  }}
-                >
-                  #{tag}
-                </span>
-              ))}
+      {(() => {
+        if (loading || !channel) return null;
+        const tags = (channel as unknown as Record<string, unknown>)["topic_tags"];
+        if (!Array.isArray(tags) || tags.length === 0) return null;
+        return (
+          <>
+            <Divider />
+            <div>
+              <div style={secHdr}>Теги</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {(tags as string[]).map((tag: string) => (
+                  <span
+                    key={tag}
+                    style={{
+                      background: "rgba(0,255,136,0.07)",
+                      color: T.ACCENT,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      padding: "3px 8px",
+                      borderRadius: 100,
+                      border: "1px solid rgba(0,255,136,0.2)",
+                    }}
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
             </div>
-          </div>
-        </>
-      )}
+          </>
+        );
+      })()}
 
       {/* ── Similar channels ───────────────────────────────────────────────── */}
       <Divider />
