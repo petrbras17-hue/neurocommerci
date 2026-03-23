@@ -136,6 +136,7 @@ from core.telegram_bot_auth import (
     init_redis as _init_bot_auth_redis,
 )
 from core.task_queue import task_queue
+from core.spambot_monitor import get_spambot_monitor
 from core.proxy_manager import ProxyConfig, ProxyManager, check_proxy_orm, parse_proxy_line
 from core.proxy_router import NoAvailableProxyError, ProxyRouter
 from core.account_lifecycle import AccountLifecycle, LifecycleTransitionError
@@ -4136,6 +4137,151 @@ async def accounts_stats(
         "by_lifecycle": by_lifecycle,
         "proxied": proxied,
         "unproxied": unproxied,
+    }
+
+
+@app.get("/v1/accounts/health-dashboard")
+async def accounts_health_dashboard(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """Return the full account health picture for the current tenant workspace."""
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=10, window_seconds=60)
+    tenant_id = tenant_context.tenant_id
+    workspace_id = tenant_context.workspace_id
+
+    # --- accounts -----------------------------------------------------------
+    acc_query = select(Account).where(Account.tenant_id == tenant_id)
+    if workspace_id is not None:
+        acc_query = acc_query.where(Account.workspace_id == workspace_id)
+    acc_result = await session.execute(acc_query.limit(5000))
+    accounts = list(acc_result.scalars().all())
+
+    # --- proxies ------------------------------------------------------------
+    proxy_ids_used: set[int] = set()
+    proxy_query = select(Proxy).where(Proxy.tenant_id == tenant_id)
+    if workspace_id is not None:
+        proxy_query = proxy_query.where(Proxy.workspace_id == workspace_id)
+    proxy_result = await session.execute(proxy_query.limit(2000))
+    proxies = list(proxy_result.scalars().all())
+
+    # proxy_id → host lookup
+    proxy_host_map: dict[int, str] = {p.id: p.host for p in proxies}
+    for acc in accounts:
+        if acc.proxy_id is not None:
+            proxy_ids_used.add(acc.proxy_id)
+
+    # --- summary counters ---------------------------------------------------
+    total = len(accounts)
+    active_count = 0
+    dead_count = 0
+    frozen_count = 0
+    appeal_count = 0
+    reserve_count = 0
+    warming_up_count = 0
+
+    for acc in accounts:
+        s = (acc.status or "").lower()
+        lc = (acc.lifecycle_stage or "").lower()
+        hs = (acc.health_status or "").lower()
+
+        if hs == "dead" or s == "banned" or lc in {"dead", "banned"}:
+            dead_count += 1
+        elif s in {"frozen", "restricted"} or lc in {"restricted", "packaging_error"}:
+            frozen_count += 1
+        elif lc == "warming_up":
+            warming_up_count += 1
+        elif lc in {"active_commenting", "execution_ready"} and s == "active":
+            active_count += 1
+        elif lc in {"uploaded", "packaging", "gate_review"}:
+            reserve_count += 1
+        else:
+            # fallback: treat as reserve if not clearly categorised
+            reserve_count += 1
+
+    # appeal: accounts with restriction_reason containing 'appeal' or 'spambot'
+    for acc in accounts:
+        reason = (acc.restriction_reason or "").lower()
+        if "appeal" in reason or "spambot" in reason:
+            appeal_count += 1
+            # rebalance: these were likely counted as frozen or reserve above
+            if frozen_count > 0:
+                frozen_count -= 1
+            elif reserve_count > 0:
+                reserve_count -= 1
+
+    reserve_ratio = round(reserve_count / total, 2) if total > 0 else 0.0
+
+    # --- health alert -------------------------------------------------------
+    if total == 0:
+        health_alert = "WARNING: no accounts configured"
+    elif active_count == 0 and dead_count == total:
+        health_alert = "CRITICAL: no active accounts"
+    elif active_count == 0:
+        health_alert = "WARNING: no active accounts — warmup or packaging in progress"
+    elif active_count < 3:
+        health_alert = f"WARNING: only {active_count} active account(s) — low capacity"
+    elif reserve_ratio < 0.2:
+        health_alert = "WARNING: reserve ratio below 20% — buy more accounts soon"
+    else:
+        health_alert = "OK"
+
+    # --- per-account rows ---------------------------------------------------
+    account_rows = []
+    for acc in accounts:
+        account_rows.append({
+            "id": acc.id,
+            "phone": acc.phone,
+            "status": acc.status,
+            "health_status": acc.health_status,
+            "warmup_phase": acc.warmup_phase,
+            "warmup_day": acc.warmup_day,
+            "proxy_host": proxy_host_map.get(acc.proxy_id) if acc.proxy_id else None,
+            "last_active_at": acc.last_active_at.isoformat() if acc.last_active_at else None,
+            "death_reason": acc.restriction_reason,
+        })
+
+    # --- proxies summary ----------------------------------------------------
+    proxy_total = len(proxies)
+    proxy_bound = len(proxy_ids_used)
+    proxy_free = proxy_total - proxy_bound
+
+    # --- recommendations ----------------------------------------------------
+    recommendations: list[str] = []
+    if dead_count > 0 and active_count == 0:
+        recommendations.append("Buy 5-10 new accounts with tdata + JSON metadata")
+        recommendations.append("Use mobile proxies for higher survival rate")
+        recommendations.append("48h quarantine enabled — accounts will auto-start warmup after purchase")
+    elif active_count < 3:
+        recommendations.append(f"You have only {active_count} active account(s) — target at least 5 for stable commenting")
+    if proxy_free == 0 and proxy_total > 0:
+        recommendations.append("All proxies are bound — add more proxies before onboarding new accounts")
+    if proxy_total == 0:
+        recommendations.append("No proxies configured — add SOCKS5 mobile proxies before activating accounts")
+    if warming_up_count > 0:
+        recommendations.append(f"{warming_up_count} account(s) still in warmup — they will become active in a few days")
+    if not recommendations:
+        recommendations.append("Account inventory looks healthy — no immediate action required")
+
+    return {
+        "summary": {
+            "total": total,
+            "active": active_count,
+            "dead": dead_count,
+            "frozen": frozen_count,
+            "appeal": appeal_count,
+            "reserve": reserve_count,
+            "warming_up": warming_up_count,
+            "reserve_ratio": reserve_ratio,
+            "health_alert": health_alert,
+        },
+        "accounts": account_rows,
+        "proxies": {
+            "total": proxy_total,
+            "bound": proxy_bound,
+            "free": proxy_free,
+        },
+        "recommendations": recommendations,
     }
 
 
@@ -16065,6 +16211,89 @@ async def referral_list(
     """Список рефералов с пагинацией."""
     _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
     return await list_referrals(tenant_context.user_id, session, limit=limit, offset=offset)
+
+
+# ---------------------------------------------------------------------------
+# SpamBot monitor endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/v1/health/spambot-check/{account_id}")
+async def spambot_check_account(
+    account_id: int,
+    tenant_context: TenantContext = Depends(get_tenant_context),
+) -> dict[str, Any]:
+    """
+    Trigger a one-time read-only SpamBot check for a single account.
+
+    Reads the last 5 messages from the SpamBot dialog — never sends /start.
+    Returns the detected status and the raw last message text.
+
+    Requires JWT auth. The account must belong to the calling tenant.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    # Prefer the shared SessionPool from WarmupScheduler when available.
+    # If the scheduler is not running, we cannot open a Telethon connection
+    # without a pool (safety rule: no raw TelegramClient).
+    ws = app_state.get("warmup_scheduler")
+    pool = getattr(ws, "_session_pool", None) if ws is not None else None
+
+    if pool is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="spambot_check_unavailable: warmup scheduler not running — no session pool",
+        )
+
+    monitor = get_spambot_monitor()
+    result = await monitor.check_account(
+        account_id=account_id,
+        session_pool=pool,
+        db_session_factory=async_session,
+        tenant_id=tenant_context.tenant_id,
+    )
+    return result
+
+
+@app.get("/v1/health/spambot-status")
+async def spambot_status_all(
+    tenant_context: TenantContext = Depends(get_tenant_context),
+    session: AsyncSession = Depends(tenant_session),
+) -> dict[str, Any]:
+    """
+    Return the last known SpamBot-derived health status for all accounts.
+
+    Reads from the accounts table (health_status column) — no Telethon connections.
+    Statuses populated by the SpamBot monitor are: alive, limited, appeal_pending, dead.
+    """
+    _check_rate_limit("api", str(tenant_context.tenant_id), max_calls=60, window_seconds=60)
+
+    rows = (await session.execute(
+        select(
+            Account.id,
+            Account.phone,
+            Account.status,
+            Account.health_status,
+            Account.last_health_check,
+            Account.restriction_reason,
+            Account.warmup_phase,
+        ).where(Account.tenant_id == tenant_context.tenant_id)
+        .order_by(Account.id.asc())
+    )).all()
+
+    items = [
+        {
+            "account_id": r.id,
+            "phone": r.phone,
+            "account_status": r.status,
+            "health_status": r.health_status,
+            "last_health_check": r.last_health_check.isoformat() if r.last_health_check else None,
+            "restriction_reason": r.restriction_reason,
+            "warmup_phase": r.warmup_phase,
+        }
+        for r in rows
+    ]
+    return {"items": items, "total": len(items)}
 
 
 if __name__ == "__main__":

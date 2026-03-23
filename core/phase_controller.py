@@ -36,7 +36,7 @@ PHASES: list[str] = [
 
 PHASE_CONFIG: dict[str, dict] = {
     "STEALTH": {
-        "days": (0, 2),
+        "days": (0, 3),
         "sessions_per_day": (1, 2),
         "duration_min": (15, 25),
         "max_reactions": 0,
@@ -44,7 +44,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 0,
     },
     "EXPLORER": {
-        "days": (3, 3),
+        "days": (4, 6),
         "sessions_per_day": (2, 3),
         "duration_min": (20, 35),
         "max_reactions": 3,
@@ -52,7 +52,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 2,
     },
     "PACKAGING": {
-        "days": (4, 4),
+        "days": (7, 8),
         "sessions_per_day": (1, 1),
         "duration_min": (5, 10),
         "max_reactions": 0,
@@ -60,7 +60,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 0,
     },
     "COMMENTER_LIGHT": {
-        "days": (5, 7),
+        "days": (9, 12),
         "sessions_per_day": (2, 4),
         "duration_min": (25, 40),
         "max_reactions": 5,
@@ -68,7 +68,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 1,
     },
     "COMMENTER_GROWING": {
-        "days": (8, 14),
+        "days": (13, 21),
         "sessions_per_day": (2, 4),
         "duration_min": (25, 40),
         "max_reactions": 8,
@@ -76,7 +76,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 1,
     },
     "ACTIVE": {
-        "days": (15, 29),
+        "days": (22, 44),
         "sessions_per_day": (3, 4),
         "duration_min": (30, 50),
         "max_reactions": 12,
@@ -84,7 +84,7 @@ PHASE_CONFIG: dict[str, dict] = {
         "max_joins": 2,
     },
     "VETERAN": {
-        "days": (30, 999),
+        "days": (45, 999),
         "sessions_per_day": (3, 5),
         "duration_min": (30, 60),
         "max_reactions": 20,

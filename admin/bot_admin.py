@@ -117,7 +117,11 @@ _CLIENT_CALLBACK_EXACT = {
     "help_support",
 }
 _CLIENT_CALLBACK_PREFIXES = (
-    "wizard_",
+    "wizard_start",
+    "wizard_step",
+    "wizard_skip",
+    "wizard_back",
+    "wizard_finish",
 )
 
 
@@ -449,8 +453,13 @@ async def get_or_create_user(telegram_id: int, username: str = None, first_name:
             user_is_admin = (telegram_id == settings.ADMIN_TELEGRAM_ID) or (settings.ADMIN_TELEGRAM_ID == 0)
 
             if user_is_admin and settings.ADMIN_TELEGRAM_ID == 0:
-                settings.ADMIN_TELEGRAM_ID = telegram_id
-                _update_env("ADMIN_TELEGRAM_ID", str(telegram_id))
+                try:
+                    _update_env("ADMIN_TELEGRAM_ID", str(telegram_id))
+                except Exception:
+                    log.exception("Failed to persist ADMIN_TELEGRAM_ID to .env — aborting admin registration")
+                    user_is_admin = False
+                else:
+                    settings.ADMIN_TELEGRAM_ID = telegram_id
 
         user = User(
             telegram_id=telegram_id,

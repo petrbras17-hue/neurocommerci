@@ -146,14 +146,31 @@ class Settings(BaseSettings):
     # --- Session Health & Keep-Alive ---
     SESSION_HEALTH_CHECK_HOURS: int = Field(default=4)  # Проверка авторизации
     KEEP_ALIVE_INTERVAL_HOURS: int = Field(default=6)   # Периодический get_me / read
-    ACCOUNT_SLEEP_START_HOUR: int = Field(default=23)    # Начало "сна" (UTC)
-    ACCOUNT_SLEEP_END_HOUR: int = Field(default=7)       # Конец "сна" (UTC)
+    ACCOUNT_SLEEP_START_HOUR: int = Field(default=23)    # Начало "сна" (в LIVELINESS_TIMEZONE)
+    ACCOUNT_SLEEP_END_HOUR: int = Field(default=7)       # Конец "сна" (в LIVELINESS_TIMEZONE)
     SESSION_BACKUP_KEY: str = Field(default="")          # Fernet key для шифрования бэкапов
     TWOFA_ENCRYPTION_KEY: str = Field(default="")        # Fernet key для шифрования 2FA паролей в БД
+
+    # --- Activity Simulator delays ---
+    ACTIVITY_FIRST_RUN_DELAY_SEC: int = Field(default=600)    # Задержка перед первым keep-alive (10 мин)
+    ACTIVITY_INTER_ACCOUNT_MEAN_SEC: float = Field(default=15.0)  # Среднее Gaussian задержки между аккаунтами
+    ACTIVITY_ERROR_SLEEP_SEC: int = Field(default=600)        # Пауза после ошибки в activity_simulator
+
+    # --- Session Health delays ---
+    HEALTH_FIRST_CHECK_DELAY_SEC: int = Field(default=300)    # Задержка перед первой проверкой (5 мин)
+    HEALTH_ERROR_SLEEP_SEC: int = Field(default=600)          # Пауза после ошибки в session_health_monitor
 
     # --- Monitoring ---
     MONITOR_POLL_INTERVAL_SEC: int = Field(default=180)  # 3 мин
     POST_MAX_AGE_HOURS: int = Field(default=2)
+
+    # --- SMS Providers (multi-provider fallback) ---
+    SMS_PROVIDER_ORDER: str = Field(default="sms-man,smspva,5sim,grizzly,vak-sms")
+    SMSMAN_API_KEY: str = Field(default="")       # sms-man.com
+    SMSPVA_API_KEY: str = Field(default="")        # smspva.com
+    FIVESIM_API_KEY: str = Field(default="")       # 5sim.net
+    GRIZZLY_API_KEY: str = Field(default="")        # grizzlysms.com
+    VAKSMS_API_KEY: str = Field(default="")         # vak-sms.com (legacy)
 
     # --- Paths ---
     SESSIONS_DIR: str = Field(default="data/sessions")
@@ -322,6 +339,23 @@ class Settings(BaseSettings):
             return self.DATABASE_URL
         self._ensure_dirs()
         return f"sqlite+aiosqlite:///{BASE_DIR / self.DB_PATH}"
+
+    @property
+    def sms_provider_keys(self) -> dict:
+        """Build provider_keys dict for MultiSmsProvider from env vars."""
+        mapping = {
+            "sms-man": self.SMSMAN_API_KEY,
+            "smspva": self.SMSPVA_API_KEY,
+            "5sim": self.FIVESIM_API_KEY,
+            "grizzly": self.GRIZZLY_API_KEY,
+            "vak-sms": self.VAKSMS_API_KEY,
+        }
+        return {k: v for k, v in mapping.items() if v}
+
+    @property
+    def sms_provider_order_list(self) -> list:
+        """Parse SMS_PROVIDER_ORDER into a list."""
+        return [s.strip() for s in self.SMS_PROVIDER_ORDER.split(",") if s.strip()]
 
     @property
     def proxy_list_path(self) -> Path:

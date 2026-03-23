@@ -118,8 +118,12 @@ class SessionHealthMonitor:
 
         return results
 
-    async def _handle_dead_session(self, phone: str, error_type: str) -> None:
-        """Обработать мёртвую сессию: обновить БД + уведомить."""
+    async def _handle_dead_session(self, phone: str, error_type: str) -> bool:
+        """Обработать мёртвую сессию: обновить БД + уведомить.
+
+        Returns True if DB status was persisted, False if the DB update failed.
+        """
+        db_updated = False
         # Обновить статус в БД
         try:
             from storage.sqlite_db import async_session
@@ -137,6 +141,7 @@ class SessionHealthMonitor:
                     )
                 )
                 await session.commit()
+            db_updated = True
         except Exception as exc:
             log.error(f"Ошибка обновления статуса {phone}: {exc}")
 
@@ -146,8 +151,13 @@ class SessionHealthMonitor:
         # Уведомить админа
         await self._notifier.session_dead(phone, error_type)
 
-    async def _update_health_status(self, phone: str, status: str) -> None:
-        """Обновить last_health_check и health_status в БД."""
+        return db_updated
+
+    async def _update_health_status(self, phone: str, status: str) -> bool:
+        """Обновить last_health_check и health_status в БД.
+
+        Returns True if persisted, False on failure.
+        """
         try:
             from storage.sqlite_db import async_session
             from storage.models import Account
@@ -163,8 +173,10 @@ class SessionHealthMonitor:
                     )
                 )
                 await session.commit()
+            return True
         except Exception as exc:
-            log.debug(f"Ошибка обновления health_status для {phone}: {exc}")
+            log.warning(f"Ошибка обновления health_status для {phone}: {exc}")
+            return False
 
     async def _escalate_health_issue(self, phone: str) -> None:
         """Escalate repeated health issues: active -> cooldown -> restricted."""
@@ -228,14 +240,14 @@ class SessionHealthMonitor:
                     )
                 await session.commit()
         except Exception as exc:
-            log.debug(f"Ошибка health escalation для {phone}: {exc}")
+            log.error(f"Ошибка health escalation для {phone}: {exc}")
 
     async def _monitor_loop(self) -> None:
         """Фоновый цикл: проверять все аккаунты каждые N часов."""
         interval = settings.SESSION_HEALTH_CHECK_HOURS * 3600
 
-        # Первая проверка через 5 минут после старта
-        await asyncio.sleep(300)
+        # Первая проверка — задержка после старта
+        await asyncio.sleep(settings.HEALTH_FIRST_CHECK_DELAY_SEC)
 
         while True:
             try:
@@ -274,7 +286,7 @@ class SessionHealthMonitor:
                 break
             except Exception as exc:
                 log.error(f"Ошибка в session_health_monitor: {exc}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(settings.HEALTH_ERROR_SLEEP_SEC)
 
     @property
     def stats(self) -> dict:

@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from config import settings
 from utils.logger import log
@@ -53,8 +54,23 @@ class ActivitySimulator:
         log.info("ActivitySimulator остановлен")
 
     def _is_sleep_window(self) -> bool:
-        """Проверить, сейчас ли время 'сна' (без активности)."""
-        now = datetime.now(timezone.utc)
+        """Проверить, сейчас ли время 'сна' (без активности).
+
+        ACCOUNT_SLEEP_START_HOUR / ACCOUNT_SLEEP_END_HOUR задаются в config.py.
+        По умолчанию они трактуются как UTC. Если задан LIVELINESS_TIMEZONE
+        (например 'Europe/Moscow'), часы интерпретируются в этой таймзоне.
+        """
+        tz_name = settings.LIVELINESS_TIMEZONE
+        try:
+            tz = ZoneInfo(tz_name) if tz_name else timezone.utc
+        except (KeyError, Exception):
+            log.warning(
+                "ActivitySimulator: неизвестная таймзона %r, используем UTC",
+                tz_name,
+            )
+            tz = timezone.utc
+
+        now = datetime.now(tz)
         hour = now.hour
         start = settings.ACCOUNT_SLEEP_START_HOUR
         end = settings.ACCOUNT_SLEEP_END_HOUR
@@ -102,8 +118,8 @@ class ActivitySimulator:
         """Фоновый цикл: keep-alive для всех аккаунтов."""
         interval = settings.KEEP_ALIVE_INTERVAL_HOURS * 3600
 
-        # Первый цикл через 10 минут после старта
-        await asyncio.sleep(600)
+        # Первый цикл — задержка перед первым keep-alive
+        await asyncio.sleep(settings.ACTIVITY_FIRST_RUN_DELAY_SEC)
 
         while True:
             try:
@@ -128,7 +144,7 @@ class ActivitySimulator:
                         break
                     await self._keepalive_one(phone)
                     # Gaussian задержка между аккаунтами
-                    delay = random.gauss(15, 5)
+                    delay = random.gauss(settings.ACTIVITY_INTER_ACCOUNT_MEAN_SEC, 5)
                     await asyncio.sleep(max(5, min(delay, 30)))
 
                 # Ждать до следующего цикла (с рандомизацией ±20%)
@@ -139,7 +155,7 @@ class ActivitySimulator:
                 break
             except Exception as exc:
                 log.error(f"Ошибка в activity_simulator: {exc}")
-                await asyncio.sleep(600)
+                await asyncio.sleep(settings.ACTIVITY_ERROR_SLEEP_SEC)
 
     @property
     def stats(self) -> dict:

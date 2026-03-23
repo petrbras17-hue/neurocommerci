@@ -8,6 +8,7 @@ SessionBackupManager — экспорт и восстановление сесс
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -30,19 +31,29 @@ class SessionBackupManager:
         self._init_encryption()
 
     def _init_encryption(self) -> None:
-        """Инициализировать Fernet если ключ задан."""
+        """Инициализировать Fernet если ключ задан.
+
+        If the provided key is not a valid 32-byte url-safe base64 Fernet key,
+        we derive one using SHA-256 (deterministic, no padding weakness).
+        """
         key = settings.SESSION_BACKUP_KEY
         if not key:
             return
         try:
             from cryptography.fernet import Fernet
-            # Ключ должен быть 32 url-safe base64 bytes
-            if len(key) < 32:
-                # Генерируем ключ из строки (padding)
-                padded = base64.urlsafe_b64encode(key.ljust(32)[:32].encode())
-                self._fernet = Fernet(padded)
-            else:
-                self._fernet = Fernet(key.encode() if isinstance(key, str) else key)
+            import hashlib
+
+            key_bytes = key.encode("utf-8") if isinstance(key, str) else key
+
+            # Try using the key directly first (valid Fernet key = 32 url-safe base64 bytes)
+            try:
+                self._fernet = Fernet(key_bytes)
+            except (ValueError, Exception):
+                # Derive a proper 32-byte key via SHA-256 instead of weak ljust padding
+                derived = hashlib.sha256(key_bytes).digest()
+                fernet_key = base64.urlsafe_b64encode(derived)
+                self._fernet = Fernet(fernet_key)
+
             log.info("SessionBackup: шифрование включено")
         except ImportError:
             log.warning("SessionBackup: cryptography не установлен, бэкапы без шифрования")
@@ -61,6 +72,8 @@ class SessionBackupManager:
 
             backup_path = BACKUP_DIR / f"{phone}.backup"
             backup_path.write_bytes(data)
+            # Restrict read/write to owner only (sensitive session data)
+            os.chmod(backup_path, 0o600)
 
             # Обновить timestamp в БД
             await self._update_backup_time(phone)
@@ -130,4 +143,4 @@ class SessionBackupManager:
                 )
                 await session.commit()
         except Exception as exc:
-            log.debug(f"SessionBackup: ошибка обновления timestamp {phone}: {exc}")
+            log.warning(f"SessionBackup: ошибка обновления timestamp {phone}: {exc}")

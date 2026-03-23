@@ -13,7 +13,7 @@ Graceful shutdown: Ctrl+C для безопасного завершения (с
 import asyncio
 import sys
 
-from config import settings
+from config import settings, validate_critical_secrets
 from storage.sqlite_db import init_db, dispose_engine
 from utils.bootstrap import bootstrap
 from utils.logger import log
@@ -57,6 +57,15 @@ def main():
         for w in warnings:
             print(f"     • {w}")
         print()
+
+    # Validate critical secrets — exit immediately if missing
+    try:
+        validate_critical_secrets(settings)
+    except RuntimeError as e:
+        print()
+        print(f"  FATAL: {e}")
+        print()
+        sys.exit(1)
 
     # Bootstrap: восстановить данные из env vars при старте в чистом окружении
     bootstrap()
