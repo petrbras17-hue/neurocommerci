@@ -22,6 +22,7 @@ from comments.templates import (
     get_system_prompt,
     get_scenario_b_prompt,
     get_fallback_comments_b,
+    get_contextual_fallback_a,
 )
 from comments.scenarios import Scenario, ScenarioSelector
 from utils.logger import log
@@ -97,8 +98,8 @@ class CommentGenerator:
                     "source": "ai",
                 }
 
-        # Фоллбэк
-        text = self.get_fallback(scenario)
+        # Фоллбэк — контекстный выбор по содержимому поста
+        text = self.get_fallback(scenario, post_text=post_text)
         return {
             "text": text,
             "scenario": scenario,
@@ -254,10 +255,12 @@ class CommentGenerator:
         return len(intersection) / len(union)
 
     @staticmethod
-    def get_fallback(scenario: str) -> str:
-        """Случайный фоллбэк-комментарий."""
-        pool = FALLBACK_COMMENTS_A if scenario == Scenario.A else get_fallback_comments_b()
-        return random.choice(pool)
+    def get_fallback(scenario: str, post_text: str = "") -> str:
+        """Случайный фоллбэк-комментарий с учётом контекста поста."""
+        if scenario == Scenario.B:
+            return random.choice(get_fallback_comments_b())
+        # Сценарий A: контекстный выбор по категории поста
+        return get_contextual_fallback_a(post_text)
 
     def get_stats(self) -> dict:
         """Статистика генератора."""

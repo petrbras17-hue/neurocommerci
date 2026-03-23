@@ -264,12 +264,18 @@ class AntiDetection:
             return
         try:
             msgs = await client.get_messages(channel_entity, limit=posts_to_read)
+            # Per-account variation: each account gets a stable reading speed
+            # within the human range (20-40 chars/sec) based on entity id hash
+            entity_id = getattr(channel_entity, "id", 0) or 0
+            account_seed = entity_id % 100
+            base_speed_lo = 20.0 + (account_seed / 100.0) * 5.0   # 20-25
+            base_speed_hi = 35.0 + (account_seed / 100.0) * 5.0   # 35-40
             for msg in msgs:
                 text = getattr(msg, "text", None) or ""
-                # Realistic reading speed: 200–300 chars/sec
+                # Human reading speed: 20-40 chars/sec (not 200-300)
                 chars = max(1, len(text))
-                speed = random.uniform(200.0, 300.0) / self._multiplier
-                await asyncio.sleep(min(chars / speed + random.uniform(0.5, 2.0), 10.0))
+                speed = random.uniform(base_speed_lo, base_speed_hi) / self._multiplier
+                await asyncio.sleep(min(chars / speed + random.uniform(0.5, 2.0), 30.0))
         except Exception:
             pass  # Non-critical
 

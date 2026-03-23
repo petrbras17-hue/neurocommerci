@@ -12,12 +12,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
+import json
 import os
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -25,6 +28,7 @@ from utils.cache import SettingsCache
 from telethon import TelegramClient
 from telethon.errors import (
     FloodWaitError,
+    PeerFloodError,
     ChatWriteForbiddenError,
     UserBannedInChannelError,
     ChannelPrivateError,
@@ -116,6 +120,212 @@ def _apply_hidden_link(text: str) -> str:
     word = random.choice(get_active_hidden_link_words())
     link_html = f'<a href="{settings.PRODUCT_BOT_LINK}">{word}</a>'
     return get_mention_re().sub(link_html, safe_text)
+
+
+# ── Persistent dedup store ────────────────────────────────────────────────
+
+_DEDUP_FILE = Path("data/comment_dedup.json")
+_DEDUP_RETENTION_DAYS = 30
+
+
+class CommentDedupStore:
+    """
+    File-based deduplication store.
+    Key: hash(channel_id + post_id + account_phone).
+    Survives restarts. Auto-cleans entries older than 30 days.
+    """
+
+    def __init__(self, path: Path = _DEDUP_FILE) -> None:
+        self._path = path
+        self._store: dict[str, str] = {}  # key -> ISO timestamp
+        self._load()
+
+    def _load(self) -> None:
+        """Load dedup store from disk."""
+        try:
+            if self._path.exists():
+                raw = self._path.read_text(encoding="utf-8")
+                self._store = json.loads(raw) if raw.strip() else {}
+        except Exception as exc:
+            log.warning(f"CommentDedupStore: failed to load {self._path}: {exc}")
+            self._store = {}
+
+    def _save(self) -> None:
+        """Persist dedup store to disk."""
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._store, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            log.warning(f"CommentDedupStore: failed to save {self._path}: {exc}")
+
+    @staticmethod
+    def _make_key(channel_id: int, post_id: int, account_phone: str) -> str:
+        """Create a hash key for dedup lookup."""
+        raw = f"{channel_id}:{post_id}:{account_phone}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+    def has_commented(
+        self,
+        channel_id: int,
+        post_id: int,
+        account_phone: str,
+    ) -> bool:
+        """Check if this account already commented on this post in this channel."""
+        key = self._make_key(channel_id, post_id, account_phone)
+        return key in self._store
+
+    def record(
+        self,
+        channel_id: int,
+        post_id: int,
+        account_phone: str,
+    ) -> None:
+        """Record a successful comment and persist to disk."""
+        key = self._make_key(channel_id, post_id, account_phone)
+        self._store[key] = datetime.utcnow().isoformat()
+        self._save()
+
+    def cleanup(self) -> int:
+        """Remove entries older than _DEDUP_RETENTION_DAYS. Returns removed count."""
+        cutoff = datetime.utcnow() - timedelta(days=_DEDUP_RETENTION_DAYS)
+        cutoff_iso = cutoff.isoformat()
+        old_keys = [k for k, ts in self._store.items() if ts < cutoff_iso]
+        for k in old_keys:
+            del self._store[k]
+        if old_keys:
+            self._save()
+            log.debug(f"CommentDedupStore: cleaned up {len(old_keys)} old entries")
+        return len(old_keys)
+
+
+# Module-level singleton
+_dedup_store = CommentDedupStore()
+
+
+# ── Deleted comment tracker ──────────────────────────────────────────────
+
+_DELETED_FILE = Path("data/deleted_comments.json")
+_BLACKLIST_THRESHOLD = 2  # >2 deleted comments → blacklist channel for account
+
+
+class DeletedCommentTracker:
+    """
+    Tracks posted comment message_ids per (account, channel).
+    Before posting, checks if previous comments still exist.
+    If >2 comments were deleted by admins → blacklist that channel for the account.
+
+    Store format:
+    {
+      "<account_phone>": {
+        "<channel_id>": {
+          "message_ids": [123, 456],
+          "deleted_count": 0
+        }
+      }
+    }
+    """
+
+    def __init__(self, path: Path = _DELETED_FILE) -> None:
+        self._path = path
+        self._store: dict[str, dict[str, dict]] = {}
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            if self._path.exists():
+                raw = self._path.read_text(encoding="utf-8")
+                self._store = json.loads(raw) if raw.strip() else {}
+        except Exception as exc:
+            log.warning(f"DeletedCommentTracker: failed to load: {exc}")
+            self._store = {}
+
+    def _save(self) -> None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(self._store, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            log.warning(f"DeletedCommentTracker: failed to save: {exc}")
+
+    def is_channel_blacklisted(self, account_phone: str, channel_id: int) -> bool:
+        """Check if this channel is blacklisted for this account (>2 deletions)."""
+        ch_key = str(channel_id)
+        account_data = self._store.get(account_phone, {})
+        channel_data = account_data.get(ch_key, {})
+        return channel_data.get("deleted_count", 0) > _BLACKLIST_THRESHOLD
+
+    def record_sent_message(
+        self,
+        account_phone: str,
+        channel_id: int,
+        message_id: int,
+    ) -> None:
+        """Record a successfully sent comment message_id."""
+        ch_key = str(channel_id)
+        if account_phone not in self._store:
+            self._store[account_phone] = {}
+        if ch_key not in self._store[account_phone]:
+            self._store[account_phone][ch_key] = {"message_ids": [], "deleted_count": 0}
+        entry = self._store[account_phone][ch_key]
+        # Keep last 20 message_ids per channel to limit storage
+        msg_ids = entry.get("message_ids", [])
+        msg_ids.append(message_id)
+        entry["message_ids"] = msg_ids[-20:]
+        self._save()
+
+    async def check_deletions(
+        self,
+        client,
+        account_phone: str,
+        channel_id: int,
+        discussion_group_entity,
+    ) -> int:
+        """
+        Check if previously sent comments still exist.
+        Returns the number of newly detected deletions.
+        """
+        ch_key = str(channel_id)
+        account_data = self._store.get(account_phone, {})
+        channel_data = account_data.get(ch_key, {})
+        msg_ids = channel_data.get("message_ids", [])
+
+        if not msg_ids or not client:
+            return 0
+
+        newly_deleted = 0
+        surviving_ids = []
+        for mid in msg_ids:
+            try:
+                msg = await client.get_messages(discussion_group_entity, ids=mid)
+                if msg is not None:
+                    surviving_ids.append(mid)
+                else:
+                    newly_deleted += 1
+            except Exception:
+                # Can't check — keep the id for now
+                surviving_ids.append(mid)
+
+        if newly_deleted > 0:
+            old_deleted = channel_data.get("deleted_count", 0)
+            channel_data["message_ids"] = surviving_ids
+            channel_data["deleted_count"] = old_deleted + newly_deleted
+            self._store.setdefault(account_phone, {})[ch_key] = channel_data
+            self._save()
+            log.warning(
+                f"DeletedCommentTracker: {account_phone} had {newly_deleted} comments "
+                f"deleted in channel {channel_id} "
+                f"(total deleted: {channel_data['deleted_count']})"
+            )
+
+        return newly_deleted
+
+
+_deleted_tracker = DeletedCommentTracker()
 
 
 class CommentPoster:
@@ -272,6 +482,30 @@ class CommentPoster:
             log.debug(f"{account.phone}: rate limiter запретил комментарий, пост возвращён")
             return ProcessOutcome("retry", "rate_limiter")
 
+        # Persistent dedup: проверяем, не комментировали ли мы уже этот пост этим аккаунтом
+        channel_tid = post_data.get("channel_telegram_id")
+        post_tid = post_data.get("telegram_post_id")
+        if channel_tid and post_tid and _dedup_store.has_commented(
+            int(channel_tid), int(post_tid), account.phone,
+        ):
+            self._stats["skipped"] += 1
+            log.debug(
+                f"{account.phone}: dedup — уже комментировали пост {post_tid} "
+                f"в канале {post_data.get('channel_title')}"
+            )
+            return ProcessOutcome("skip", "dedup_already_commented")
+
+        # Deleted comment tracker: проверяем, не заблокирован ли канал для аккаунта
+        if channel_tid and _deleted_tracker.is_channel_blacklisted(
+            account.phone, int(channel_tid),
+        ):
+            self._stats["skipped"] += 1
+            log.warning(
+                f"{account.phone}: канал {post_data.get('channel_title')} "
+                f"в чёрном списке (>2 комментариев удалены админами)"
+            )
+            return ProcessOutcome("skip", "channel_blacklisted_by_deletions")
+
         # Нужен ли отдых?
         if self.rate_limiter.needs_rest(account.phone):
             rest_time = self.antiban.get_rest_duration()
@@ -322,7 +556,10 @@ class CommentPoster:
                         comment_data["source"] = "ai_improved"
                     else:
                         log.debug("AI layer отклонил комментарий, используем fallback")
-                        comment_data["text"] = self.generator.get_fallback(comment_data["scenario"])
+                        comment_data["text"] = self.generator.get_fallback(
+                            comment_data["scenario"],
+                            post_text=post_data.get("text", ""),
+                        )
                         comment_data["source"] = "fallback"
 
         # Решаем: emoji swap или прямая отправка
@@ -350,6 +587,12 @@ class CommentPoster:
         if send_status == "sent":
             self._stats["sent"] += 1
             await self.account_mgr.record_comment(account.phone)
+
+            # Persistent dedup: записываем успешную отправку
+            _channel_tid = post_data.get("channel_telegram_id")
+            _post_tid = post_data.get("telegram_post_id")
+            if _channel_tid and _post_tid:
+                _dedup_store.record(int(_channel_tid), int(_post_tid), account.phone)
 
             # Уведомление
             await notifier.comment_sent(
@@ -430,6 +673,16 @@ class CommentPoster:
         try:
             discussion_group = await client.get_entity(discussion_group_id)
             telegram_post_id = post_data.get("telegram_post_id")
+            channel_tid = post_data.get("channel_telegram_id")
+
+            # Check for previously deleted comments before posting
+            if channel_tid:
+                try:
+                    await _deleted_tracker.check_deletions(
+                        client, account_phone, int(channel_tid), discussion_group,
+                    )
+                except Exception as exc:
+                    log.debug(f"{account_phone}: deletion check failed (non-fatal): {exc}")
 
             # Сценарий B: скрытая ссылка (синий текст в Telegram)
             if (
@@ -447,12 +700,18 @@ class CommentPoster:
             if not settings.HUMAN_GATED_COMMENTS:
                 await self.antiban.send_typing(client, discussion_group, len(send_text))
 
-            await client.send_message(
+            sent_msg = await client.send_message(
                 discussion_group,
                 send_text,
                 comment_to=telegram_post_id,
                 parse_mode=parse_mode,
             )
+
+            # Record sent message_id for deletion tracking
+            if channel_tid and sent_msg and hasattr(sent_msg, "id"):
+                _deleted_tracker.record_sent_message(
+                    account_phone, int(channel_tid), sent_msg.id,
+                )
 
             await self._save_comment(
                 account_phone=account_phone,
@@ -462,6 +721,23 @@ class CommentPoster:
                 status="sent",
             )
             return "sent"
+
+        except PeerFloodError:
+            log.critical(
+                f"{account_phone}: PeerFloodError — аккаунт помечен как спам! "
+                f"Карантин 24-48ч. Канал: {post_data.get('channel_title')}"
+            )
+            quarantine_hours = random.uniform(24.0, 48.0)
+            quarantine_seconds = int(quarantine_hours * 3600)
+            await self.account_mgr.handle_error(
+                account_phone, "peer_flood", f"quarantine_{quarantine_seconds}s",
+            )
+            await notifier.error_occurred(
+                account_phone, "PeerFloodError",
+                f"Аккаунт в карантине на {int(quarantine_hours)}ч",
+            )
+            # Do NOT retry with a different account on the same channel
+            return "failed"
 
         except FloodWaitError as e:
             log.warning(f"{account_phone}: FloodWait {e.seconds}с")
@@ -577,6 +853,22 @@ class CommentPoster:
 
             self._stats["swapped"] += 1
             return "sent"
+
+        except PeerFloodError:
+            log.critical(
+                f"{account_phone}: PeerFloodError (swap) — аккаунт помечен как спам! "
+                f"Карантин 24-48ч. Канал: {post_data.get('channel_title')}"
+            )
+            quarantine_hours = random.uniform(24.0, 48.0)
+            quarantine_seconds = int(quarantine_hours * 3600)
+            await self.account_mgr.handle_error(
+                account_phone, "peer_flood", f"quarantine_{quarantine_seconds}s",
+            )
+            await notifier.error_occurred(
+                account_phone, "PeerFloodError",
+                f"Аккаунт в карантине на {int(quarantine_hours)}ч",
+            )
+            return "failed"
 
         except FloodWaitError as e:
             log.warning(f"{account_phone}: FloodWait {e.seconds}с (swap)")
