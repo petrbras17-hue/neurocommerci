@@ -20,7 +20,7 @@
     "react-globe.gl": "^2.37.0",
     "react-leaflet": "^4.2.1",
     "react-leaflet-cluster": "^2.1.0",
-    "react-router-dom": "^7.6.3",
+    "react-router-dom": "^7.18.0",
     "three": "^0.170.0"
   },
   "devDependencies": {
